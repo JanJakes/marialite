@@ -159,6 +159,11 @@ primary and secondary indexes, preserve nullable index entries and BLOB/TEXT
 payloads, continue autoincrement from copied rows, and survive fresh-process
 reopen. It still does not provide crash recovery for a process exit during the
 DDL swap.
+Standalone `CREATE INDEX` and `DROP INDEX` route through MariaDB's
+`mysql_alter_table()` machinery as copy-ALTER-backed operations for MyLite.
+The `standalone-index-ddl-lifecycle` slice verifies that path preserves rows,
+updates persisted table definitions, and publishes the final durable index-root
+state across reopen.
 
 The catalog must also store or derive the table definition version used to
 detect stale cached definitions. MariaDB's discovery documentation describes
