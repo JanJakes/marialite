@@ -1,84 +1,65 @@
 # MyLite
 
-**MariaDB in a single file.**
+**MySQL/MariaDB in a single file.**
 
 > [!NOTE]
 > **Status:** Early development.
 
 ## Overview
 
-MyLite is an embedded MariaDB-derived database library with SQLite-like file
-ownership semantics.
-
-MyLite aims to keep MariaDB's SQL parser, analyzer, optimizer, execution
-behavior, diagnostics, data types, collations, and DDL semantics while exposing
-a local application-owned database file: open one `.mylite` file, execute SQL
-in-process, and close it from the host application.
+MyLite is an embedded MySQL/MariaDB drop-in built on a bundled MariaDB foundation.
 
 At a glance:
 
 | 💡 | ℹ️ |
 | --- | --- |
-| **Compatibility** | MariaDB SQL semantics, initially based on MariaDB 11.8 LTS. |
-| **Storage** | One primary durable `.mylite` file, with documented MyLite-owned companions when needed. |
-| **Engine** | MariaDB embedded runtime with a MyLite storage engine. |
-| **API** | `libmylite`, an in-process C library with explicit handle ownership. |
-| **Validation** | MariaDB behavior checks plus embedded lifecycle and single-file tests. |
-| **License** | GPL-2.0-only, because this project is derived from MariaDB Server. |
+| **Compatibility** | MariaDB LTS API (currently MariaDB 11.8) |
+| **Storage** | Single `.mylite` file + transient MyLite-owned companions |
+| **Engine** | MariaDB embedded runtime with a custom MyLite storage engine |
+| **API** | A `libmylite` C library |
+| **Validation** | Compatibility dashboard & extensive test suite |
+| **Repository** | Monorepo for `libmylite`, tooling, protocol support, extensions, and integration wiring |
+| **License** | GPL-2.0 (derived from MariaDB) |
 
 ## Goals
 
 MyLite should make MariaDB semantics available in an embedded, file-owned
 runtime. Here is a list of the main goals:
 
-- **MariaDB semantics:** Preserve MariaDB SQL behavior where practical.
-- **Single file:** Expose one primary `.mylite` database file, with any
-  journals, WAL files, locks, or temporary spill files owned and documented by
-  MyLite.
-- **In-process runtime:** Execute SQL through `libmylite` without a daemon,
-  socket, or network handshake.
-- **Explicit ownership:** Let applications open, configure, and close database
-  handles directly.
-- **Small embedded profile:** Omit daemon-only services, unrelated storage
-  engines, and rare optional features from the default library build.
-- **Measurable compatibility:** Use MariaDB tests and focused embedded tests to
-  track behavior.
+- **MySQL/MariaDB drop-in:** Work as an effortless drop-in replacement for MySQL/MariaDB.
+- **Single file:** Keep the database portable as a single .mylite file.
+- **Uncompromising compatibility:** Support the MySQL/MariaDB API surface that real applications depend on.
+- **In-process runtime:** Execute SQL through `libmylite` without a database server.
+- **Write concurrency:** Implement full write concurrency support in the MyLite storage.
+- **Extensive test suite:** Create and maintain a large test suite.
+- **Small profile:** Keep the minimum necessary slice of MariaDB codebase.
+- **Coverage matrix:** Track MySQL/MariaDB functionality coverage in a detailed document.
 
 ## Compatibility
 
-MyLite targets MariaDB compatibility where that compatibility fits an embedded
-single-file runtime.
+MyLite targets MySQL/MariaDB compatibility where that compatibility fits an embedded
+single-file runtime. MyLite makes compatibility with MySQL and MariaDB a fundamental principle of the project. The compatibility is carefully evaluated, tracked, and covered with tests.
 
-The goal is not to reproduce a production MariaDB daemon inside an application.
-Server-oriented features such as network users, replication, dynamic plugins,
-and external durable engine files need explicit design before they can be
-supported.
-
-Write concurrency is valuable and should be preserved where the storage design
-can do so safely. MyLite should not claim cross-process write concurrency until
-locking and recovery are implemented and tested.
-
-The default profile should be smaller than a full MariaDB server distribution by
-leaving out running-server-specific services and low-value optional components
-that do not fit a local file-owned library. Size claims must still be measured
-against reproducible builds.
+See [COMPATIBILITY.md](COMPATIBILITY.md) for the current compatibility status.
 
 ## Architecture
 
-MyLite is a layered MariaDB fork with a MyLite-owned embedded API and storage
-engine.
+MyLite is build on MariaDB foundations with some custom key components.
 
-### Core library
+At a glance:
 
-- `libmylite` is the embedded runtime.
-- MariaDB embedded server code provides the SQL parser, analyzer, optimizer,
-  execution engine, diagnostics, type system, and collation behavior.
-- MyLite owns the public file-oriented API and hides internal MariaDB handles
-  behind explicit MyLite handles.
-- The default profile avoids network server behavior, replication, dynamic
-  plugin loading, external durable storage engines, Galera/wsrep,
-  performance schema, server audit plugins, and similar daemon-oriented
-  components.
+| 💡 | ℹ️ |
+| --- | --- |
+| **MariaDB (`libmysqld`)** | MariaDB's `libmysqld` trimmed down to the necessary minimum. |
+| **MyLite C API (libmylite)** | An embedded C API inspired by SQLite. |
+| **MyLite storage** | A new single-file storage layer inspired by SQLite. |
+
+MyLite is lean and significantly smaller than a full MariaDB build. Most notably:
+
+- **No daemon.** MyLite is an embedded database without a server.
+- **No networking.** MyLite exposes an embedded C API.
+- **NO server management.** MyLite doesn't need to manage and maintain a running server.
+- **No exotic features.** MyLite supports MySQL/MariaDB API extensively, but leaves out some special features and experiments.
 
 ### SQL pipeline
 
@@ -92,60 +73,90 @@ engine.
 
 ### Storage engine
 
-- The MyLite engine is a static MariaDB storage engine.
-- It stores table definitions, rows, indexes, and catalog metadata in the
-  `.mylite` file, while owning any recovery companion files it needs.
-- It uses MariaDB handler and table-discovery APIs where they fit.
-- DDL metadata routing must prove `CREATE`, `ALTER`, `DROP`, and `RENAME` do
-  not leave durable `.frm` sidecars.
+MyLite implements a custom storage engine with the following properties:
+- **Single file:** All database data is stored in a single `.mylite` file.
+- **Companion files:** Companion files can be used, but only for journals, WAL, locks, shared memory, or temporary scratch work when part of the MyLite file lifecycle.
+- **Safety:** The storage format must provide transaction and crash recovery guarantees.
+- **Concurrency:** The storage must be capable to fully support write concurrency.
 
-### File format
+Major MySQL and MariaDB storage engines will be routed to the MyLite custom storage implementation. The current goal is to support `InnoDB`, `MyISAM`, and `Aria`. Zero-file storage engines like `MEMORY` and `BLACKHOLE` should be supported as well.
 
-- The primary database asset is one `.mylite` file.
-- Documented companion files may be used for journals, WAL, locks, shared
-  memory, or temporary scratch work when they are part of the MyLite file
-  lifecycle.
-- The file format must provide transaction and crash recovery guarantees before
-  it stores user data.
+MyLite should also be capable of setting up a full in-memory database regardless of what engines are defined for table storage in the SQL. This should be supported via the special `:memory:` database filename.
 
 ### Integration packages
 
-The repository is intended to hold the core library and surrounding integration
-work:
+The repository is intended to hold the core library, as well as some surrounding integration packages. The main components are:
 
-- `libmylite` library code.
-- Command-line and migration tooling.
+- The `libmylite` library code.
+- MySQL/MariaDB wire protocol support.
+- Command-line tooling.
 - Language and runtime integration packages.
-- MariaDB compatibility, embedded lifecycle, and single-file storage tests.
-
-## Challenges
-
-MariaDB already has embedded server support, but the embedded runtime still
-starts much of a server-shaped system. MyLite needs to keep the useful SQL layer
-while replacing the server filesystem and bootstrap model.
-
-- **Bootstrap:** The embedded runtime must start without exposing a server
-  administration model.
-- **Catalog:** Schema and table metadata must live in the `.mylite` file
-  instead of database directories or durable `.frm` sidecars.
-- **Storage:** Existing durable engines such as Aria and InnoDB normally create
-  sidecar files and are not the final storage answer.
-- **Recovery:** The file format and any companion journal or WAL files need
-  transaction and crash recovery guarantees before they store user data.
-- **Size:** The library can be smaller than a full server distribution by
-  omitting daemon-only and rare optional subsystems, but it will not be
-  SQLite-small.
+- Test suites.
 
 ## Development
 
-MyLite currently contains project documentation and workflow guidance.
-Implementation work should start from a pinned MariaDB 11.8 LTS source ref,
-keep upstream imports mechanical, and keep MyLite changes narrow.
+MyLite contains project documentation, workflow guidance, and a mechanical
+MariaDB Server 11.8.6 source import under `vendor/mariadb/server/`. It also
+has a reproducible Linux-container build entry point for the current minimal
+embedded MariaDB baseline:
+
+```sh
+tools/build-mariadb-minsize.sh
+```
+
+That command builds `build/mariadb-minsize/libmysqld/libmariadbd.a` and writes
+`build/mariadb-minsize/mylite-build-report.txt` with toolchain, size, and
+static plugin evidence. The current embedded bootstrap smoke can be run with:
+
+```sh
+tools/run-embedded-bootstrap-smoke.sh
+```
+
+That smoke starts MariaDB's embedded runtime in-process with controlled
+temporary paths, runs `SELECT 1`, verifies explicit rejections for the first
+unsupported server surfaces, shuts the runtime down, and records observed
+startup side effects. Implementation work should keep MyLite changes narrow and
+separate from upstream source imports.
+
+The first `libmylite` open/close lifecycle smoke can be run with:
+
+```sh
+tools/run-libmylite-open-close-smoke.sh
+```
+
+That smoke builds the initial static `libmylite` wrapper, opens and closes a
+placeholder `.mylite` path, verifies handle-owned diagnostics, and records the
+current temporary runtime side effects.
+
+The first static MyLite storage-engine registration smoke can be run with:
+
+```sh
+tools/run-storage-engine-smoke.sh
+```
+
+That smoke verifies that MariaDB's embedded plugin registry sees the built-in
+`MYLITE` storage engine, discovers catalog-backed MyLite tables without durable
+`.frm` sidecars, exercises supported DDL and row/index storage paths, and
+verifies catalog-backed schema namespaces without creating schema directories.
 
 Current design documents:
 
+The grouped compatibility harness can be run with:
+
+```sh
+tools/run-compatibility-test-harness.sh
+```
+
+That harness runs the embedded lifecycle, `libmylite` lifecycle, storage,
+catalog recovery, MariaDB reference comparison, and MyLite sidecar scan groups.
+The reference comparison includes common application SQL over MyLite tables,
+including joins, grouping, subqueries, unions, temporary CTAS, and
+query-driven DML.
+
 - [Roadmap](docs/ROADMAP.md) tracks the ordered engineering slices and current
   progress.
+- [Storage engine compatibility matrix](docs/compatibility/storage-engine-compatibility-matrix.md)
+  compares current MyLite behavior with InnoDB, MyISAM, and Aria.
 - [MariaDB source analysis](docs/research/mariadb-source-analysis.md) records
   the initial source-level findings.
 - [Single-file storage design](docs/architecture/single-file-storage.md)
@@ -177,9 +188,4 @@ Current design documents:
 
 ## License
 
-MyLite is GPL-2.0-only because it is derived from MariaDB Server.
-
-SQLite-like file ownership does not imply SQLite-like licensing. Applications
-that distribute MyLite as part of a combined work must account for GPL
-obligations, and public packaging must avoid implying MariaDB or MySQL
-affiliation.
+MyLite is GPL-2.0 because it is derived from MariaDB.

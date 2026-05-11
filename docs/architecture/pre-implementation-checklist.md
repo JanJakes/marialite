@@ -5,29 +5,44 @@ or changes MariaDB source in earnest.
 
 ## Upstream base
 
-- Choose an exact MariaDB 11.8 LTS tag or commit as the initial base.
-- Record the upstream repository URL, tag, commit, and release status.
-- The current preferred initial import ref is `mariadb-11.8.6`
-  (`9bfea48ce1214cc4470f6f6f8a4e30352cef84e7`), subject to a fresh release
-  check immediately before import.
-- Keep an upstream-tracking branch separate from MyLite patch branches.
-- Decide whether early work tracks the `11.8` branch or a specific patch tag.
-  The branch is useful for observation; implementation should pin a ref.
+- Initial base selected and imported: MariaDB Server tag `mariadb-11.8.6`
+  (`9bfea48ce1214cc4470f6f6f8a4e30352cef84e7`).
+- Upstream repository: <https://github.com/MariaDB/server>.
+- Release status checked on 2026-05-11: MariaDB.org listed 11.8.6 as Stable,
+  and MariaDB release notes described it as a Stable GA 11.8 long-term release.
+- The floating `11.8` branch remains useful for observation, but MyLite
+  implementation is pinned to the imported tag until a deliberate upstream
+  update slice changes it.
+- Keep any future upstream-tracking branch separate from MyLite patch branches.
 
 ## Build environment
 
-- Create a reproducible build environment, preferably a Linux container first
-  and macOS as a secondary supported development platform.
-- Pin required tools such as CMake, Bison, compiler family, OpenSSL, and PCRE2.
-- Produce a baseline embedded build of `libmariadbd.a`.
-- Record the size of the embedded artifact and the list of linked static
-  engines/plugins.
-- Add a repeatable command for a minimal embedded profile before optimizing for
-  size.
+- Reproducible Linux container build added:
+  `tools/build-mariadb-minsize.sh`.
+- Baseline environment recorded on 2026-05-11: Docker `ubuntu:24.04` on
+  Linux/aarch64, CMake 3.28.3, Ninja 1.11.1, Bison 3.8.2, Flex 2.6.4,
+  Ubuntu LLD 18.1.3, and GCC/G++ 13.3.0.
+- Baseline embedded artifact produced:
+  `build/mariadb-minsize/libmysqld/libmariadbd.a`.
+- Baseline size recorded: 44,134,820 bytes, 570 archive objects.
+- Dynamic plugin artifacts recorded: none.
+- Embedded builtin plugins recorded in
+  `build/mariadb-minsize/mylite-build-report.txt`: binlog, CSV, HEAP,
+  MyISAM, MyISAMMRG, MHNSW, MyLite, MySQL password, Online Alter Log,
+  Sequence, SQL Sequence, Thread Pool Info, Type Geom, Type Inet, Type UUID,
+  User Variables, and Userstat. The current MyLite profile sets
+  `MYLITE_DISABLE_ARIA=ON`, `PLUGIN_ARIA=NO`, and
+  `USE_ARIA_FOR_TMP_TABLES=OFF`.
+- After `mylite-engine-discovery`, the current embedded artifact is
+  44,227,954 bytes and the built-in plugin evidence includes
+  `builtin_maria_mylite_plugin`.
+- macOS native build support remains future work; the current baseline is the
+  Linux-container build.
 
 ## Source layout and patch stack
 
-- Decide how upstream MariaDB source enters this repository.
+- Upstream MariaDB source enters this repository under
+  `vendor/mariadb/server/`.
 - Keep mechanical upstream imports separate from MyLite commits.
 - Keep MyLite-owned code in clearly named modules where possible.
 - Preserve upstream formatting in MariaDB-derived files.
@@ -67,6 +82,28 @@ and known risks.
 
 ## Test harness
 
+- Embedded bootstrap smoke added:
+  `tools/run-embedded-bootstrap-smoke.sh`.
+- The smoke starts MariaDB's embedded runtime in-process, runs `SELECT 1`,
+  verifies explicit rejections for the first unsupported server surfaces, shuts
+  down, and records observed files under
+  `build/mariadb-minsize/mylite-embedded-bootstrap-report.txt`.
+- Open/close lifecycle smoke added:
+  `tools/run-libmylite-open-close-smoke.sh`.
+- The first `libmylite` implementation keeps MariaDB's embedded runtime
+  process-scoped after first initialization because repeated
+  `mysql_server_init()` after `mysql_server_end()` currently crashes in
+  inherited MariaDB startup code.
+- Storage-engine registration smoke added:
+  `tools/run-storage-engine-smoke.sh`.
+- The first static `MYLITE` engine is visible through
+  `information_schema.ENGINES`, but user DDL remains deferred until metadata
+  routing can prevent `.frm` and schema-directory side effects.
+- The original engine-discovery smoke proved the seed table `mylite.probe`
+  could be discovered and scanned without a `.frm` file. Later storage smokes
+  removed that hard-coded probe and now prove new databases start with an empty
+  default schema while user-created catalog tables still discover without
+  `.frm` files.
 - Identify MariaDB tests that can run against embedded mode early.
 - Add file-system checks that distinguish expected MyLite companion files from
   unexpected MariaDB datadir, schema, engine, or log sidecars.
@@ -75,6 +112,12 @@ and known risks.
 - Add a MariaDB reference runtime for compatibility-sensitive SQL behavior.
 - Keep unit, embedded smoke, MariaDB-comparison, and crash tests separately
   labeled.
+- Grouped compatibility harness added:
+  `tools/run-compatibility-test-harness.sh`.
+- The harness runs embedded lifecycle, `libmylite` lifecycle,
+  storage/recovery, MariaDB-reference comparison, and MyLite sidecar scan
+  groups. The MyLite sidecar scan now treats Aria log/control files as
+  unexpected sidecars and currently reports no known inherited sidecars.
 
 ## File format and storage decisions
 

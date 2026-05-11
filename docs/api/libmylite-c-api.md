@@ -40,6 +40,7 @@ typedef enum mylite_result {
   MYLITE_CORRUPT = 11,
   MYLITE_NOTFOUND = 12,
   MYLITE_FULL = 13,
+  MYLITE_CANTOPEN = 14,
   MYLITE_CONSTRAINT = 19,
   MYLITE_MISUSE = 21,
   MYLITE_ROW = 100,
@@ -77,9 +78,38 @@ Suggested flags:
 `profile` can select a build/runtime profile such as `default`, `strict`,
 `compat`, or `no-temp-files`.
 
-`mylite_close()` should return `MYLITE_BUSY` if statements or other
-resources still depend on the handle. A later `mylite_close_v2()` can offer
-deferred-close semantics if there is a real need.
+`mylite_close()` returns `MYLITE_BUSY` if statements or other resources still
+depend on the handle. A later `mylite_close_v2()` can offer deferred-close
+semantics if there is a real need.
+
+The first implementation is intentionally narrower than the final API shape:
+it supports one initialized database path per process because MariaDB's
+embedded server bootstrap is process-global and does not safely restart inside
+one process after `mysql_server_end()`. `mylite_close()` releases the handle's
+embedded connection; the process-scoped runtime is kept until process exit.
+
+`MYLITE_OPEN_READONLY` is enforced for the active process-scoped runtime:
+MyLite opens the primary file read-only in the storage engine, holds a shared
+advisory lock, allows reads of existing MyLite tables, and rejects MyLite DDL
+and DML mutations with `MYLITE_READONLY`. Because the embedded runtime and
+storage-engine startup options are process-global, a later same-path open with
+an incompatible read/write mode returns `MYLITE_BUSY`. MariaDB errno and
+SQLSTATE details are preserved; some read-only handler failures still surface
+as MariaDB SQLSTATE `HY000` with read-only errno/message details.
+
+`MYLITE_OPEN_EXCLUSIVE` is supported only with
+`MYLITE_OPEN_READWRITE | MYLITE_OPEN_CREATE`. It makes the primary-file
+preflight fail with `MYLITE_CANTOPEN` if the path already exists. It is a
+create-or-fail path rule, not a locking or multi-process concurrency promise.
+
+`MYLITE_OPEN_URI` enables local `file:` URI interpretation. The supported URI
+surface is intentionally narrow: empty or `localhost` authorities, percent-
+decoded local paths, and `mode=ro`, `mode=rw`, or `mode=rwc`. URI mode can
+provide read/write/create flags when they are omitted, but it must agree with
+explicit flags when both are present. Unsupported query parameters, fragments,
+remote authorities, malformed percent escapes, and unsupported modes return
+`MYLITE_MISUSE`. Non-URI strings passed with `MYLITE_OPEN_URI` continue to
+open as ordinary paths.
 
 ## Direct execution
 
@@ -104,6 +134,11 @@ for repeated work and binary-safe values.
 If `errmsg` is non-NULL and an error string is returned, the caller releases it
 with `mylite_free()`.
 
+The first implementation executes one null-terminated SQL string, buffers any
+result set, and invokes the callback with text values and column names. It does
+not support prepared statements, binary-safe value access, multi-statement
+strings, or multiple result sets yet.
+
 ## Prepared statements
 
 ```c
@@ -125,11 +160,20 @@ Return values:
 - `MYLITE_DONE` when execution is complete,
 - another code on error.
 
+The first implementation executes lazily on the first `mylite_step()`, buffers
+result sets, and keeps column values valid until the next `mylite_step()`,
+`mylite_reset()`, or `mylite_finalize()`. `sql_len == 0` uses `strlen(sql)` for
+C-string convenience, and `tail`, when supplied, points to the end of the
+prepared SQL on success.
+
 Bind indexes are 1-based, matching SQLite's convention for parameter slots.
 
 ## Bindings
 
 ```c
+#define MYLITE_STATIC ((void (*)(void *))0)
+#define MYLITE_TRANSIENT ((void (*)(void *))-1)
+
 int mylite_bind_null(mylite_stmt *stmt, unsigned index);
 int mylite_bind_int64(mylite_stmt *stmt, unsigned index, long long value);
 int mylite_bind_uint64(mylite_stmt *stmt, unsigned index, unsigned long long value);
@@ -152,11 +196,19 @@ MariaDB supports richer types than SQLite. Later APIs should add typed date,
 time, decimal, JSON, and geometry bindings instead of forcing everything through
 text.
 
-The destructor callback follows SQLite's ownership shape: MyLite either
-borrows the input until statement reset/finalize, copies it immediately, or
-calls the provided destructor after it no longer needs the value. The final API
-should define `MYLITE_STATIC` and `MYLITE_TRANSIENT` constants instead of
-requiring users to write sentinel function pointers directly.
+The first implementation copies text and BLOB input immediately into
+`mylite_stmt` storage, including embedded NUL bytes. `MYLITE_STATIC` and
+`MYLITE_TRANSIENT` are accepted as ownership sentinels but both result in an
+immediate MyLite-owned copy in this implementation. A custom destructor is
+called after a successful copy because MyLite no longer needs the caller's
+input object. If validation or allocation fails, ownership remains with the
+caller and the destructor is not called.
+
+A NULL text or BLOB pointer binds SQL NULL. Binding is allowed before the first
+`mylite_step()` and after `mylite_reset()`. `mylite_reset()` preserves existing
+bindings so a statement can be re-executed without rebinding every parameter.
+Changing bindings after a statement has been stepped requires
+`mylite_reset()` first.
 
 ## Memory ownership
 
@@ -171,6 +223,14 @@ by the handle, owned by the statement, or caller-owned.
 ## Columns
 
 ```c
+typedef enum mylite_column_kind {
+  MYLITE_INTEGER = 1,
+  MYLITE_FLOAT = 2,
+  MYLITE_TEXT = 3,
+  MYLITE_BLOB = 4,
+  MYLITE_NULL = 5
+} mylite_column_kind;
+
 unsigned mylite_column_count(mylite_stmt *stmt);
 const char *mylite_column_name(mylite_stmt *stmt, unsigned column);
 int mylite_column_type(mylite_stmt *stmt, unsigned column);
@@ -189,22 +249,18 @@ Column values are valid until the next `mylite_step()`,
 ## Errors
 
 ```c
+typedef enum mylite_warning_level {
+  MYLITE_WARNING_NOTE = 1,
+  MYLITE_WARNING_WARNING = 2,
+  MYLITE_WARNING_ERROR = 3
+} mylite_warning_level;
+
 int mylite_errcode(mylite_db *db);
 int mylite_extended_errcode(mylite_db *db);
 unsigned mylite_mariadb_errno(mylite_db *db);
 const char *mylite_sqlstate(mylite_db *db);
 const char *mylite_errmsg(mylite_db *db);
 unsigned mylite_warning_count(mylite_db *db);
-```
-
-MariaDB warnings matter. The API should expose them, not collapse everything
-into a single success/error bit. `mylite_errcode()` is the stable MyLite
-classification, while MariaDB errno and SQLSTATE remain available for callers
-that need server-compatible diagnostics.
-
-Later:
-
-```c
 int mylite_warning(
     mylite_db *db,
     unsigned index,
@@ -212,6 +268,20 @@ int mylite_warning(
     unsigned *code,
     const char **message);
 ```
+
+MariaDB warnings matter. The API should expose them, not collapse everything
+into a single success/error bit. `mylite_errcode()` is the stable MyLite
+classification, while MariaDB errno and SQLSTATE remain available for callers
+that need server-compatible diagnostics.
+
+`mylite_warning()` retrieves one stored diagnostic condition by zero-based
+index without requiring callers to run `SHOW WARNINGS` themselves. `level`
+receives a `mylite_warning_level`, `code` receives the MariaDB condition code,
+and `message` receives a database-handle-owned string valid until the next
+`mylite_warning()` call or handle close. It returns `MYLITE_NOTFOUND` when the
+requested condition was not stored in MariaDB's diagnostics area. This can
+happen even when `mylite_warning_count()` is larger, because MariaDB can count
+more warnings than it stores when `@@max_error_count` is low.
 
 ## Statement effects
 
@@ -223,6 +293,13 @@ unsigned long long mylite_last_insert_id(mylite_db *db);
 Affected-row counts and generated autoincrement ids are part of MariaDB
 observable behavior. They should be exposed as MyLite APIs rather than requiring
 callers to reach into an internal `MYSQL *`.
+
+The first implementation exposes these values from the handle's last statement
+and also implements `mylite_warning_count()` from the diagnostics section above.
+`mylite_changes()` returns `-1` when MariaDB reports its standard not-applicable
+or failed-statement sentinel. `mylite_last_insert_id()` and
+`mylite_warning_count()` return zero for a null or inactive handle. Warning
+details are available through `mylite_warning()`.
 
 ## Configuration
 
