@@ -34,9 +34,9 @@ It can store simple non-BLOB rows, enforce supported primary and unique keys,
 serve basic ordered index access, and persist table-local autoincrement state
 in the `.mylite` payload.
 
-The next implementation step is `compatibility-test-harness`, which should turn
-the accumulated smoke coverage into clearer repeatable groups and add MariaDB
-comparison coverage for the supported embedded subset.
+The active implementation step is `compatibility-test-harness`, which should
+turn the accumulated smoke coverage into clearer repeatable groups and add
+MariaDB comparison coverage for the supported embedded subset.
 
 ## Implementation plan
 
@@ -55,7 +55,7 @@ comparison coverage for the supported embedded subset.
 | 10 | `file-format-recovery` | Done | Define and implement the first durable file header, page layout, catalog update protocol, and initial catalog recovery guarantees. |
 | 11 | `row-index-storage` | Done | Implement the first durable heap row storage and core table-scan read/write/update/delete handler methods. |
 | 12 | `index-autoincrement-storage` | Done | Add enforced key metadata, basic index access, and durable autoincrement state. |
-| 13 | `compatibility-test-harness` | Planned | Run embedded lifecycle, unexpected-sidecar detection, crash/reopen, and MariaDB comparison tests in repeatable groups. |
+| 13 | `compatibility-test-harness` | In progress | Run embedded lifecycle, unexpected-sidecar detection, crash/reopen, and MariaDB comparison tests in repeatable groups. |
 
 ## Size and profile direction
 
