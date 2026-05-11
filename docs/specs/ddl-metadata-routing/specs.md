@@ -179,6 +179,51 @@ No new dependency. New code remains GPL-2.0-only.
 - No `.frm` file remains in the smoke runtime.
 - Existing embedded and `libmylite` smokes still pass.
 
+## Implementation Result
+
+The `MYLITE` engine now keeps a process-local catalog with one SQL seed entry
+and frm-backed entries for DDL-created tables. `CREATE TABLE` stores a copied
+frm image, copy `ALTER TABLE` uses the handler's temporary path for the
+intermediate definition, `RENAME TABLE` moves the catalog entry, and
+`DROP TABLE` removes it.
+
+The storage-engine smoke passes and flushes table caches between DDL phases so
+the post-DDL assertions exercise catalog rediscovery:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh
+```
+
+The report records:
+
+- `engine=MYLITE`
+- `support=YES`
+- `discovered_table=probe`
+- `count=0`
+- `created_count=0`
+- `altered_column=note`
+- `renamed_count=0`
+- `dropped_table=renamed`
+- dynamic plugin artifacts: none
+- `.frm` artifacts: none
+
+Regression smokes also pass:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-embedded-bootstrap-smoke.sh
+```
+
+Observed artifacts after this slice:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,249,030 bytes.
+- `build/mariadb-minsize/mylite/libmylite.a`: 29,530 bytes.
+- `build/mariadb-minsize/mylite/mylite-storage-engine-smoke`: 22,682,128
+  bytes.
+- `build/mariadb-minsize/mylite/mylite-open-close-smoke`: 22,684,448 bytes.
+- `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke`: 22,616,608
+  bytes.
+
 ## Risks And Unresolved Questions
 
 - The process-local catalog is not durable and is not a file-format design.

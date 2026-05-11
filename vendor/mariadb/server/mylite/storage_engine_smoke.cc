@@ -30,6 +30,10 @@ struct SmokeResult
   std::string support;
   std::string discovered_table;
   std::string count;
+  std::string created_count;
+  std::string altered_column;
+  std::string renamed_count;
+  std::string dropped_table;
 };
 
 static bool parse_options(int argc, char **argv, SmokeOptions *options,
@@ -41,6 +45,14 @@ static int run_smoke(const SmokeOptions &options,
 static bool fetch_mylite_engine(MYSQL *mysql, SmokeResult *result);
 static bool fetch_discovered_table(MYSQL *mysql, SmokeResult *result);
 static bool fetch_probe_count(MYSQL *mysql, SmokeResult *result);
+static bool exercise_ddl(MYSQL *mysql, SmokeResult *result);
+static bool execute_statement(MYSQL *mysql, const char *statement,
+                              const char *label, SmokeResult *result);
+static bool fetch_single_value(MYSQL *mysql, const char *query,
+                               const char *label, std::string *value,
+                               SmokeResult *result);
+static bool verify_table_absent(MYSQL *mysql, const char *query,
+                                const char *label, SmokeResult *result);
 static void write_report(const SmokeOptions &options,
                          const std::vector<std::string> &server_args,
                          const SmokeResult &result);
@@ -166,6 +178,10 @@ static int run_smoke(const SmokeOptions &,
 
   result->phase= "table_scan";
   if (!fetch_probe_count(mysql, result))
+    goto done;
+
+  result->phase= "ddl_lifecycle";
+  if (!exercise_ddl(mysql, result))
     goto done;
 
   result->phase= "complete";
@@ -305,6 +321,151 @@ static bool fetch_probe_count(MYSQL *mysql, SmokeResult *result)
   return ok;
 }
 
+static bool exercise_ddl(MYSQL *mysql, SmokeResult *result)
+{
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.created "
+                         "(id INT) ENGINE=MYLITE",
+                         "CREATE TABLE", result))
+    return false;
+  if (!execute_statement(mysql, "FLUSH TABLES", "FLUSH TABLES after CREATE",
+                         result))
+    return false;
+
+  if (!fetch_single_value(mysql, "SELECT COUNT(*) FROM mylite.created",
+                          "created count", &result->created_count, result))
+    return false;
+  if (result->created_count != "0")
+  {
+    result->message= "created table count returned an unexpected value";
+    return false;
+  }
+
+  if (!execute_statement(mysql,
+                         "ALTER TABLE mylite.created "
+                         "ADD COLUMN note VARCHAR(12), ALGORITHM=COPY",
+                         "ALTER TABLE", result))
+    return false;
+  if (!execute_statement(mysql, "FLUSH TABLES", "FLUSH TABLES after ALTER",
+                         result))
+    return false;
+
+  if (!fetch_single_value(mysql,
+                          "SHOW COLUMNS FROM mylite.created LIKE 'note'",
+                          "altered column", &result->altered_column, result))
+    return false;
+  if (result->altered_column != "note")
+  {
+    result->message= "altered table did not expose the added column";
+    return false;
+  }
+
+  if (!execute_statement(mysql,
+                         "RENAME TABLE mylite.created TO mylite.renamed",
+                         "RENAME TABLE", result))
+    return false;
+  if (!execute_statement(mysql, "FLUSH TABLES", "FLUSH TABLES after RENAME",
+                         result))
+    return false;
+
+  if (!fetch_single_value(mysql, "SELECT COUNT(*) FROM mylite.renamed",
+                          "renamed count", &result->renamed_count, result))
+    return false;
+  if (result->renamed_count != "0")
+  {
+    result->message= "renamed table count returned an unexpected value";
+    return false;
+  }
+
+  if (!execute_statement(mysql, "DROP TABLE mylite.renamed", "DROP TABLE",
+                         result))
+    return false;
+  if (!execute_statement(mysql, "FLUSH TABLES", "FLUSH TABLES after DROP",
+                         result))
+    return false;
+
+  if (!verify_table_absent(mysql, "SHOW TABLES FROM mylite LIKE 'renamed'",
+                           "renamed table", result))
+    return false;
+  result->dropped_table= "renamed";
+
+  return fetch_discovered_table(mysql, result);
+}
+
+static bool execute_statement(MYSQL *mysql, const char *statement,
+                              const char *label, SmokeResult *result)
+{
+  if (!mysql_query(mysql, statement))
+    return true;
+
+  result->message= std::string(label) + " failed: " + mysql_error(mysql);
+  return false;
+}
+
+static bool fetch_single_value(MYSQL *mysql, const char *query,
+                               const char *label, std::string *value,
+                               SmokeResult *result)
+{
+  if (mysql_query(mysql, query))
+  {
+    result->message= std::string(label) + " query failed: " +
+                     mysql_error(mysql);
+    return false;
+  }
+
+  MYSQL_RES *res= mysql_store_result(mysql);
+  if (!res)
+  {
+    result->message= std::string(label) + " result failed: " +
+                     mysql_error(mysql);
+    return false;
+  }
+
+  bool ok= false;
+  MYSQL_ROW row= mysql_fetch_row(res);
+  if (mysql_num_fields(res) < 1)
+    result->message= std::string(label) +
+                     " returned an unexpected column count";
+  else if (!row || !row[0])
+    result->message= std::string(label) + " returned no value";
+  else if (mysql_fetch_row(res) != nullptr)
+    result->message= std::string(label) + " returned more than one row";
+  else
+  {
+    *value= row[0];
+    ok= true;
+  }
+
+  mysql_free_result(res);
+  return ok;
+}
+
+static bool verify_table_absent(MYSQL *mysql, const char *query,
+                                const char *label, SmokeResult *result)
+{
+  if (mysql_query(mysql, query))
+  {
+    result->message= std::string(label) + " absence query failed: " +
+                     mysql_error(mysql);
+    return false;
+  }
+
+  MYSQL_RES *res= mysql_store_result(mysql);
+  if (!res)
+  {
+    result->message= std::string(label) + " absence result failed: " +
+                     mysql_error(mysql);
+    return false;
+  }
+
+  const bool ok= mysql_fetch_row(res) == nullptr;
+  if (!ok)
+    result->message= std::string(label) + " still exists after DROP";
+
+  mysql_free_result(res);
+  return ok;
+}
+
 static void write_report(const SmokeOptions &options,
                          const std::vector<std::string> &server_args,
                          const SmokeResult &result)
@@ -340,6 +501,14 @@ static void write_report(const SmokeOptions &options,
     report << "discovered_table=" << result.discovered_table << "\n";
   if (!result.count.empty())
     report << "count=" << result.count << "\n";
+  if (!result.created_count.empty())
+    report << "created_count=" << result.created_count << "\n";
+  if (!result.altered_column.empty())
+    report << "altered_column=" << result.altered_column << "\n";
+  if (!result.renamed_count.empty())
+    report << "renamed_count=" << result.renamed_count << "\n";
+  if (!result.dropped_table.empty())
+    report << "dropped_table=" << result.dropped_table << "\n";
 }
 
 static bool option_value(const char *arg, const char *name, std::string *value)
