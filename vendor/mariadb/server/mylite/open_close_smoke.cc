@@ -37,7 +37,21 @@ struct SmokeResult
   int status= 1;
   std::string phase;
   std::string message;
+  std::string exec_null_db_message;
+  std::string exec_scalar_columns;
+  std::string exec_scalar_rows;
+  std::string exec_callback_abort_message;
+  std::string exec_dml_rows;
+  std::string exec_duplicate_key_message;
+  std::string exec_reopen_rows;
   std::vector<CaseResult> cases;
+};
+
+struct ExecCapture
+{
+  std::vector<std::string> columns;
+  std::vector<std::string> rows;
+  int abort_after= 0;
 };
 
 static bool parse_options(int argc, char **argv, SmokeOptions *options,
@@ -59,8 +73,25 @@ static bool check_same_path_multi_handle(const SmokeOptions &options,
                                          SmokeResult *result);
 static bool check_different_path_busy(const SmokeOptions &options,
                                       SmokeResult *result);
+static bool check_exec_misuse(const SmokeOptions &options,
+                              SmokeResult *result);
+static bool check_exec_scalar(const SmokeOptions &options,
+                              SmokeResult *result);
+static bool check_exec_callback_abort(const SmokeOptions &options,
+                                      SmokeResult *result);
+static bool check_exec_dml_persistence(const SmokeOptions &options,
+                                       SmokeResult *result);
+static bool exec_statement(mylite_db *db, const char *sql, const char *label,
+                           SmokeResult *result);
+static bool exec_query_capture(mylite_db *db, const char *sql,
+                               const char *label, ExecCapture *capture,
+                               SmokeResult *result);
+static int capture_exec_row(void *ctx, int column_count, char **values,
+                            char **column_names);
 static bool record_result(SmokeResult *result, const char *label, int expected,
                           int actual, mylite_db *db);
+static std::string join_strings(const std::vector<std::string> &values,
+                                const char *separator);
 static void write_report(const SmokeOptions &options,
                          const SmokeResult &result);
 static bool option_value(const char *arg, const char *name, std::string *value);
@@ -138,9 +169,21 @@ static int run_smoke(const SmokeOptions &options, SmokeResult *result)
   result->phase= "different_path_busy";
   ok= check_different_path_busy(options, result) && ok;
 
+  result->phase= "exec_misuse";
+  ok= check_exec_misuse(options, result) && ok;
+
+  result->phase= "exec_scalar";
+  ok= check_exec_scalar(options, result) && ok;
+
+  result->phase= "exec_callback_abort";
+  ok= check_exec_callback_abort(options, result) && ok;
+
+  result->phase= "exec_dml_persistence";
+  ok= check_exec_dml_persistence(options, result) && ok;
+
   if (!ok)
   {
-    result->message= "open/close smoke failed";
+    result->message= "open/close or exec smoke failed";
     return result->status;
   }
 
@@ -299,6 +342,201 @@ static bool check_different_path_busy(const SmokeOptions &options,
   return ok;
 }
 
+static bool check_exec_misuse(const SmokeOptions &options,
+                              SmokeResult *result)
+{
+  bool ok= true;
+  char *errmsg= nullptr;
+  int rc= mylite_exec(nullptr, "SELECT 1", nullptr, nullptr, &errmsg);
+  if (errmsg)
+  {
+    result->exec_null_db_message= errmsg;
+    mylite_free(errmsg);
+  }
+  ok= record_result(result, "exec_null_db", MYLITE_MISUSE, rc, nullptr) &&
+      ok;
+  if (result->exec_null_db_message != "bad database handle")
+    ok= false;
+
+  mylite_db *db= nullptr;
+  rc= mylite_open(options.database.c_str(), &db);
+  ok= record_result(result, "exec_misuse_open", MYLITE_OK, rc, db) && ok;
+  if (db)
+  {
+    rc= mylite_exec(db, nullptr, nullptr, nullptr, nullptr);
+    ok= record_result(result, "exec_null_sql", MYLITE_MISUSE, rc, db) &&
+        ok;
+    rc= mylite_close(db);
+    ok= record_result(result, "exec_misuse_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  mylite_free(nullptr);
+  return ok;
+}
+
+static bool check_exec_scalar(const SmokeOptions &options,
+                              SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "exec_scalar_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    ExecCapture capture;
+    ok= exec_query_capture(db, "SELECT 1 + 2 AS total, NULL AS empty",
+                           "exec_scalar_select", &capture, result) && ok;
+    result->exec_scalar_columns= join_strings(capture.columns, ",");
+    result->exec_scalar_rows= join_strings(capture.rows, ",");
+    if (result->exec_scalar_columns != "total,empty" ||
+        result->exec_scalar_rows != "3:NULL")
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "exec_scalar_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_exec_callback_abort(const SmokeOptions &options,
+                                      SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "exec_abort_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    ExecCapture capture;
+    capture.abort_after= 1;
+    char *errmsg= nullptr;
+    rc= mylite_exec(db, "SELECT 1 AS value UNION ALL SELECT 2",
+                    capture_exec_row, &capture, &errmsg);
+    if (errmsg)
+    {
+      result->exec_callback_abort_message= errmsg;
+      mylite_free(errmsg);
+    }
+    ok= record_result(result, "exec_callback_abort", MYLITE_ERROR, rc,
+                      db) && ok;
+    if (result->exec_callback_abort_message != "callback requested abort")
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "exec_abort_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_exec_dml_persistence(const SmokeOptions &options,
+                                       SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "exec_dml_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    ok= exec_statement(db, "DROP TABLE IF EXISTS mylite.exec_rows",
+                       "exec_drop_existing", result) && ok;
+    ok= exec_statement(db,
+                       "CREATE TABLE mylite.exec_rows "
+                       "(id INT NOT NULL, note VARCHAR(20), PRIMARY KEY(id)) "
+                       "ENGINE=MYLITE",
+                       "exec_create_table", result) && ok;
+    ok= exec_statement(db,
+                       "INSERT INTO mylite.exec_rows VALUES "
+                       "(1, 'one'), (2, NULL)",
+                       "exec_insert_rows", result) && ok;
+
+    ExecCapture capture;
+    ok= exec_query_capture(db,
+                           "SELECT id, COALESCE(note, 'NULL') AS note "
+                           "FROM mylite.exec_rows ORDER BY id",
+                           "exec_select_rows", &capture, result) && ok;
+    result->exec_dml_rows= join_strings(capture.rows, ",");
+    if (result->exec_dml_rows != "1:one,2:NULL")
+      ok= false;
+
+    char *errmsg= nullptr;
+    rc= mylite_exec(db, "INSERT INTO mylite.exec_rows VALUES (1, 'again')",
+                    nullptr, nullptr, &errmsg);
+    if (errmsg)
+    {
+      result->exec_duplicate_key_message= errmsg;
+      mylite_free(errmsg);
+    }
+    ok= record_result(result, "exec_duplicate_key", MYLITE_CONSTRAINT, rc,
+                      db) && ok;
+    if (mylite_mariadb_errno(db) != 1062 ||
+        std::strcmp(mylite_sqlstate(db), "23000") != 0 ||
+        result->exec_duplicate_key_message.find("Duplicate entry '1'") ==
+          std::string::npos)
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "exec_dml_close", MYLITE_OK, rc, nullptr) &&
+        ok;
+  }
+
+  db= nullptr;
+  rc= mylite_open(options.database.c_str(), &db);
+  ok= record_result(result, "exec_reopen", MYLITE_OK, rc, db) && ok;
+  if (db)
+  {
+    ExecCapture capture;
+    ok= exec_query_capture(db,
+                           "SELECT id, COALESCE(note, 'NULL') AS note "
+                           "FROM mylite.exec_rows ORDER BY id",
+                           "exec_reopen_select", &capture, result) && ok;
+    result->exec_reopen_rows= join_strings(capture.rows, ",");
+    if (result->exec_reopen_rows != "1:one,2:NULL")
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "exec_reopen_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+
+  return ok;
+}
+
+static bool exec_statement(mylite_db *db, const char *sql, const char *label,
+                           SmokeResult *result)
+{
+  const int rc= mylite_exec(db, sql, nullptr, nullptr, nullptr);
+  return record_result(result, label, MYLITE_OK, rc, db);
+}
+
+static bool exec_query_capture(mylite_db *db, const char *sql,
+                               const char *label, ExecCapture *capture,
+                               SmokeResult *result)
+{
+  const int rc= mylite_exec(db, sql, capture_exec_row, capture, nullptr);
+  return record_result(result, label, MYLITE_OK, rc, db);
+}
+
+static int capture_exec_row(void *ctx, int column_count, char **values,
+                            char **column_names)
+{
+  ExecCapture *capture= static_cast<ExecCapture *>(ctx);
+  if (capture->columns.empty())
+  {
+    for (int i= 0; i < column_count; ++i)
+      capture->columns.push_back(column_names[i] ? column_names[i] : "");
+  }
+
+  std::vector<std::string> row_values;
+  row_values.reserve(static_cast<size_t>(column_count));
+  for (int i= 0; i < column_count; ++i)
+    row_values.push_back(values[i] ? values[i] : "NULL");
+  capture->rows.push_back(join_strings(row_values, ":"));
+
+  if (capture->abort_after > 0 &&
+      static_cast<int>(capture->rows.size()) >= capture->abort_after)
+    return 1;
+  return 0;
+}
+
 static bool record_result(SmokeResult *result, const char *label, int expected,
                           int actual, mylite_db *db)
 {
@@ -334,6 +572,19 @@ static bool record_result(SmokeResult *result, const char *label, int expected,
   return case_result.passed;
 }
 
+static std::string join_strings(const std::vector<std::string> &values,
+                                const char *separator)
+{
+  std::string result;
+  for (size_t i= 0; i < values.size(); ++i)
+  {
+    if (i != 0)
+      result+= separator;
+    result+= values[i];
+  }
+  return result;
+}
+
 static void write_report(const SmokeOptions &options,
                          const SmokeResult &result)
 {
@@ -350,6 +601,24 @@ static void write_report(const SmokeOptions &options,
   report << "status=" << result.status << "\n";
   report << "phase=" << result.phase << "\n";
   report << "message=" << result.message << "\n\n";
+
+  if (!result.exec_null_db_message.empty())
+    report << "exec_null_db_message=" << result.exec_null_db_message << "\n";
+  if (!result.exec_scalar_columns.empty())
+    report << "exec_scalar_columns=" << result.exec_scalar_columns << "\n";
+  if (!result.exec_scalar_rows.empty())
+    report << "exec_scalar_rows=" << result.exec_scalar_rows << "\n";
+  if (!result.exec_callback_abort_message.empty())
+    report << "exec_callback_abort_message="
+           << result.exec_callback_abort_message << "\n";
+  if (!result.exec_dml_rows.empty())
+    report << "exec_dml_rows=" << result.exec_dml_rows << "\n";
+  if (!result.exec_duplicate_key_message.empty())
+    report << "exec_duplicate_key_message="
+           << result.exec_duplicate_key_message << "\n";
+  if (!result.exec_reopen_rows.empty())
+    report << "exec_reopen_rows=" << result.exec_reopen_rows << "\n";
+  report << "\n";
 
   report << "## Cases\n\n";
   for (const CaseResult &case_result : result.cases)

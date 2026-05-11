@@ -27,6 +27,12 @@ extern "C" {
 
 typedef struct mylite_db mylite_db;
 
+typedef int (*mylite_exec_callback)(
+    void *ctx,
+    int column_count,
+    char **values,
+    char **column_names);
+
 typedef enum mylite_result {
   MYLITE_OK = 0,
   MYLITE_ERROR = 1,
@@ -57,6 +63,14 @@ MYLITE_API int mylite_open_v2(
     unsigned flags,
     const char *profile);
 MYLITE_API int mylite_close(mylite_db *db);
+
+MYLITE_API int mylite_exec(
+    mylite_db *db,
+    const char *sql,
+    mylite_exec_callback callback,
+    void *ctx,
+    char **errmsg);
+MYLITE_API void mylite_free(void *ptr);
 
 MYLITE_API int mylite_errcode(mylite_db *db);
 MYLITE_API int mylite_extended_errcode(mylite_db *db);

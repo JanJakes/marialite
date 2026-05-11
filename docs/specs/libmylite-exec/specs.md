@@ -165,10 +165,19 @@ No file-format change.
 
 ## Binary-Size Impact
 
-Expected size impact is modest: one public wrapper, result iteration code, a
+Measured size impact is modest: one public wrapper, result iteration code, a
 small MyLite-owned allocation helper, and smoke coverage. No new MariaDB
-subsystem or dependency should be linked. Record post-implementation
-`libmylite.a` and `libmariadbd.a` sizes from the minsize build report.
+subsystem or dependency is linked.
+
+The post-implementation `MinSizeRel` build records:
+
+| Artifact | Size |
+| --- | ---: |
+| `build/mariadb-minsize/mylite/libmylite.a` | 37,858 bytes |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 44,415,256 bytes |
+
+The build report still records 571 `libmariadbd.a` archive objects and no
+dynamic plugin artifacts.
 
 ## License, Trademark, And Dependency Impact
 
@@ -213,6 +222,28 @@ The `libmylite` smoke should verify:
 - Caller-owned `errmsg` memory is released through `mylite_free()`.
 - Existing storage, compatibility, embedded bootstrap, and open/close smokes
   continue to pass.
+
+## Implementation Result
+
+Implemented in `vendor/mariadb/server/mylite/include/mylite.h` and
+`vendor/mariadb/server/mylite/mylite.cc` with public `mylite_exec_callback`,
+`mylite_exec()`, and `mylite_free()`. `mylite_exec()` executes a
+null-terminated SQL string with `mysql_real_query()`, buffers result sets with
+`mysql_store_result()`, invokes callbacks with row values and column names, and
+releases result ownership with `mysql_free_result()`. SQLSTATE class `23`
+errors map to `MYLITE_CONSTRAINT`; the original MariaDB errno, SQLSTATE, and
+message remain available through existing diagnostic APIs.
+
+The `libmylite` smoke now verifies:
+
+- `exec_scalar_columns=total,empty`,
+- `exec_scalar_rows=3:NULL`,
+- `exec_callback_abort_message=callback requested abort`,
+- `exec_dml_rows=1:one,2:NULL`,
+- `exec_duplicate_key_message=Duplicate entry '1' for key 'PRIMARY'`,
+- duplicate-key diagnostics with `MYLITE_CONSTRAINT`, MariaDB errno `1062`,
+  and SQLSTATE `23000`,
+- `exec_reopen_rows=1:one,2:NULL`.
 
 ## Risks And Unresolved Questions
 

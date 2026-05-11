@@ -9,6 +9,7 @@
 #include <mysql.h>
 
 #include <cerrno>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
@@ -79,6 +80,13 @@ void rebuild_server_argv();
 void stop_runtime();
 void stop_runtime_at_exit();
 int connect_handle(mylite_db *db);
+int execute_result_callback(mylite_db *db, MYSQL_RES *result,
+                            mylite_exec_callback callback, void *ctx);
+int set_error_from_mysql(mylite_db *db);
+int return_error_with_message(mylite_db *db, char **errmsg);
+int return_standalone_error(int code, const char *message, char **errmsg);
+char *duplicate_message(const std::string &message);
+int classify_mariadb_error(const char *sqlstate);
 
 } // namespace
 
@@ -158,6 +166,68 @@ extern "C" int mylite_close(mylite_db *db)
 
   delete db;
   return MYLITE_OK;
+}
+
+extern "C" int mylite_exec(mylite_db *db, const char *sql,
+                           mylite_exec_callback callback, void *ctx,
+                           char **errmsg)
+{
+  if (errmsg)
+    *errmsg= nullptr;
+
+  if (!db)
+    return return_standalone_error(MYLITE_MISUSE, "bad database handle",
+                                   errmsg);
+  if (!sql)
+  {
+    set_error(db, MYLITE_MISUSE, 0, "HY000", "SQL string is required");
+    return return_error_with_message(db, errmsg);
+  }
+  if (!db->mysql)
+  {
+    set_error(db, MYLITE_MISUSE, 0, "HY000",
+              "database handle is not open");
+    return return_error_with_message(db, errmsg);
+  }
+
+  clear_error(db);
+  if (mysql_real_query(db->mysql, sql,
+                       static_cast<unsigned long>(std::strlen(sql))) != 0)
+  {
+    set_error_from_mysql(db);
+    return return_error_with_message(db, errmsg);
+  }
+
+  const unsigned field_count= mysql_field_count(db->mysql);
+  if (field_count == 0)
+  {
+    clear_error(db);
+    return MYLITE_OK;
+  }
+
+  MYSQL_RES *result= mysql_store_result(db->mysql);
+  if (!result)
+  {
+    if (mysql_errno(db->mysql) != 0)
+      set_error_from_mysql(db);
+    else
+      set_error(db, MYLITE_ERROR, 0, "HY000", "mysql_store_result failed");
+    return return_error_with_message(db, errmsg);
+  }
+
+  const int callback_result= execute_result_callback(db, result, callback,
+                                                     ctx);
+  mysql_free_result(result);
+  if (callback_result != MYLITE_OK)
+    return return_error_with_message(db, errmsg);
+
+  clear_error(db);
+  return MYLITE_OK;
+}
+
+extern "C" void mylite_free(void *ptr)
+{
+  std::free(ptr);
 }
 
 extern "C" int mylite_errcode(mylite_db *db)
@@ -421,6 +491,104 @@ int connect_handle(mylite_db *db)
 
   db->mysql= mysql;
   return MYLITE_OK;
+}
+
+int execute_result_callback(mylite_db *db, MYSQL_RES *result,
+                            mylite_exec_callback callback, void *ctx)
+{
+  if (!callback)
+    return MYLITE_OK;
+
+  const unsigned column_count= mysql_num_fields(result);
+  if (column_count > static_cast<unsigned>(INT_MAX))
+    return set_error(db, MYLITE_ERROR, 0, "HY000", "too many result columns");
+
+  MYSQL_FIELD *fields= mysql_fetch_fields(result);
+  if (!fields && column_count != 0)
+    return set_error(db, MYLITE_ERROR, 0, "HY000",
+                     "could not read result metadata");
+
+  try
+  {
+    std::vector<char *> column_names(column_count);
+    for (unsigned i= 0; i < column_count; ++i)
+      column_names[i]= fields[i].name ? fields[i].name : const_cast<char *>("");
+
+    std::vector<char *> values(column_count);
+    MYSQL_ROW row;
+    while ((row= mysql_fetch_row(result)))
+    {
+      for (unsigned i= 0; i < column_count; ++i)
+        values[i]= row[i];
+      if (callback(ctx, static_cast<int>(column_count), values.data(),
+                   column_names.data()) != 0)
+      {
+        return set_error(db, MYLITE_ERROR, 0, "HY000",
+                         "callback requested abort");
+      }
+    }
+  }
+  catch (const std::bad_alloc &)
+  {
+    return set_error(db, MYLITE_NOMEM, 0, "HY001", "out of memory");
+  }
+
+  if (mysql_errno(db->mysql) != 0)
+    return set_error_from_mysql(db);
+  return MYLITE_OK;
+}
+
+int set_error_from_mysql(mylite_db *db)
+{
+  const unsigned error= mysql_errno(db->mysql);
+  const char *sqlstate= mysql_sqlstate(db->mysql);
+  const char *message= mysql_error(db->mysql);
+  const int code= classify_mariadb_error(sqlstate);
+  return set_error(db, code, error, sqlstate,
+                   message && message[0] ? message : "MariaDB query failed");
+}
+
+int return_error_with_message(mylite_db *db, char **errmsg)
+{
+  if (!errmsg)
+    return db->errcode;
+
+  char *message= duplicate_message(db->errmsg);
+  if (!message)
+    return set_error(db, MYLITE_NOMEM, 0, "HY001", "out of memory");
+
+  *errmsg= message;
+  return db->errcode;
+}
+
+int return_standalone_error(int code, const char *message, char **errmsg)
+{
+  if (!errmsg)
+    return code;
+
+  char *copy= duplicate_message(message ? message : "");
+  if (!copy)
+    return MYLITE_NOMEM;
+
+  *errmsg= copy;
+  return code;
+}
+
+char *duplicate_message(const std::string &message)
+{
+  char *copy= static_cast<char *>(std::malloc(message.length() + 1));
+  if (!copy)
+    return nullptr;
+
+  std::memcpy(copy, message.c_str(), message.length() + 1);
+  return copy;
+}
+
+int classify_mariadb_error(const char *sqlstate)
+{
+  if (sqlstate && sqlstate[0] == '2' && sqlstate[1] == '3')
+    return MYLITE_CONSTRAINT;
+  return MYLITE_ERROR;
 }
 
 } // namespace

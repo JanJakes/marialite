@@ -23,11 +23,10 @@ smoke target that starts the runtime in-process, runs `SELECT 1` under
 controlled temporary paths, and verifies the first explicit embedded rejections
 for dynamic plugin, UDF creation, and foreign-server metadata commands. The
 first static `libmylite` wrapper now exposes open/close and handle-owned
-diagnostics for one initialized database path per process. The next active
-slice is adding the first public `mylite_exec()` convenience API so callers can
-execute supported SQL through that handle without reaching for `MYSQL *`
-internals. The first static `MYLITE` storage-engine skeleton is registered in
-the embedded profile.
+diagnostics for one initialized database path per process, plus the first
+public `mylite_exec()` convenience API so callers can execute supported SQL
+through that handle without reaching for `MYSQL *` internals. The first static
+`MYLITE` storage-engine skeleton is registered in the embedded profile.
 The engine can discover the seed table `mylite.probe`, run a bounded `CREATE`,
 copy `ALTER`, `RENAME`, and `DROP` lifecycle without leaving durable `.frm`
 table-definition files, persist frm-backed table definitions in the primary
@@ -108,7 +107,7 @@ a lock timeout instead of misleading index corruption.
 | 26 | `transaction-savepoint-snapshots` | Done | Add MyLite savepoint hooks backed by transaction-context snapshots for the supported row-DML subset. |
 | 27 | `statement-error-rollback` | Done | Prove failed multi-row DML statements restore MyLite's pre-statement snapshot in autocommit and explicit transaction modes. |
 | 28 | `blob-text-row-storage` | Done | Store non-key BLOB/TEXT row payloads inside existing row and overflow pages without persisting native row-buffer pointers. |
-| 29 | `libmylite-exec` | In progress | Add the first public SQL execution convenience API over the opened embedded MyLite handle. |
+| 29 | `libmylite-exec` | Done | Add the first public SQL execution convenience API over the opened embedded MyLite handle. |
 
 ## Size and profile direction
 

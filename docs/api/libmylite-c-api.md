@@ -111,6 +111,11 @@ for repeated work and binary-safe values.
 If `errmsg` is non-NULL and an error string is returned, the caller releases it
 with `mylite_free()`.
 
+The first implementation executes one null-terminated SQL string, buffers any
+result set, and invokes the callback with text values and column names. It does
+not support prepared statements, binary-safe value access, multi-statement
+strings, or multiple result sets yet.
+
 ## Prepared statements
 
 ```c
