@@ -5,6 +5,7 @@
    the Free Software Foundation; version 2 of the License. */
 
 #include <mysql.h>
+#include <mysqld_error.h>
 
 #include <cstring>
 #include <fstream>
@@ -21,12 +22,23 @@ struct SmokeOptions
   std::string report;
 };
 
+struct UnsupportedResult
+{
+  std::string label;
+  std::string statement;
+  unsigned int error= 0;
+  std::string sqlstate;
+  std::string message;
+  bool passed= false;
+};
+
 struct SmokeResult
 {
   int status= 1;
   std::string phase;
   std::string message;
   std::string value;
+  std::vector<UnsupportedResult> unsupported;
 };
 
 static bool parse_options(int argc, char **argv, SmokeOptions *options,
@@ -36,6 +48,7 @@ static int run_smoke(const SmokeOptions &options,
                      const std::vector<std::string> &server_args,
                      SmokeResult *result);
 static bool fetch_select_one(MYSQL *mysql, SmokeResult *result);
+static bool check_unsupported_statements(MYSQL *mysql, SmokeResult *result);
 static void write_report(const SmokeOptions &options,
                          const std::vector<std::string> &server_args,
                          const SmokeResult &result);
@@ -155,6 +168,10 @@ static int run_smoke(const SmokeOptions &,
   if (!fetch_select_one(mysql, result))
     goto done;
 
+  result->phase= "unsupported";
+  if (!check_unsupported_statements(mysql, result))
+    goto done;
+
   result->phase= "complete";
   result->status= 0;
   result->message= "ok";
@@ -206,6 +223,75 @@ static bool fetch_select_one(MYSQL *mysql, SmokeResult *result)
   return ok;
 }
 
+static bool check_unsupported_statements(MYSQL *mysql, SmokeResult *result)
+{
+  struct UnsupportedStatement
+  {
+    const char *label;
+    const char *statement;
+  };
+
+  const UnsupportedStatement statements[]= {
+    {
+      "create_udf",
+      "CREATE FUNCTION mylite_unsupported RETURNS INTEGER "
+      "SONAME 'mylite_unsupported.so'"
+    },
+    {
+      "install_plugin",
+      "INSTALL PLUGIN mylite_unsupported SONAME 'mylite_unsupported.so'"
+    },
+    {
+      "uninstall_plugin",
+      "UNINSTALL PLUGIN mylite_unsupported"
+    },
+    {
+      "create_server",
+      "CREATE SERVER mylite_unsupported FOREIGN DATA WRAPPER mysql "
+      "OPTIONS (HOST 'localhost', DATABASE 'test', USER 'u', PASSWORD 'p')"
+    },
+    {
+      "alter_server",
+      "ALTER SERVER mylite_unsupported OPTIONS (HOST 'localhost')"
+    },
+    {
+      "drop_server",
+      "DROP SERVER mylite_unsupported"
+    }
+  };
+
+  bool ok= true;
+  for (const UnsupportedStatement &statement : statements)
+  {
+    UnsupportedResult unsupported;
+    unsupported.label= statement.label;
+    unsupported.statement= statement.statement;
+
+    if (mysql_query(mysql, statement.statement) == 0)
+    {
+      MYSQL_RES *res= mysql_store_result(mysql);
+      if (res)
+        mysql_free_result(res);
+      unsupported.message= "statement unexpectedly succeeded";
+      ok= false;
+    }
+    else
+    {
+      unsupported.error= mysql_errno(mysql);
+      unsupported.sqlstate= mysql_sqlstate(mysql);
+      unsupported.message= mysql_error(mysql);
+      unsupported.passed= unsupported.error == ER_OPTION_PREVENTS_STATEMENT;
+      ok= ok && unsupported.passed;
+    }
+
+    result->unsupported.push_back(unsupported);
+  }
+
+  if (!ok)
+    result->message= "unsupported statement check failed";
+  return ok;
+}
+
 static void write_report(const SmokeOptions &options,
                          const std::vector<std::string> &server_args,
                          const SmokeResult &result)
@@ -235,6 +321,23 @@ static void write_report(const SmokeOptions &options,
   report << "message=" << result.message << "\n";
   if (!result.value.empty())
     report << "value=" << result.value << "\n";
+
+  report << "\n## Unsupported Surface Results\n\n";
+  if (result.unsupported.empty())
+  {
+    report << "none\n";
+    return;
+  }
+
+  for (const UnsupportedResult &unsupported : result.unsupported)
+  {
+    report << "label=" << unsupported.label << "\n";
+    report << "passed=" << (unsupported.passed ? "yes" : "no") << "\n";
+    report << "errno=" << unsupported.error << "\n";
+    report << "sqlstate=" << unsupported.sqlstate << "\n";
+    report << "message=" << unsupported.message << "\n";
+    report << "statement=" << unsupported.statement << "\n\n";
+  }
 }
 
 static bool option_value(const char *arg, const char *name, std::string *value)

@@ -5237,6 +5237,9 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
 #endif
   case SQLCOM_CREATE_FUNCTION:                  // UDF function
   {
+#ifdef EMBEDDED_LIBRARY
+    my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "embedded");
+#else
     if (check_access(thd, lex->create_info.or_replace() ?
                           (INSERT_ACL | DELETE_ACL) : INSERT_ACL,
                      "mysql", NULL, NULL, 1, 0))
@@ -5249,6 +5252,7 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
 #else
     my_error(ER_CANT_OPEN_LIBRARY, MYF(0), lex->udf.dl, 0, "feature disabled");
     res= TRUE;
+#endif
 #endif
     break;
   }
@@ -5813,14 +5817,22 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
     res= mysql_xa_recover(thd);
     break;
   case SQLCOM_INSTALL_PLUGIN:
+#ifdef EMBEDDED_LIBRARY
+    my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "embedded");
+#else
     if (! (res= mysql_install_plugin(thd, &thd->lex->comment,
                                      &thd->lex->ident)))
       my_ok(thd);
+#endif
     break;
   case SQLCOM_UNINSTALL_PLUGIN:
+#ifdef EMBEDDED_LIBRARY
+    my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "embedded");
+#else
     if (! (res= mysql_uninstall_plugin(thd, &thd->lex->comment,
                                        &thd->lex->ident)))
       my_ok(thd);
+#endif
     break;
   case SQLCOM_BINLOG_BASE64_EVENT:
   {
@@ -5835,19 +5847,26 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
   {
     DBUG_PRINT("info", ("case SQLCOM_CREATE_SERVER"));
 
+#ifdef EMBEDDED_LIBRARY
+    my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "embedded");
+#else
     if (check_global_access(thd, PRIV_STMT_CREATE_SERVER))
       break;
 
     WSREP_TO_ISOLATION_BEGIN(WSREP_MYSQL_DB, NULL, NULL);
 
     res= create_server(thd, &lex->server_options);
+#endif
     break;
   }
   case SQLCOM_ALTER_SERVER:
   {
-    int error;
     DBUG_PRINT("info", ("case SQLCOM_ALTER_SERVER"));
 
+#ifdef EMBEDDED_LIBRARY
+    my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "embedded");
+#else
+    int error;
     if (check_global_access(thd, PRIV_STMT_ALTER_SERVER))
       break;
 
@@ -5861,13 +5880,17 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
       break;
     }
     my_ok(thd, 1);
+#endif
     break;
   }
   case SQLCOM_DROP_SERVER:
   {
-    int err_code;
     DBUG_PRINT("info", ("case SQLCOM_DROP_SERVER"));
 
+#ifdef EMBEDDED_LIBRARY
+    my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "embedded");
+#else
+    int err_code;
     if (check_global_access(thd, PRIV_STMT_DROP_SERVER))
       break;
 
@@ -5889,6 +5912,7 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
       break;
     }
     my_ok(thd, 1);
+#endif
     break;
   }
   case SQLCOM_ANALYZE:

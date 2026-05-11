@@ -156,7 +156,8 @@ tools/run-embedded-bootstrap-smoke.sh
 ```
 
 That smoke starts MariaDB's embedded runtime in-process with controlled
-temporary paths, runs `SELECT 1`, shuts the runtime down, and records observed
+temporary paths, runs `SELECT 1`, verifies explicit rejections for the first
+unsupported server surfaces, shuts the runtime down, and records observed
 startup side effects. Implementation work should keep MyLite changes narrow and
 separate from upstream source imports.
 

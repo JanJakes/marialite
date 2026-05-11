@@ -15,8 +15,7 @@ bootstrap smoke.
 ## Scope
 
 - Add explicit embedded-mode rejection for dynamic extension surfaces:
-  `CREATE FUNCTION ... SONAME`, `DROP FUNCTION`, `INSTALL PLUGIN`, and
-  `UNINSTALL PLUGIN`.
+  `CREATE FUNCTION ... SONAME`, `INSTALL PLUGIN`, and `UNINSTALL PLUGIN`.
 - Add explicit embedded-mode rejection for foreign-server metadata surfaces:
   `CREATE SERVER`, `ALTER SERVER`, and `DROP SERVER`.
 - Extend the MyLite embedded bootstrap smoke to run those unsupported
@@ -31,6 +30,8 @@ bootstrap smoke.
 - Do not remove MariaDB parser support for these statements.
 - Do not remove upstream plugin, UDF, or server-table code from non-embedded
   builds.
+- Do not change `DROP FUNCTION` handling in this slice. It is shared with
+  stored function handling and needs a separate compatibility decision.
 - Do not solve grants, users, replication, events, or all administrative SQL in
   this slice. Those need broader compatibility and API policy decisions.
 - Do not create MariaDB system tables to satisfy server-oriented commands.
@@ -48,8 +49,10 @@ bootstrap smoke.
     scheduler is unavailable in embedded builds.
 - `SQLCOM_CREATE_FUNCTION` is the UDF command path. In builds with `HAVE_DLOPEN`
   it calls `mysql_create_function()` and may attempt dynamic library handling.
-- `SQLCOM_DROP_FUNCTION` shares the stored-routine drop block and can reach
-  routine/UDF deletion behavior.
+- `SQLCOM_DROP_FUNCTION` shares the stored-routine drop block. Unqualified
+  `DROP FUNCTION` first probes UDF metadata but can continue into stored
+  routine deletion behavior, so a safe UDF-only rejection needs a more precise
+  stored routine compatibility decision.
 - `SQLCOM_INSTALL_PLUGIN` and `SQLCOM_UNINSTALL_PLUGIN` call
   `mysql_install_plugin()` and `mysql_uninstall_plugin()`, which operate on the
   `mysql.plugin` table and dynamic plugin metadata.
@@ -81,7 +84,6 @@ dynamic plugin/UDF loading or `mysql.*` server tables when `EMBEDDED_LIBRARY`
 is defined:
 
 - `SQLCOM_CREATE_FUNCTION`
-- `SQLCOM_DROP_FUNCTION`
 - `SQLCOM_INSTALL_PLUGIN`
 - `SQLCOM_UNINSTALL_PLUGIN`
 - `SQLCOM_CREATE_SERVER`
@@ -144,7 +146,6 @@ No new dependency or licensing change.
 - Verify the report records successful `SELECT 1`.
 - Verify the report records expected failures for:
   - `CREATE FUNCTION ... SONAME`
-  - `DROP FUNCTION`
   - `INSTALL PLUGIN`
   - `UNINSTALL PLUGIN`
   - `CREATE SERVER`
@@ -164,11 +165,45 @@ No new dependency or licensing change.
 - Non-embedded MariaDB code paths are not changed.
 - No public MyLite ABI or single-file storage claim is introduced.
 
+## Implementation Result
+
+Implemented in `mysql_execute_command()` for embedded builds only. The smoke
+now verifies six explicit rejections:
+
+- `CREATE FUNCTION ... SONAME`
+- `INSTALL PLUGIN`
+- `UNINSTALL PLUGIN`
+- `CREATE SERVER`
+- `ALTER SERVER`
+- `DROP SERVER`
+
+Each statement fails with MariaDB error `1290`, SQLSTATE `HY000`, and message:
+
+```text
+The MariaDB server is running with the embedded option so it cannot execute this statement
+```
+
+Verification command:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/run-embedded-bootstrap-smoke.sh
+```
+
+Observed implementation artifacts after the slice:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,133,780 bytes.
+- `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke`: 22,611,272
+  bytes.
+- Dynamic plugin artifacts: none.
+- Startup still emits the pre-existing `mysql.servers` diagnostic recorded by
+  the embedded-bootstrap slice.
+
 ## Risks And Unresolved Questions
 
-- `DROP FUNCTION` is shared with stored routine handling. The implementation
-  must target only the UDF command form, not stored functions created by
-  `CREATE FUNCTION ... RETURN ...`.
+- `DROP FUNCTION` remains deferred because the MariaDB command path can fall
+  through from UDF metadata lookup to stored function deletion. MyLite should
+  reject UDF deletion without blocking stored routine compatibility, but that
+  needs a separate routine-policy slice.
 - MariaDB has many additional server-oriented surfaces: users, grants,
   replication control, events, `SET GLOBAL`, log control, resource groups, and
   administrative `SHOW` statements. This slice documents but does not complete

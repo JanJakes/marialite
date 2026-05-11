@@ -80,7 +80,8 @@ and known risks.
 - Embedded bootstrap smoke added:
   `tools/run-embedded-bootstrap-smoke.sh`.
 - The smoke starts MariaDB's embedded runtime in-process, runs `SELECT 1`,
-  shuts down, and records observed files under
+  verifies explicit rejections for the first unsupported server surfaces, shuts
+  down, and records observed files under
   `build/mariadb-minsize/mylite-embedded-bootstrap-report.txt`.
 - Identify MariaDB tests that can run against embedded mode early.
 - Add file-system checks that distinguish expected MyLite companion files from

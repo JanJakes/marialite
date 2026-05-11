@@ -19,12 +19,13 @@ direction, API sketches, workflow guidance, and a mechanical MariaDB Server
 11.8.6 source import under `vendor/mariadb/server/`. It also has a
 reproducible Docker-based minimal embedded MariaDB build profile that produces
 `build/mariadb-minsize/libmysqld/libmariadbd.a`, plus an embedded bootstrap
-smoke target that starts the runtime in-process and runs `SELECT 1` under
-controlled temporary paths.
+smoke target that starts the runtime in-process, runs `SELECT 1` under
+controlled temporary paths, and verifies the first explicit embedded rejections
+for dynamic plugin, UDF creation, and foreign-server metadata commands.
 
-The next implementation step is `unsupported-server-surface`, which should
-begin turning server-only behavior discovered during bootstrap into explicit
-MyLite decisions rather than accidental inherited behavior.
+The next implementation step is `libmylite-open-close`, which should put a
+first MyLite-owned public C API around the embedded bootstrap and handle
+diagnostics.
 
 ## Implementation plan
 
@@ -34,7 +35,7 @@ MyLite decisions rather than accidental inherited behavior.
 | 1 | `upstream-11-8-import` | Done | Import a pinned MariaDB 11.8 LTS source tag mechanically and record upstream refs. |
 | 2 | `build-profile-minsize` | Done | Produce a reproducible embedded build, record artifact size, and document which server-only or rare optional components are omitted by default. |
 | 3 | `embedded-bootstrap` | Done | Start an in-process MariaDB-derived runtime under MyLite-owned defaults without exposing daemon administration as the library model. |
-| 4 | `unsupported-server-surface` | In progress | Make daemon-only and unsupported features fail explicitly instead of leaking partial server behavior. |
+| 4 | `unsupported-server-surface` | Done | Make daemon-only and unsupported features fail explicitly instead of leaking partial server behavior. |
 | 5 | `libmylite-open-close` | Planned | Add the first public C API for opening and closing a `.mylite` file with handle-owned diagnostics. |
 | 6 | `storage-engine-skeleton` | Planned | Add a static MyLite storage engine with enough handler shape for controlled smoke tests. |
 | 7 | `mylite-engine-discovery` | Planned | Reopen table definitions from the MyLite catalog through MariaDB table-discovery APIs. |
