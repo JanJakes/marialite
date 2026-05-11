@@ -25,7 +25,9 @@ for dynamic plugin, UDF creation, and foreign-server metadata commands. The
 first static `libmylite` wrapper now exposes open/close and handle-owned
 diagnostics for one initialized database path per process, plus the first
 public `mylite_exec()` convenience API so callers can execute supported SQL
-through that handle without reaching for `MYSQL *` internals. The first static
+through that handle without reaching for `MYSQL *` internals. The API also
+exposes handle-local affected rows, generated insert ids, and warning counts
+for the last executed statement. The first static
 `MYLITE` storage-engine skeleton is registered in the embedded profile.
 The engine can discover the seed table `mylite.probe`, run a bounded `CREATE`,
 copy `ALTER`, `RENAME`, and `DROP` lifecycle without leaving durable `.frm`
@@ -108,7 +110,7 @@ a lock timeout instead of misleading index corruption.
 | 27 | `statement-error-rollback` | Done | Prove failed multi-row DML statements restore MyLite's pre-statement snapshot in autocommit and explicit transaction modes. |
 | 28 | `blob-text-row-storage` | Done | Store non-key BLOB/TEXT row payloads inside existing row and overflow pages without persisting native row-buffer pointers. |
 | 29 | `libmylite-exec` | Done | Add the first public SQL execution convenience API over the opened embedded MyLite handle. |
-| 30 | `libmylite-statement-effects` | In progress | Expose affected rows, generated insert ids, and warning counts through the public `libmylite` handle. |
+| 30 | `libmylite-statement-effects` | Done | Expose affected rows, generated insert ids, and warning counts through the public `libmylite` handle. |
 
 ## Size and profile direction
 

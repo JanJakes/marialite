@@ -44,6 +44,7 @@ struct SmokeResult
   std::string exec_dml_rows;
   std::string exec_duplicate_key_message;
   std::string exec_reopen_rows;
+  std::string statement_effects;
   std::vector<CaseResult> cases;
 };
 
@@ -81,11 +82,16 @@ static bool check_exec_callback_abort(const SmokeOptions &options,
                                       SmokeResult *result);
 static bool check_exec_dml_persistence(const SmokeOptions &options,
                                        SmokeResult *result);
+static bool check_statement_effects(const SmokeOptions &options,
+                                    SmokeResult *result);
 static bool exec_statement(mylite_db *db, const char *sql, const char *label,
                            SmokeResult *result);
 static bool exec_query_capture(mylite_db *db, const char *sql,
                                const char *label, ExecCapture *capture,
                                SmokeResult *result);
+static void append_statement_effect(SmokeResult *result, const char *label,
+                                    const std::string &value);
+static std::string statement_effect_summary(mylite_db *db);
 static int capture_exec_row(void *ctx, int column_count, char **values,
                             char **column_names);
 static bool record_result(SmokeResult *result, const char *label, int expected,
@@ -180,6 +186,9 @@ static int run_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "exec_dml_persistence";
   ok= check_exec_dml_persistence(options, result) && ok;
+
+  result->phase= "statement_effects";
+  ok= check_statement_effects(options, result) && ok;
 
   if (!ok)
   {
@@ -500,6 +509,96 @@ static bool check_exec_dml_persistence(const SmokeOptions &options,
   return ok;
 }
 
+static bool check_statement_effects(const SmokeOptions &options,
+                                    SmokeResult *result)
+{
+  bool ok= true;
+  append_statement_effect(result, "null", statement_effect_summary(nullptr));
+  if (statement_effect_summary(nullptr) != "-1:0:0")
+    ok= false;
+
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  ok= record_result(result, "effects_open", MYLITE_OK, rc, db) && ok;
+  if (db)
+  {
+    ok= exec_statement(db, "DROP TABLE IF EXISTS mylite.effects_rows",
+                       "effects_drop_existing", result) && ok;
+    ok= exec_statement(db,
+                       "CREATE TABLE mylite.effects_rows "
+                       "(id INT NOT NULL AUTO_INCREMENT, "
+                       "note VARCHAR(20), PRIMARY KEY(id)) ENGINE=MYLITE",
+                       "effects_create_table", result) && ok;
+
+    ok= exec_statement(db,
+                       "INSERT INTO mylite.effects_rows (note) VALUES "
+                       "('one'), ('two')",
+                       "effects_insert_rows", result) && ok;
+    const std::string insert_effects= statement_effect_summary(db);
+    append_statement_effect(result, "insert", insert_effects);
+    if (insert_effects != "2:1:0")
+      ok= false;
+
+    ok= exec_statement(db,
+                       "UPDATE mylite.effects_rows SET note = note "
+                       "WHERE id = 1",
+                       "effects_noop_update", result) && ok;
+    const std::string noop_update_effects= statement_effect_summary(db);
+    append_statement_effect(result, "noop_update", noop_update_effects);
+    if (noop_update_effects != "0:0:0")
+      ok= false;
+
+    ok= exec_statement(db,
+                       "UPDATE mylite.effects_rows SET note = 'two-updated' "
+                       "WHERE id = 2",
+                       "effects_update", result) && ok;
+    const std::string update_effects= statement_effect_summary(db);
+    append_statement_effect(result, "update", update_effects);
+    if (update_effects != "1:0:0")
+      ok= false;
+
+    ok= exec_statement(db,
+                       "INSERT IGNORE INTO mylite.effects_rows (id, note) "
+                       "VALUES (1, 'ignored')",
+                       "effects_insert_ignore_duplicate", result) && ok;
+    const std::string warning_effects= statement_effect_summary(db);
+    append_statement_effect(result, "warning", warning_effects);
+    if (warning_effects != "0:0:1")
+      ok= false;
+
+    ok= exec_statement(db,
+                       "DELETE FROM mylite.effects_rows WHERE id = 2",
+                       "effects_delete", result) && ok;
+    const std::string delete_effects= statement_effect_summary(db);
+    append_statement_effect(result, "delete", delete_effects);
+    if (delete_effects != "1:0:0")
+      ok= false;
+
+    rc= mylite_exec(db,
+                    "INSERT INTO mylite.effects_rows (id, note) "
+                    "VALUES (1, 'duplicate')",
+                    nullptr, nullptr, nullptr);
+    const long long duplicate_changes= mylite_changes(db);
+    const unsigned duplicate_errno= mylite_mariadb_errno(db);
+    const std::string duplicate_sqlstate= mylite_sqlstate(db);
+    append_statement_effect(result, "duplicate",
+                            std::to_string(duplicate_changes) + ":" +
+                            std::to_string(duplicate_errno) + ":" +
+                            duplicate_sqlstate);
+    ok= record_result(result, "effects_duplicate_key", MYLITE_CONSTRAINT,
+                      rc, db) && ok;
+    if (duplicate_changes != -1 || duplicate_errno != 1062 ||
+        duplicate_sqlstate != "23000")
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "effects_close", MYLITE_OK, rc, nullptr) &&
+        ok;
+  }
+
+  return ok;
+}
+
 static bool exec_statement(mylite_db *db, const char *sql, const char *label,
                            SmokeResult *result)
 {
@@ -513,6 +612,23 @@ static bool exec_query_capture(mylite_db *db, const char *sql,
 {
   const int rc= mylite_exec(db, sql, capture_exec_row, capture, nullptr);
   return record_result(result, label, MYLITE_OK, rc, db);
+}
+
+static void append_statement_effect(SmokeResult *result, const char *label,
+                                    const std::string &value)
+{
+  if (!result->statement_effects.empty())
+    result->statement_effects+= ",";
+  result->statement_effects+= label;
+  result->statement_effects+= "=";
+  result->statement_effects+= value;
+}
+
+static std::string statement_effect_summary(mylite_db *db)
+{
+  return std::to_string(mylite_changes(db)) + ":" +
+         std::to_string(mylite_last_insert_id(db)) + ":" +
+         std::to_string(mylite_warning_count(db));
 }
 
 static int capture_exec_row(void *ctx, int column_count, char **values,
@@ -618,6 +734,8 @@ static void write_report(const SmokeOptions &options,
            << result.exec_duplicate_key_message << "\n";
   if (!result.exec_reopen_rows.empty())
     report << "exec_reopen_rows=" << result.exec_reopen_rows << "\n";
+  if (!result.statement_effects.empty())
+    report << "statement_effects=" << result.statement_effects << "\n";
   report << "\n";
 
   report << "## Cases\n\n";

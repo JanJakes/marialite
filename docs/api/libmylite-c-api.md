@@ -236,6 +236,14 @@ Affected-row counts and generated autoincrement ids are part of MariaDB
 observable behavior. They should be exposed as MyLite APIs rather than requiring
 callers to reach into an internal `MYSQL *`.
 
+The first implementation exposes these values from the handle's last statement
+and also implements `mylite_warning_count()` from the diagnostics section above.
+`mylite_changes()` returns `-1` when MariaDB reports its standard not-applicable
+or failed-statement sentinel. `mylite_last_insert_id()` and
+`mylite_warning_count()` return zero for a null or inactive handle. Warning
+details are still retrieved with SQL such as `SHOW WARNINGS`; structured
+warning enumeration remains future work.
+
 ## Configuration
 
 ```c

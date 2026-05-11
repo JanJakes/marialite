@@ -129,8 +129,17 @@ No file-format change.
 
 Expected size impact is negligible: three exported wrappers and smoke coverage
 over MariaDB C API functions already linked by `mylite_exec()`. No new
-dependency, plugin, storage engine, or MariaDB subsystem is introduced. The
-implementation result should record the measured post-slice artifacts.
+dependency, plugin, storage engine, or MariaDB subsystem is introduced.
+
+The post-implementation `MinSizeRel` build records:
+
+| Artifact | Size |
+| --- | ---: |
+| `build/mariadb-minsize/mylite/libmylite.a` | 38,512 bytes |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 44,415,256 bytes |
+
+The build report still records 571 `libmariadbd.a` archive objects and no
+dynamic plugin artifacts.
 
 ## License, Trademark, And Dependency Impact
 
@@ -171,6 +180,24 @@ The `libmylite` smoke should verify:
   the accessors.
 - Existing storage, compatibility, embedded bootstrap, and open/close smokes
   continue to pass.
+
+## Implementation Result
+
+Implemented in `vendor/mariadb/server/mylite/include/mylite.h` and
+`vendor/mariadb/server/mylite/mylite.cc` with public `mylite_changes()`,
+`mylite_last_insert_id()`, and `mylite_warning_count()`. The accessors read the
+handle-owned embedded `MYSQL *`, tolerate null handles, and do not rewrite
+handle diagnostics.
+
+The `libmylite` smoke now verifies this statement-effects report:
+
+```text
+statement_effects=null=-1:0:0,insert=2:1:0,noop_update=0:0:0,update=1:0:0,warning=0:0:1,delete=1:0:0,duplicate=-1:1062:23000
+```
+
+That covers null-handle behavior, multi-row generated insert ids, changed and
+unchanged updates, `INSERT IGNORE` warning count, delete affected rows, and
+duplicate-key failure diagnostics after the accessors are called.
 
 ## Risks And Unresolved Questions
 

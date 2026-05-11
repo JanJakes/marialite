@@ -72,6 +72,10 @@ MYLITE_API int mylite_exec(
     char **errmsg);
 MYLITE_API void mylite_free(void *ptr);
 
+MYLITE_API long long mylite_changes(mylite_db *db);
+MYLITE_API unsigned long long mylite_last_insert_id(mylite_db *db);
+MYLITE_API unsigned mylite_warning_count(mylite_db *db);
+
 MYLITE_API int mylite_errcode(mylite_db *db);
 MYLITE_API int mylite_extended_errcode(mylite_db *db);
 MYLITE_API unsigned mylite_mariadb_errno(mylite_db *db);

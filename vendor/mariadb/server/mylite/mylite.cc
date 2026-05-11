@@ -230,6 +230,30 @@ extern "C" void mylite_free(void *ptr)
   std::free(ptr);
 }
 
+extern "C" long long mylite_changes(mylite_db *db)
+{
+  if (!db || !db->mysql)
+    return -1;
+
+  const my_ulonglong rows= mysql_affected_rows(db->mysql);
+  if (rows == ~static_cast<my_ulonglong>(0))
+    return -1;
+  if (rows > static_cast<my_ulonglong>(LLONG_MAX))
+    return LLONG_MAX;
+  return static_cast<long long>(rows);
+}
+
+extern "C" unsigned long long mylite_last_insert_id(mylite_db *db)
+{
+  return db && db->mysql ?
+    static_cast<unsigned long long>(mysql_insert_id(db->mysql)) : 0;
+}
+
+extern "C" unsigned mylite_warning_count(mylite_db *db)
+{
+  return db && db->mysql ? mysql_warning_count(db->mysql) : 0;
+}
+
 extern "C" int mylite_errcode(mylite_db *db)
 {
   return db ? db->errcode : MYLITE_MISUSE;
