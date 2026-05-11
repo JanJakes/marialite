@@ -50,7 +50,7 @@ run_inside_container() {
   local report="${abs_build_dir}/mylite-storage-engine-report.txt"
 
   rm -rf "${runtime_dir}"
-  mkdir -p "${datadir}" "${tmpdir}"
+  mkdir -p "${datadir}/mylite" "${tmpdir}"
 
   local smoke="${abs_build_dir}/mylite/mylite-storage-engine-smoke"
   local smoke_log="${abs_build_dir}/mylite-storage-engine-output.log"
@@ -64,6 +64,9 @@ run_inside_container() {
     "--report=${report}" > "${smoke_log}" 2>&1 || status=$?
 
   append_observed_files "${runtime_dir}" "${report}" "${smoke_log}"
+  if has_frm_artifacts "${runtime_dir}"; then
+    status=1
+  fi
   printf "Storage engine smoke report: %s\n" "${report}"
   return "${status}"
 }
@@ -97,7 +100,19 @@ append_observed_files() {
     else
       printf "none\n"
     fi
+
+    printf "\n## FRM Artifacts\n\n"
+    if has_frm_artifacts "${runtime_dir}"; then
+      find "${runtime_dir}" -type f -name "*.frm" -printf "%P\n" | sort
+    else
+      printf "none\n"
+    fi
   } >> "${report}"
+}
+
+has_frm_artifacts() {
+  local runtime_dir="$1"
+  find "${runtime_dir}" -type f -name "*.frm" | grep -q .
 }
 
 main "$@"

@@ -31,8 +31,8 @@ or changes MariaDB source in earnest.
   MyISAM, MyISAMMRG, MHNSW, MySQL password, Online Alter Log, Sequence, SQL
   Sequence, Thread Pool Info, Type Geom, Type Inet, Type UUID, User Variables,
   and Userstat.
-- After `storage-engine-skeleton`, the current embedded artifact is
-  44,226,010 bytes and the built-in plugin evidence includes
+- After `mylite-engine-discovery`, the current embedded artifact is
+  44,227,954 bytes and the built-in plugin evidence includes
   `builtin_maria_mylite_plugin`.
 - macOS native build support remains future work; the current baseline is the
   Linux-container build.
@@ -97,6 +97,8 @@ and known risks.
 - The first static `MYLITE` engine is visible through
   `information_schema.ENGINES`, but user DDL remains deferred until metadata
   routing can prevent `.frm` and schema-directory side effects.
+- The engine-discovery smoke proves the seed table `mylite.probe` can be
+  discovered and scanned without a `.frm` file.
 - Identify MariaDB tests that can run against embedded mode early.
 - Add file-system checks that distinguish expected MyLite companion files from
   unexpected MariaDB datadir, schema, engine, or log sidecars.

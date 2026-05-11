@@ -178,7 +178,9 @@ tools/run-storage-engine-smoke.sh
 ```
 
 That smoke verifies that MariaDB's embedded plugin registry sees the built-in
-`MYLITE` storage engine. It does not run user DDL yet.
+`MYLITE` storage engine, discovers the seed table `mylite.probe` without a
+`.frm` sidecar, and scans it through the skeleton handler. It does not run user
+DDL yet.
 
 Current design documents:
 

@@ -7,11 +7,25 @@
 #include <my_global.h>
 #include <mysql/plugin.h>
 #include "ha_mylite.h"
+#include "table.h"
 
 static handler *mylite_create_handler(handlerton *hton, TABLE_SHARE *table,
                                       MEM_ROOT *mem_root);
+static int mylite_discover_table(handlerton *hton, THD *thd,
+                                 TABLE_SHARE *share);
+static int mylite_discover_table_names(handlerton *hton,
+                                       const LEX_CSTRING *db, MY_DIR *dir,
+                                       handlerton::discovered_list *result);
+static int mylite_discover_table_existence(handlerton *hton, const char *db,
+                                           const char *table_name);
+static bool mylite_is_seed_db(const char *db, size_t length);
+static bool mylite_is_seed_table(const char *table_name, size_t length);
 
 static handlerton *mylite_hton;
+static const char mylite_seed_db[]= "mylite";
+static const char mylite_seed_table[]= "probe";
+static const char mylite_seed_sql[]=
+  "CREATE TABLE probe (id INT) ENGINE=MYLITE";
 
 static const char *ha_mylite_exts[]= {
   NullS
@@ -25,6 +39,9 @@ static int mylite_init_func(void *p)
   mylite_hton->create= mylite_create_handler;
   mylite_hton->flags= HTON_NO_PARTITION | HTON_TEMPORARY_NOT_SUPPORTED;
   mylite_hton->tablefile_extensions= ha_mylite_exts;
+  mylite_hton->discover_table= mylite_discover_table;
+  mylite_hton->discover_table_names= mylite_discover_table_names;
+  mylite_hton->discover_table_existence= mylite_discover_table_existence;
 
   DBUG_RETURN(0);
 }
@@ -33,6 +50,51 @@ static handler *mylite_create_handler(handlerton *hton, TABLE_SHARE *table,
                                       MEM_ROOT *mem_root)
 {
   return new (mem_root) ha_mylite(hton, table);
+}
+
+static int mylite_discover_table(handlerton *, THD *thd, TABLE_SHARE *share)
+{
+  DBUG_ENTER("mylite_discover_table");
+
+  if (!mylite_is_seed_db(share->db.str, share->db.length) ||
+      !mylite_is_seed_table(share->table_name.str, share->table_name.length))
+    DBUG_RETURN(HA_ERR_NO_SUCH_TABLE);
+
+  DBUG_RETURN(share->init_from_sql_statement_string(thd, false,
+                                                    mylite_seed_sql,
+                                                    strlen(mylite_seed_sql)));
+}
+
+static int mylite_discover_table_names(handlerton *, const LEX_CSTRING *db,
+                                       MY_DIR *,
+                                       handlerton::discovered_list *result)
+{
+  DBUG_ENTER("mylite_discover_table_names");
+
+  if (mylite_is_seed_db(db->str, db->length))
+    result->add_table(mylite_seed_table, strlen(mylite_seed_table));
+
+  DBUG_RETURN(0);
+}
+
+static int mylite_discover_table_existence(handlerton *, const char *db,
+                                           const char *table_name)
+{
+  DBUG_ENTER("mylite_discover_table_existence");
+  DBUG_RETURN(mylite_is_seed_db(db, strlen(db)) &&
+              mylite_is_seed_table(table_name, strlen(table_name)));
+}
+
+static bool mylite_is_seed_db(const char *db, size_t length)
+{
+  return length == sizeof(mylite_seed_db) - 1 &&
+         strncmp(db, mylite_seed_db, length) == 0;
+}
+
+static bool mylite_is_seed_table(const char *table_name, size_t length)
+{
+  return length == sizeof(mylite_seed_table) - 1 &&
+         strncmp(table_name, mylite_seed_table, length) == 0;
 }
 
 ha_mylite::ha_mylite(handlerton *hton, TABLE_SHARE *table_arg)

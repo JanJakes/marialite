@@ -28,6 +28,8 @@ struct SmokeResult
   std::string message;
   std::string engine;
   std::string support;
+  std::string discovered_table;
+  std::string count;
 };
 
 static bool parse_options(int argc, char **argv, SmokeOptions *options,
@@ -37,6 +39,8 @@ static int run_smoke(const SmokeOptions &options,
                      const std::vector<std::string> &server_args,
                      SmokeResult *result);
 static bool fetch_mylite_engine(MYSQL *mysql, SmokeResult *result);
+static bool fetch_discovered_table(MYSQL *mysql, SmokeResult *result);
+static bool fetch_probe_count(MYSQL *mysql, SmokeResult *result);
 static void write_report(const SmokeOptions &options,
                          const std::vector<std::string> &server_args,
                          const SmokeResult &result);
@@ -156,6 +160,14 @@ static int run_smoke(const SmokeOptions &,
   if (!fetch_mylite_engine(mysql, result))
     goto done;
 
+  result->phase= "table_names";
+  if (!fetch_discovered_table(mysql, result))
+    goto done;
+
+  result->phase= "table_scan";
+  if (!fetch_probe_count(mysql, result))
+    goto done;
+
   result->phase= "complete";
   result->status= 0;
   result->message= "ok";
@@ -213,6 +225,86 @@ static bool fetch_mylite_engine(MYSQL *mysql, SmokeResult *result)
   return ok;
 }
 
+static bool fetch_discovered_table(MYSQL *mysql, SmokeResult *result)
+{
+  if (mysql_query(mysql, "SHOW TABLES FROM mylite"))
+  {
+    result->message= std::string("show tables failed: ") +
+                     mysql_error(mysql);
+    return false;
+  }
+
+  MYSQL_RES *res= mysql_store_result(mysql);
+  if (!res)
+  {
+    result->message= std::string("show tables result failed: ") +
+                     mysql_error(mysql);
+    return false;
+  }
+
+  bool ok= false;
+  MYSQL_ROW row= mysql_fetch_row(res);
+  if (mysql_num_fields(res) != 1)
+    result->message= "SHOW TABLES returned an unexpected column count";
+  else if (!row || !row[0])
+    result->message= "MYLITE seed table was not discovered";
+  else if (std::strcmp(row[0], "probe") != 0)
+  {
+    result->discovered_table= row[0];
+    result->message= "SHOW TABLES returned an unexpected table";
+  }
+  else if (mysql_fetch_row(res) != nullptr)
+    result->message= "SHOW TABLES returned more than one row";
+  else
+  {
+    result->discovered_table= row[0];
+    ok= true;
+  }
+
+  mysql_free_result(res);
+  return ok;
+}
+
+static bool fetch_probe_count(MYSQL *mysql, SmokeResult *result)
+{
+  if (mysql_query(mysql, "SELECT COUNT(*) FROM mylite.probe"))
+  {
+    result->message= std::string("probe count failed: ") +
+                     mysql_error(mysql);
+    return false;
+  }
+
+  MYSQL_RES *res= mysql_store_result(mysql);
+  if (!res)
+  {
+    result->message= std::string("probe count result failed: ") +
+                     mysql_error(mysql);
+    return false;
+  }
+
+  bool ok= false;
+  MYSQL_ROW row= mysql_fetch_row(res);
+  if (mysql_num_fields(res) != 1)
+    result->message= "probe count returned an unexpected column count";
+  else if (!row || !row[0])
+    result->message= "probe count returned no value";
+  else if (std::strcmp(row[0], "0") != 0)
+  {
+    result->count= row[0];
+    result->message= "probe count returned an unexpected value";
+  }
+  else if (mysql_fetch_row(res) != nullptr)
+    result->message= "probe count returned more than one row";
+  else
+  {
+    result->count= row[0];
+    ok= true;
+  }
+
+  mysql_free_result(res);
+  return ok;
+}
+
 static void write_report(const SmokeOptions &options,
                          const std::vector<std::string> &server_args,
                          const SmokeResult &result)
@@ -244,6 +336,10 @@ static void write_report(const SmokeOptions &options,
     report << "engine=" << result.engine << "\n";
   if (!result.support.empty())
     report << "support=" << result.support << "\n";
+  if (!result.discovered_table.empty())
+    report << "discovered_table=" << result.discovered_table << "\n";
+  if (!result.count.empty())
+    report << "count=" << result.count << "\n";
 }
 
 static bool option_value(const char *arg, const char *name, std::string *value)

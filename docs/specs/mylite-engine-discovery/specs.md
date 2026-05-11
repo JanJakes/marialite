@@ -149,6 +149,41 @@ No new dependency. New code remains GPL-2.0-only.
 - The implementation remains a seed-catalog bridge, not a durable catalog.
 - Previous smokes still pass.
 
+## Implementation Result
+
+The `MYLITE` handlerton now installs discovery hooks backed by a private seed
+catalog entry for `mylite.probe`. The storage-engine smoke passes:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh
+```
+
+The report records:
+
+- `engine=MYLITE`
+- `support=YES`
+- `discovered_table=probe`
+- `count=0`
+- dynamic plugin artifacts: none
+- `.frm` artifacts: none
+
+Regression smokes also pass:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-embedded-bootstrap-smoke.sh
+```
+
+Observed artifacts after this slice:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,227,954 bytes.
+- `build/mariadb-minsize/mylite/libmylite.a`: 29,530 bytes.
+- `build/mariadb-minsize/mylite/mylite-storage-engine-smoke`: 22,613,232
+  bytes.
+- `build/mariadb-minsize/mylite/mylite-open-close-smoke`: 22,616,304 bytes.
+- `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke`: 22,679,920
+  bytes.
+
 ## Risks And Unresolved Questions
 
 - Creating a temporary schema directory is still a compatibility artifact. The
