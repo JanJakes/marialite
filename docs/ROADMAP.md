@@ -78,6 +78,8 @@ are designed for MyLite's durable index format.
 Unsupported index additions through copy ALTER are covered separately so
 failed replacement-table definitions do not mutate valid MyLite rows or
 catalog state.
+Temporary MyLite tables are being covered as explicit rejections until their
+session lifetime, spill storage, cleanup, and read-only behavior are designed.
 Persistent free-page ranges now let later row, index, and catalog page-chain
 rewrites reuse complete obsolete ranges from accepted prior generations instead
 of always allocating at EOF. Allocator metadata now lives in dedicated type-4
@@ -159,6 +161,7 @@ documented read-write create combination.
 | 42 | `schema-object-ddl-rejection` | Done | Reject persistent schema-object DDL that still depends on view, trigger, routine, package, or event metadata outside the MyLite catalog. |
 | 43 | `unsupported-index-ddl-rejection` | Done | Prove FULLTEXT, SPATIAL, HASH, and descending indexes fail explicitly without storing unsupported MyLite table definitions. |
 | 44 | `unsupported-index-alter-rejection` | Done | Prove failed unsupported-index copy ALTER statements leave existing MyLite rows and table definitions intact. |
+| 45 | `temporary-table-rejection` | In progress | Prove `CREATE TEMPORARY TABLE ... ENGINE=MYLITE` fails without creating durable MyLite catalog entries. |
 
 ## Size and profile direction
 

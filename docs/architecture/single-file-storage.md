@@ -290,6 +290,12 @@ dependency tracking, invalidation, and recovery behavior for those objects,
 embedded MyLite rejects their persistent DDL explicitly rather than allowing
 datadir sidecars or hidden system-table writes.
 
+Temporary MyLite tables remain unsupported. MariaDB temporary tables have a
+session lifetime and cleanup model that does not match MyLite's current durable
+catalog path. MyLite advertises `HTON_TEMPORARY_NOT_SUPPORTED` and the storage
+smoke verifies temporary table creation fails before any durable MyLite table
+definition is discoverable.
+
 Current row payload pages are variable-sized slot and overflow pages. Runtime
 free-page accounting tracks their actual page-chain length in memory instead
 of deriving it from logical payload bytes; this keeps accepted catalog
