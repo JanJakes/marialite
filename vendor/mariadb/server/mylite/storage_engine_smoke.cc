@@ -64,6 +64,7 @@ struct SmokeResult
   std::string persisted_large_edges;
   std::string persisted_wide_count;
   std::string recovery_marker;
+  std::string recovery_reclaim;
 };
 
 static bool parse_options(int argc, char **argv, SmokeOptions *options,
@@ -82,6 +83,9 @@ static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result);
 static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result);
 static bool exercise_recovery_latest(MYSQL *mysql, SmokeResult *result);
 static bool exercise_recovery_read(MYSQL *mysql, SmokeResult *result);
+static bool write_recovery_page_payload(MYSQL *mysql, const char *table_name,
+                                        char fill, std::string *count,
+                                        SmokeResult *result);
 static bool execute_statement(MYSQL *mysql, const char *statement,
                               const char *label, SmokeResult *result);
 static bool execute_statement_expect_error(MYSQL *mysql, const char *statement,
@@ -1167,13 +1171,20 @@ static bool exercise_recovery_latest(MYSQL *mysql, SmokeResult *result)
   if (!exercise_persistence_read(mysql, result))
     return false;
 
-  if (!execute_statement(mysql,
-                         "CREATE TABLE mylite.recovery_marker "
-                         "(id INT) ENGINE=MYLITE",
-                         "CREATE recovery marker", result))
+  std::string create=
+    "CREATE TABLE mylite.recovery_marker (id INT NOT NULL";
+  for (int i= 1; i <= 900; ++i)
+  {
+    create.append(", c");
+    create.append(std::to_string(i));
+    create.append(" INT");
+  }
+  create.append(") ENGINE=MYLITE");
+  if (!execute_statement(mysql, create.c_str(), "CREATE recovery marker",
+                         result))
     return false;
   if (!execute_statement(mysql, "FLUSH TABLES",
-                         "FLUSH TABLES after recovery marker CREATE",
+                         "FLUSH TABLES after recovery marker write",
                          result))
     return false;
 
@@ -1197,6 +1208,58 @@ static bool exercise_recovery_read(MYSQL *mysql, SmokeResult *result)
                            "recovery marker", result))
     return false;
   result->recovery_marker= "absent";
+
+  if (!write_recovery_page_payload(mysql, "recovery_reclaim", 'r',
+                                   &result->recovery_reclaim, result))
+    return false;
+  if (!execute_statement(mysql, "FLUSH TABLES",
+                         "FLUSH TABLES after recovery reclaim write",
+                         result))
+    return false;
+  return true;
+}
+
+static bool write_recovery_page_payload(MYSQL *mysql, const char *table_name,
+                                        char fill, std::string *count,
+                                        SmokeResult *result)
+{
+  std::string create= "CREATE TABLE mylite.";
+  create.append(table_name);
+  create.append(" (id INT NOT NULL, note VARCHAR(5000) NOT NULL) "
+                "ENGINE=MYLITE");
+  if (!execute_statement(mysql, create.c_str(), "CREATE recovery page table",
+                         result))
+    return false;
+
+  std::string insert= "INSERT INTO mylite.";
+  insert.append(table_name);
+  insert.append(" VALUES ");
+  const int row_count= 13;
+  for (int i= 1; i <= row_count; ++i)
+  {
+    if (i > 1)
+      insert.append(", ");
+    insert.push_back('(');
+    insert.append(std::to_string(i));
+    insert.append(", REPEAT('");
+    insert.push_back(fill);
+    insert.append("', 5000))");
+  }
+  if (!execute_statement(mysql, insert.c_str(),
+                         "INSERT recovery page rows", result))
+    return false;
+
+  std::string query= "SELECT COUNT(*) FROM mylite.";
+  query.append(table_name);
+  if (!fetch_single_value(mysql, query.c_str(), "recovery page row count",
+                          count, result))
+    return false;
+  if (*count != std::to_string(row_count))
+  {
+    result->message= "recovery page row count returned an unexpected value";
+    return false;
+  }
+
   return true;
 }
 
@@ -1440,6 +1503,8 @@ static void write_report(const SmokeOptions &options,
     report << "persisted_wide_count=" << result.persisted_wide_count << "\n";
   if (!result.recovery_marker.empty())
     report << "recovery_marker=" << result.recovery_marker << "\n";
+  if (!result.recovery_reclaim.empty())
+    report << "recovery_reclaim=" << result.recovery_reclaim << "\n";
 }
 
 static bool option_value(const char *arg, const char *name, std::string *value)

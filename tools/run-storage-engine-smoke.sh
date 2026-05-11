@@ -99,8 +99,8 @@ run_inside_container() {
     "${recovery_file}" \
     "recovery-base" || status=1
 
-  local recovery_corrupt_offset
-  recovery_corrupt_offset="$(stat -c %s "${recovery_file}")"
+  local recovery_orphan_offset
+  recovery_orphan_offset="$(stat -c %s "${recovery_file}")"
 
   run_smoke_phase \
     "${smoke}" \
@@ -111,7 +111,15 @@ run_inside_container() {
     "${recovery_file}" \
     "recovery-latest" || status=1
 
-  corrupt_latest_generation_page "${recovery_file}" "${recovery_corrupt_offset}" || status=1
+  local recovery_latest_size
+  recovery_latest_size="$(stat -c %s "${recovery_file}")"
+  local recovery_corrupt_offset=""
+  if ! recovery_corrupt_offset="$(latest_catalog_payload_offset "${recovery_file}")"; then
+    status=1
+  fi
+  if [[ -n "${recovery_corrupt_offset}" ]]; then
+    corrupt_latest_generation_page "${recovery_file}" "${recovery_corrupt_offset}" || status=1
+  fi
 
   run_smoke_phase \
     "${smoke}" \
@@ -121,6 +129,11 @@ run_inside_container() {
     "${abs_build_dir}/mylite-catalog-recovery-read-output.log" \
     "${recovery_file}" \
     "recovery-read" || status=1
+  verify_orphan_page_reclaim \
+    "${recovery_file}" \
+    "${abs_build_dir}/mylite-catalog-recovery-read-report.txt" \
+    "${recovery_orphan_offset}" \
+    "${recovery_latest_size}" || status=1
 
   printf "Storage engine smoke report: %s\n" "${report}"
   printf "Catalog write smoke report: %s\n" "${abs_build_dir}/mylite-catalog-write-report.txt"
@@ -171,6 +184,62 @@ run_smoke_phase() {
     status=1
   fi
   return "${status}"
+}
+
+latest_catalog_payload_offset() {
+  local catalog_file="$1"
+
+  if [[ ! -f "${catalog_file}" ]]; then
+    printf "Catalog recovery file does not exist: %s\n" "${catalog_file}" >&2
+    return 1
+  fi
+
+  python3 - "${catalog_file}" <<'PY'
+import struct
+import sys
+from pathlib import Path
+
+catalog_file = Path(sys.argv[1])
+data = catalog_file.read_bytes()
+page_size = 4096
+
+def fail(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+def read_u32(page, offset):
+    return struct.unpack_from("<I", page, offset)[0]
+
+def read_u64(page, offset):
+    return struct.unpack_from("<Q", page, offset)[0]
+
+headers = []
+for slot in (0, 1):
+    start = slot * page_size
+    page = data[start:start + page_size]
+    if len(page) != page_size:
+        continue
+    if page[:16] != b"MYLITEFMTPAGE2\0\0":
+        continue
+    if read_u32(page, 16) != 2 or read_u32(page, 20) != page_size:
+        continue
+    generation = read_u64(page, 24)
+    payload_offset = read_u64(page, 32)
+    payload_length = read_u64(page, 40)
+    if generation == 0 or payload_offset < page_size * 2:
+        continue
+    if payload_offset % page_size != 0 or payload_length == 0:
+        continue
+    if payload_offset + page_size > len(data):
+        continue
+    headers.append((generation, payload_offset))
+
+if not headers:
+    fail("no catalog generation header to corrupt")
+
+headers.sort(reverse=True)
+print(headers[0][1])
+PY
 }
 
 corrupt_latest_generation_page() {
@@ -504,6 +573,227 @@ with report.open("a") as out:
     out.write(f"index_payload_page_counts={','.join(index_payload_page_counts)}\n")
     out.write("index_payload_magic=MYLITEINDEXPG1\n")
     out.write("index_payload_page_type=3\n")
+PY
+}
+
+verify_orphan_page_reclaim() {
+  local catalog_file="$1"
+  local report="$2"
+  local orphan_offset="$3"
+  local latest_size="$4"
+
+  if [[ ! -f "${catalog_file}" ]]; then
+    printf "Catalog file does not exist: %s\n" "${catalog_file}" >&2
+    return 1
+  fi
+
+  python3 - "${catalog_file}" "${report}" "${orphan_offset}" "${latest_size}" <<'PY'
+import struct
+import sys
+from pathlib import Path
+
+catalog_file = Path(sys.argv[1])
+report = Path(sys.argv[2])
+orphan_offset = int(sys.argv[3])
+latest_size = int(sys.argv[4])
+data = catalog_file.read_bytes()
+page_size = 4096
+page_payload_offset = 64
+page_payload_capacity = page_size - page_payload_offset
+
+def fail(message):
+    with report.open("a") as out:
+        out.write("\n## Orphan Page Reclaim\n\n")
+        out.write(f"status=1\nmessage={message}\n")
+    raise SystemExit(1)
+
+def read_u32(page, offset):
+    return struct.unpack_from("<I", page, offset)[0]
+
+def read_u64(page, offset):
+    return struct.unpack_from("<Q", page, offset)[0]
+
+def page_count(length):
+    return (length + page_payload_capacity - 1) // page_payload_capacity
+
+def page_range(root_offset, length):
+    if root_offset < page_size * 2 or root_offset % page_size != 0:
+        fail("invalid page-chain root offset")
+    if length == 0:
+        fail("empty page chain")
+    return (root_offset // page_size, page_count(length))
+
+def ranges_overlap(left, right):
+    left_start, left_count = left
+    right_start, right_count = right
+    return (
+        left_start < right_start + right_count and
+        right_start < left_start + left_count
+    )
+
+def range_intersection(left, right):
+    left_start, left_count = left
+    right_start, right_count = right
+    start = max(left_start, right_start)
+    end = min(left_start + left_count, right_start + right_count)
+    if start >= end:
+        return None
+    return (start, end - start)
+
+def parse_freepage_records(catalog_lines):
+    ranges = []
+    for line in catalog_lines:
+        if not line.startswith("FREEPAGE\t"):
+            continue
+        parts = line.split("\t")
+        if len(parts) != 3:
+            fail("invalid FREEPAGE record")
+        page_id = int(parts[1])
+        page_count_value = int(parts[2])
+        if page_id < 2 or page_count_value == 0:
+            fail("invalid FREEPAGE range")
+        ranges.append((page_id, page_count_value))
+    ranges.sort()
+    for previous, current in zip(ranges, ranges[1:]):
+        if previous[0] + previous[1] >= current[0]:
+            fail("overlapping FREEPAGE ranges")
+    return ranges
+
+def read_chain(root_offset, length, expected_type):
+    if root_offset < page_size * 2 or root_offset % page_size != 0:
+        fail("invalid page-chain root offset")
+    if length == 0:
+        fail("empty page chain")
+
+    page_id = root_offset // page_size
+    remaining = length
+    payload = bytearray()
+    while remaining > 0:
+        start = page_id * page_size
+        page = data[start:start + page_size]
+        if len(page) != page_size:
+            fail("short page-chain read")
+        if page[:16] != b"MYLITEPAGESTORE\0":
+            fail("invalid page magic")
+        page_type = read_u32(page, 20)
+        stored_page_id = read_u64(page, 24)
+        next_page_id = read_u64(page, 32)
+        used = read_u32(page, 40)
+        if page_type != expected_type:
+            fail("unexpected page type")
+        if stored_page_id != page_id:
+            fail("unexpected page id")
+        expected_used = min(remaining, page_payload_capacity)
+        if used != expected_used:
+            fail("unexpected page payload length")
+        payload.extend(page[page_payload_offset:page_payload_offset + used])
+        remaining -= used
+        if remaining == 0:
+            if next_page_id != 0:
+                fail("nonzero terminal next page")
+            break
+        if next_page_id != page_id + 1:
+            fail("nonsequential next page")
+        page_id = next_page_id
+    return bytes(payload)
+
+if not report.exists():
+    fail("recovery report does not exist")
+report_text = report.read_text()
+if "recovery_marker=absent\n" not in report_text:
+    fail("recovery fallback did not hide corrupted marker table")
+if "recovery_reclaim=13\n" not in report_text:
+    fail("recovery reclaim write did not persist expected rows")
+if orphan_offset % page_size != 0:
+    fail("orphan offset is not page-aligned")
+if latest_size % page_size != 0:
+    fail("latest rejected size is not page-aligned")
+if latest_size <= orphan_offset:
+    fail("rejected generation did not append complete pages")
+
+orphan_interval = (
+    orphan_offset // page_size,
+    latest_size // page_size - orphan_offset // page_size,
+)
+
+headers = []
+for slot in (0, 1):
+    start = slot * page_size
+    page = data[start:start + page_size]
+    if len(page) != page_size:
+        continue
+    if page[:16] != b"MYLITEFMTPAGE2\0\0":
+        continue
+    if read_u32(page, 16) != 2 or read_u32(page, 20) != page_size:
+        continue
+    generation = read_u64(page, 24)
+    if generation == 0:
+        continue
+    headers.append((generation, slot, read_u64(page, 32), read_u64(page, 40)))
+
+if not headers:
+    fail("no valid header slots")
+
+headers.sort(reverse=True)
+catalog_payload = read_chain(headers[0][2], headers[0][3], 1)
+try:
+    catalog_lines = catalog_payload.decode("ascii").splitlines()
+except UnicodeDecodeError:
+    fail("catalog payload is not ascii")
+
+free_ranges = parse_freepage_records(catalog_lines)
+live_ranges = [page_range(headers[0][2], headers[0][3])]
+reclaimed_range = None
+
+for line in catalog_lines:
+    if line.startswith("ROWPAGE\t"):
+        parts = line.split("\t")
+        if len(parts) != 6:
+            fail("invalid ROWPAGE record")
+        owner = (
+            f"{bytes.fromhex(parts[1]).decode('ascii')}."
+            f"{bytes.fromhex(parts[2]).decode('ascii')}"
+        )
+        root_offset = int(parts[3])
+        length = int(parts[4])
+        if root_offset == 0 and length == 0:
+            continue
+        row_range = page_range(root_offset, length)
+        live_ranges.append(row_range)
+        if owner == "mylite.recovery_reclaim":
+            reclaimed_range = row_range
+    elif line.startswith("INDEXPAGE\t"):
+        parts = line.split("\t")
+        if len(parts) != 8:
+            fail("invalid INDEXPAGE record")
+        live_ranges.append(page_range(int(parts[5]), int(parts[6])))
+
+if reclaimed_range is None:
+    fail("recovery reclaim row page was not found")
+
+for free_range in free_ranges:
+    for live_range in live_ranges:
+        if ranges_overlap(free_range, live_range):
+            fail("FREEPAGE range overlaps latest live payload")
+
+rejected_free_ranges = []
+for free_range in free_ranges:
+    overlap = range_intersection(free_range, orphan_interval)
+    if overlap:
+        rejected_free_ranges.append(f"{overlap[0]}:{overlap[1]}")
+if not rejected_free_ranges:
+    fail("rejected generation pages were not published as FREEPAGE")
+
+with report.open("a") as out:
+    out.write("\n## Orphan Page Reclaim\n\n")
+    out.write("status=0\n")
+    out.write(f"orphan_page_interval={orphan_interval[0]}:{orphan_interval[1]}\n")
+    out.write(f"reclaimed_page_ranges={','.join(rejected_free_ranges)}\n")
+    out.write(
+        f"recovery_reclaim_row_range={reclaimed_range[0]}:{reclaimed_range[1]}\n"
+    )
+    out.write(f"freepage_records={len(free_ranges)}\n")
+    out.write(f"freepage_pages={sum(count for _, count in free_ranges)}\n")
 PY
 }
 

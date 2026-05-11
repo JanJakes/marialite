@@ -194,8 +194,12 @@ row, and index page types. The catalog now also stores `FREEPAGE` records for
 complete obsolete page ranges from accepted prior generations. Row and index
 page-chain writers can reuse those consecutive ranges; catalog payloads remain
 append-only until the free-space map is no longer self-described inside the
-logical catalog payload. Transaction/recovery pages still need dedicated
-formats before the raw-record bridge can be retired.
+logical catalog payload. Loading an accepted generation also scans complete
+pages and merges pages not protected by the accepted catalog, row roots, index
+roots, or existing `FREEPAGE` ranges into the in-memory free list. Those orphan
+pages, including pages left by a rejected newer generation, are published as
+normal `FREEPAGE` records on the next successful write. Transaction/recovery
+pages still need dedicated formats before the raw-record bridge can be retired.
 
 Supported fixed MariaDB record images larger than one row slot page now split
 across `MYLITEROWOVF3` segment payloads inside row page type `2`. This lifts the

@@ -50,9 +50,9 @@ Persistent free-page ranges now let later row and index page-chain rewrites
 reuse complete obsolete ranges from accepted prior generations instead of
 always allocating at EOF. Catalog payload chains remain append-only until the
 free-space map is no longer self-described inside the logical catalog payload.
-The next recovery slice is reclaiming complete unreferenced pages left by
-unpublished or rejected generations after load accepts a safe fallback
-generation.
+Accepted-generation load now also reclaims complete unreferenced pages left by
+unpublished or rejected generations and publishes them as `FREEPAGE` records on
+the next durable write.
 
 ## Implementation plan
 
@@ -78,7 +78,7 @@ generation.
 | 17 | `index-page-storage` | Done | Add durable primary/secondary index page roots for supported keys instead of rebuilding all index cursors from rows. |
 | 18 | `row-overflow-storage` | Done | Add overflow row payload segments so large non-BLOB fixed row images can span row pages. |
 | 19 | `free-list-page-reuse` | Done | Persist and validate free page ranges, then reuse complete obsolete row and index page chains from accepted prior generations. |
-| 20 | `orphan-page-reclaim` | In progress | Reclaim complete unreferenced pages left by rejected or unpublished generations after recovery accepts a safe catalog generation. |
+| 20 | `orphan-page-reclaim` | Done | Reclaim complete unreferenced pages left by rejected or unpublished generations after recovery accepts a safe catalog generation. |
 
 ## Size and profile direction
 

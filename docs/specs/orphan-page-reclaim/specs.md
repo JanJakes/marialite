@@ -109,11 +109,16 @@ Extend the recovery smoke:
 3. corrupt the latest generation so load falls back to the base generation,
 4. run a fresh process that reads the base generation and then performs one
    durable write,
-5. physically inspect the resulting latest catalog and prove a live range was
-   allocated from pages that were not protected by the fallback generation.
+5. physically inspect the resulting latest catalog and prove `FREEPAGE` ranges
+   now cover pages written only by the rejected generation.
 
-The storage smoke can report this as `reclaimed_page_ranges`. It should still
-verify `FREEPAGE` records do not overlap live roots.
+The storage smoke reports the rejected-generation subranges as
+`reclaimed_page_ranges`. It still verifies `FREEPAGE` records do not overlap
+live roots. A row write after fallback remains part of the smoke so reclaimed
+state is published by a normal durable catalog update. The live row allocation
+does not have to land inside the rejected generation interval, because the
+scanner intentionally reclaims every unprotected complete page and the allocator
+may consume earlier reclaimed ranges first.
 
 ## Affected Subsystems
 
@@ -147,8 +152,16 @@ serialized through existing `FREEPAGE` records on the next write.
 ## Binary-Size Impact
 
 Expected impact is small first-party code for protected-range construction and
-file page scanning, plus smoke assertions. No dependency is allowed. Record
-measured artifacts after implementation.
+file page scanning, plus smoke assertions. No dependency is allowed.
+
+Measured after implementation:
+
+- `libmariadbd.a`: 44,386,226 bytes
+- `libmylite.a`: 29,698 bytes
+- `mylite-storage-engine-smoke`: 22,703,056 bytes
+- `mylite-compatibility-smoke`: 22,703,744 bytes
+- `mylite-open-close-smoke`: 22,770,432 bytes
+- `mylite-embedded-bootstrap-smoke`: 22,702,880 bytes
 
 ## License, Trademark, And Dependency Impact
 
@@ -171,11 +184,19 @@ git diff --check
 The storage smoke should verify:
 
 - recovery fallback still ignores the corrupted latest generation,
-- a later write after fallback can reuse pages left by that corrupted
-  generation,
+- a later write after fallback publishes pages left by that corrupted
+  generation as `FREEPAGE` records,
 - latest `FREEPAGE` records do not overlap live roots,
 - normal row, index, autoincrement, overflow, persistence, and sidecar checks
   still pass.
+
+Implementation evidence from the storage smoke:
+
+- `orphan_page_interval=161:26`
+- `reclaimed_page_ranges=161:2,164:11,176:7`
+- `recovery_reclaim_row_range=392:66`
+- `freepage_records=26`
+- `freepage_pages=467`
 
 ## Acceptance Criteria
 
@@ -184,8 +205,8 @@ The storage smoke should verify:
 - Reclaim protects the accepted catalog payload, row roots, index roots, header
   pages, and existing accepted `FREEPAGE` ranges.
 - Reclaimed ranges are serialized only on a later successful write.
-- Storage smoke observes reclaimed pages reused after fallback from a corrupted
-  latest generation.
+- Storage smoke observes rejected-generation pages serialized as `FREEPAGE`
+  ranges after fallback from a corrupted latest generation.
 - Existing storage, recovery, compatibility, embedded lifecycle, and
   `libmylite` lifecycle smokes pass.
 - No persistent `.frm`, engine sidecars, dynamic plugin artifacts, or catalog

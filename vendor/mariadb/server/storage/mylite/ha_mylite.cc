@@ -356,9 +356,15 @@ static bool mylite_validate_free_page_ranges_locked(
     int fd, const Mylite_catalog_header &header,
     const std::vector<Mylite_table_definition> &catalog,
     std::vector<Mylite_free_page_range> *free_ranges);
+static bool mylite_reclaim_orphan_pages_locked(
+    int fd, const Mylite_catalog_header &header,
+    const std::vector<Mylite_table_definition> &catalog,
+    std::vector<Mylite_free_page_range> *free_ranges);
 static bool mylite_page_ranges_overlap(
     const Mylite_free_page_range &left,
     const Mylite_free_page_range &right);
+static bool mylite_page_id_in_ranges(
+    uint64_t page_id, const std::vector<Mylite_free_page_range> &ranges);
 static bool mylite_page_range_fits_file(
     const Mylite_free_page_range &range, uint64_t file_size);
 static uint64_t mylite_page_offset(uint64_t page_id);
@@ -2018,7 +2024,8 @@ static bool mylite_load_catalog_generation_locked(
          mylite_load_row_payloads_locked(fd, loaded) &&
          mylite_load_index_payloads_locked(fd, loaded) &&
          mylite_validate_free_page_ranges_locked(fd, header, *loaded,
-                                                 free_ranges);
+                                                 free_ranges) &&
+         mylite_reclaim_orphan_pages_locked(fd, header, *loaded, free_ranges);
 }
 
 static bool mylite_load_row_payloads_locked(
@@ -4102,6 +4109,62 @@ static bool mylite_validate_free_page_ranges_locked(
   return true;
 }
 
+static bool mylite_reclaim_orphan_pages_locked(
+    int fd, const Mylite_catalog_header &header,
+    const std::vector<Mylite_table_definition> &catalog,
+    std::vector<Mylite_free_page_range> *free_ranges)
+{
+  struct stat st;
+  if (fstat(fd, &st) != 0 || st.st_size < 0)
+    return false;
+  const uint64_t complete_pages=
+    static_cast<uint64_t>(st.st_size) / mylite_catalog_page_size;
+  if (complete_pages <= 2)
+    return true;
+
+  std::vector<Mylite_free_page_range> protected_ranges= *free_ranges;
+  if (!mylite_add_payload_free_range_locked(header.payload_offset,
+                                            header.payload_length,
+                                            &protected_ranges) ||
+      !mylite_collect_catalog_payload_ranges_locked(catalog,
+                                                    &protected_ranges) ||
+      !mylite_normalize_free_page_ranges_locked(&protected_ranges))
+    return false;
+
+  bool in_orphan_range= false;
+  uint64_t orphan_start= 0;
+  uint64_t orphan_count= 0;
+  for (uint64_t page_id= 2; page_id < complete_pages; ++page_id)
+  {
+    if (mylite_page_id_in_ranges(page_id, protected_ranges))
+    {
+      if (in_orphan_range &&
+          !mylite_add_free_page_range_locked(orphan_start, orphan_count,
+                                             free_ranges))
+        return false;
+      in_orphan_range= false;
+      orphan_count= 0;
+      continue;
+    }
+
+    if (!in_orphan_range)
+    {
+      in_orphan_range= true;
+      orphan_start= page_id;
+      orphan_count= 1;
+    }
+    else
+      ++orphan_count;
+  }
+
+  if (in_orphan_range &&
+      !mylite_add_free_page_range_locked(orphan_start, orphan_count,
+                                         free_ranges))
+    return false;
+
+  return mylite_normalize_free_page_ranges_locked(free_ranges);
+}
+
 static bool mylite_page_ranges_overlap(
     const Mylite_free_page_range &left,
     const Mylite_free_page_range &right)
@@ -4109,6 +4172,19 @@ static bool mylite_page_ranges_overlap(
   const uint64_t left_end= left.page_id + left.page_count;
   const uint64_t right_end= right.page_id + right.page_count;
   return left.page_id < right_end && right.page_id < left_end;
+}
+
+static bool mylite_page_id_in_ranges(
+    uint64_t page_id, const std::vector<Mylite_free_page_range> &ranges)
+{
+  for (const Mylite_free_page_range &range : ranges)
+  {
+    if (page_id < range.page_id)
+      return false;
+    if (page_id < range.page_id + range.page_count)
+      return true;
+  }
+  return false;
 }
 
 static bool mylite_page_range_fits_file(
