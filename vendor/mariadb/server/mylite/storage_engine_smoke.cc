@@ -84,6 +84,10 @@ struct SmokeResult
   std::string unsupported_fulltext_key;
   std::string unsupported_spatial_key;
   std::string unsupported_hash_key;
+  std::string unsupported_index_alter_fulltext;
+  std::string unsupported_index_alter_hash;
+  std::string unsupported_index_alter_reverse;
+  std::string unsupported_index_alter_rows;
   std::string key_lookup_note;
   std::string key_order_ids;
   std::string duplicate_key;
@@ -1419,6 +1423,102 @@ static bool exercise_dml(MYSQL *mysql, SmokeResult *result)
                            "SHOW TABLES FROM mylite "
                            "LIKE 'unsupported_reverse_key'",
                            "unsupported reverse key table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "CREATE TABLE "
+                         "mylite.unsupported_index_alter_base "
+                         "(id INT NOT NULL, note VARCHAR(12) NOT NULL, "
+                         "body TEXT NOT NULL, PRIMARY KEY(id), "
+                         "KEY note_key(note)) ENGINE=MYLITE",
+                         "CREATE unsupported index ALTER base table",
+                         result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO "
+                         "mylite.unsupported_index_alter_base VALUES "
+                         "(1, 'a', 'alpha'), (2, 'b', 'beta')",
+                         "INSERT unsupported index ALTER base rows", result))
+    return false;
+  if (!execute_statement_expect_error(
+        mysql,
+        "ALTER TABLE mylite.unsupported_index_alter_base "
+        "ADD FULLTEXT KEY body_ft(body), ALGORITHM=COPY",
+        "unsupported FULLTEXT index ALTER",
+        &result->unsupported_index_alter_fulltext, result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(id, ':', note, ':', body) "
+                          "ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.unsupported_index_alter_base",
+                          "unsupported index ALTER rows after FULLTEXT",
+                          &result->unsupported_index_alter_rows, result))
+    return false;
+  if (result->unsupported_index_alter_rows != "1:a:alpha,2:b:beta")
+  {
+    result->message= "unsupported index ALTER rows changed after FULLTEXT";
+    return false;
+  }
+  if (!execute_statement_expect_error(
+        mysql,
+        "ALTER TABLE mylite.unsupported_index_alter_base "
+        "ADD KEY note_hash(note) USING HASH, ALGORITHM=COPY",
+        "unsupported HASH index ALTER",
+        &result->unsupported_index_alter_hash, result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(id, ':', note, ':', body) "
+                          "ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.unsupported_index_alter_base",
+                          "unsupported index ALTER rows after HASH",
+                          &result->unsupported_index_alter_rows, result))
+    return false;
+  if (result->unsupported_index_alter_rows != "1:a:alpha,2:b:beta")
+  {
+    result->message= "unsupported index ALTER rows changed after HASH";
+    return false;
+  }
+  if (!execute_statement_expect_error(
+        mysql,
+        "ALTER TABLE mylite.unsupported_index_alter_base "
+        "ADD KEY note_desc(note DESC), ALGORITHM=COPY",
+        "unsupported descending index ALTER",
+        &result->unsupported_index_alter_reverse, result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(id, ':', note, ':', body) "
+                          "ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.unsupported_index_alter_base",
+                          "unsupported index ALTER rows after descending key",
+                          &result->unsupported_index_alter_rows, result))
+    return false;
+  if (result->unsupported_index_alter_rows != "1:a:alpha,2:b:beta")
+  {
+    result->message= "unsupported index ALTER rows changed after descending key";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "INSERT INTO "
+                         "mylite.unsupported_index_alter_base VALUES "
+                         "(3, 'c', 'gamma')",
+                         "INSERT unsupported index ALTER final row", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(id, ':', note, ':', body) "
+                          "ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.unsupported_index_alter_base",
+                          "unsupported index ALTER final rows",
+                          &result->unsupported_index_alter_rows, result))
+    return false;
+  if (result->unsupported_index_alter_rows !=
+      "1:a:alpha,2:b:beta,3:c:gamma")
+  {
+    result->message= "unsupported index ALTER final rows changed";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "DROP TABLE "
+                         "mylite.unsupported_index_alter_base",
+                         "DROP unsupported index ALTER base table", result))
     return false;
   if (!execute_statement_expect_error(
         mysql,
@@ -3238,6 +3338,18 @@ static void write_report(const SmokeOptions &options,
   if (!result.unsupported_hash_key.empty())
     report << "unsupported_hash_key="
            << result.unsupported_hash_key << "\n";
+  if (!result.unsupported_index_alter_fulltext.empty())
+    report << "unsupported_index_alter_fulltext="
+           << result.unsupported_index_alter_fulltext << "\n";
+  if (!result.unsupported_index_alter_hash.empty())
+    report << "unsupported_index_alter_hash="
+           << result.unsupported_index_alter_hash << "\n";
+  if (!result.unsupported_index_alter_reverse.empty())
+    report << "unsupported_index_alter_reverse="
+           << result.unsupported_index_alter_reverse << "\n";
+  if (!result.unsupported_index_alter_rows.empty())
+    report << "unsupported_index_alter_rows="
+           << result.unsupported_index_alter_rows << "\n";
   if (!result.key_lookup_note.empty())
     report << "key_lookup_note=" << result.key_lookup_note << "\n";
   if (!result.key_order_ids.empty())

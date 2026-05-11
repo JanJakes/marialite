@@ -75,7 +75,7 @@ in the MyLite catalog without durable MariaDB datadir sidecars or hidden
 FULLTEXT, SPATIAL, HASH, and descending indexes are covered as explicit DDL
 rejections until their search, geometry, hash, ordering, and storage semantics
 are designed for MyLite's durable index format.
-Unsupported index additions through copy ALTER are being covered separately so
+Unsupported index additions through copy ALTER are covered separately so
 failed replacement-table definitions do not mutate valid MyLite rows or
 catalog state.
 Persistent free-page ranges now let later row, index, and catalog page-chain
@@ -158,7 +158,7 @@ documented read-write create combination.
 | 41 | `check-constraint-enforcement` | Done | Prove CHECK constraints are enforced and persisted for supported MyLite tables through inherited MariaDB semantics. |
 | 42 | `schema-object-ddl-rejection` | Done | Reject persistent schema-object DDL that still depends on view, trigger, routine, package, or event metadata outside the MyLite catalog. |
 | 43 | `unsupported-index-ddl-rejection` | Done | Prove FULLTEXT, SPATIAL, HASH, and descending indexes fail explicitly without storing unsupported MyLite table definitions. |
-| 44 | `unsupported-index-alter-rejection` | In progress | Prove failed unsupported-index copy ALTER statements leave existing MyLite rows and table definitions intact. |
+| 44 | `unsupported-index-alter-rejection` | Done | Prove failed unsupported-index copy ALTER statements leave existing MyLite rows and table definitions intact. |
 
 ## Size and profile direction
 

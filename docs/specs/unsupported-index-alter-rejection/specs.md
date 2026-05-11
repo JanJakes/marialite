@@ -121,4 +121,38 @@ No new dependency or licensing change.
 
 ## Implementation Result
 
-Pending.
+Implemented as storage-smoke coverage. No handler code change was needed:
+the replacement table definition reaches the same MyLite key metadata boundary
+as create-time DDL and is rejected before catalog publication.
+
+The storage smoke now creates a supported table, inserts two rows, rejects
+copy ALTER attempts that add a FULLTEXT key, HASH key, and descending key,
+checks the original rows after each failure, inserts a third row after the
+failure sequence, and verifies the final row set.
+
+Report evidence from `MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh`:
+
+- `build/mariadb-minsize/mylite-storage-engine-report.txt`:
+  - `status=0`
+  - `message=ok`
+  - `unsupported_index_alter_fulltext=rejected`
+  - `unsupported_index_alter_hash=rejected`
+  - `unsupported_index_alter_reverse=rejected`
+  - `unsupported_index_alter_rows=1:a:alpha,2:b:beta,3:c:gamma`
+
+Verification run:
+
+- `git diff --check`
+- `bash -n tools/run-storage-engine-smoke.sh
+  tools/run-compatibility-test-harness.sh`
+- `MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh`
+- `MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh`
+
+Measured `MinSizeRel` artifacts from
+`build/mariadb-minsize/mylite-build-report.txt` and `ls -l`:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,413,682 bytes,
+  571 objects.
+- `build/mariadb-minsize/mylite/mylite-storage-engine-smoke`: 22,773,424
+  bytes.
+- `build/mariadb-minsize/mylite/libmylite.a`: 87,206 bytes.
