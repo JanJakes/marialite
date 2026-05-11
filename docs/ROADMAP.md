@@ -31,9 +31,8 @@ table-definition files, persist frm-backed table definitions in the primary
 `.mylite` file across fresh embedded processes, and recover the previous valid
 catalog generation when the latest append-only catalog payload is corrupted.
 
-The next implementation step is `row-index-storage`, which should add the first
-real row storage, index metadata/access, and autoincrement state behind the
-existing MyLite handler skeleton.
+The active implementation step is `row-index-storage`, starting with durable
+heap rows, table scans, and row mutation before secondary index structures.
 
 ## Implementation plan
 
@@ -50,7 +49,7 @@ existing MyLite handler skeleton.
 | 8 | `ddl-metadata-routing` | Done | Prove `CREATE`, `ALTER`, `DROP`, and `RENAME` do not leave durable `.frm` table-definition sidecars. |
 | 9 | `single-file-catalog` | Done | Store initial frm-backed table definitions inside the `.mylite` file. |
 | 10 | `file-format-recovery` | Done | Define and implement the first durable file header, page layout, catalog update protocol, and initial catalog recovery guarantees. |
-| 11 | `row-index-storage` | Planned | Implement row storage, index access, autoincrement state, and core read/write handler methods. |
+| 11 | `row-index-storage` | In progress | Implement row storage, index access, autoincrement state, and core read/write handler methods. |
 | 12 | `compatibility-test-harness` | Planned | Run embedded lifecycle, unexpected-sidecar detection, crash/reopen, and MariaDB comparison tests in repeatable groups. |
 
 ## Size and profile direction
