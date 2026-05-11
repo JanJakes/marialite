@@ -88,6 +88,15 @@ embedded server bootstrap is process-global and does not safely restart inside
 one process after `mysql_server_end()`. `mylite_close()` releases the handle's
 embedded connection; the process-scoped runtime is kept until process exit.
 
+`MYLITE_OPEN_READONLY` is enforced for the active process-scoped runtime:
+MyLite opens the primary file read-only in the storage engine, holds a shared
+advisory lock, allows reads of existing MyLite tables, and rejects MyLite DDL
+and DML mutations with `MYLITE_READONLY`. Because the embedded runtime and
+storage-engine startup options are process-global, a later same-path open with
+an incompatible read/write mode returns `MYLITE_BUSY`. MariaDB errno and
+SQLSTATE details are preserved; some read-only handler failures still surface
+as MariaDB SQLSTATE `HY000` with read-only errno/message details.
+
 ## Direct execution
 
 ```c

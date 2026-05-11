@@ -19,6 +19,7 @@
 #include <vector>
 
 #include <mysql.h>
+#include <mysqld_error.h>
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -99,6 +100,7 @@ namespace {
 struct RuntimeState
 {
   bool started= false;
+  bool readonly= false;
   unsigned refs= 0;
   std::string filename;
   std::string runtime_dir;
@@ -126,6 +128,7 @@ std::string parent_path(const std::string &path);
 bool is_directory(const std::string &path);
 bool start_runtime(const std::string &filename,
                    const std::string &runtime_dir,
+                   bool readonly,
                    std::string *message);
 std::vector<std::string> build_server_args(const std::string &runtime_dir);
 const char *default_lc_messages_dir();
@@ -154,7 +157,8 @@ int set_error_from_mysql(mylite_db *db);
 int return_error_with_message(mylite_db *db, char **errmsg);
 int return_standalone_error(int code, const char *message, char **errmsg);
 char *duplicate_message(const std::string &message);
-int classify_mariadb_error(const char *sqlstate);
+int classify_mariadb_error(unsigned error, const char *sqlstate,
+                           const char *message);
 MysqlEffectSnapshot snapshot_mysql_effects(MYSQL *mysql);
 void restore_mysql_effects(MYSQL *mysql, const MysqlEffectSnapshot &snapshot);
 unsigned map_warning_level_name(const char *level, size_t length);
@@ -189,6 +193,7 @@ extern "C" int mylite_open_v2(const char *filename, mylite_db **out_db,
   if (!make_absolute_path(filename, &db->filename, &path_message))
     return set_error(db, MYLITE_CANTOPEN, 0, "HY000", path_message);
   db->runtime_dir= db->filename + ".mylite-runtime";
+  const bool readonly= (flags & MYLITE_OPEN_READONLY) != 0;
 
   std::lock_guard<std::mutex> guard(runtime_mutex);
   if (runtime.started && runtime.filename != db->filename)
@@ -196,6 +201,12 @@ extern "C" int mylite_open_v2(const char *filename, mylite_db **out_db,
     return set_error(db, MYLITE_BUSY, 0, "HY000",
                      "another MyLite database path is already initialized in "
                      "this process");
+  }
+  if (runtime.started && runtime.readonly != readonly)
+  {
+    return set_error(db, MYLITE_BUSY, 0, "HY000",
+                     "MyLite runtime is already initialized with a different "
+                     "open mode");
   }
 
   if (!prepare_primary_file(db->filename, flags, &path_message))
@@ -206,7 +217,7 @@ extern "C" int mylite_open_v2(const char *filename, mylite_db **out_db,
 
   const bool started_here= !runtime.started;
   if (started_here && !start_runtime(db->filename, db->runtime_dir,
-                                     &path_message))
+                                     readonly, &path_message))
     return set_error(db, MYLITE_ERROR, 0, "HY000", path_message);
 
   const int connect_result= connect_handle(db);
@@ -823,12 +834,13 @@ bool make_absolute_path(const char *filename, std::string *path,
 bool prepare_primary_file(const std::string &path, unsigned flags,
                           std::string *message)
 {
-  if (!ensure_directory(parent_path(path), message))
+  const bool readonly= (flags & MYLITE_OPEN_READONLY) != 0;
+  const bool create= (flags & MYLITE_OPEN_CREATE) != 0;
+  if (create && !ensure_directory(parent_path(path), message))
     return false;
 
-  const bool readonly= (flags & MYLITE_OPEN_READONLY) != 0;
   int open_flags= readonly ? O_RDONLY : O_RDWR;
-  if ((flags & MYLITE_OPEN_CREATE) != 0)
+  if (create)
     open_flags|= O_CREAT;
   open_flags|= O_CLOEXEC;
 
@@ -888,9 +900,11 @@ bool is_directory(const std::string &path)
 
 bool start_runtime(const std::string &filename,
                    const std::string &runtime_dir,
+                   bool readonly,
                    std::string *message)
 {
   runtime.filename= filename;
+  runtime.readonly= readonly;
   runtime.runtime_dir= runtime_dir;
   runtime.server_args= build_server_args(runtime_dir);
   rebuild_server_argv();
@@ -919,7 +933,7 @@ bool start_runtime(const std::string &filename,
 
 std::vector<std::string> build_server_args(const std::string &runtime_dir)
 {
-  return {
+  std::vector<std::string> args= {
     "libmylite",
     "--no-defaults",
     "--datadir=" + runtime_dir + "/datadir",
@@ -935,6 +949,9 @@ std::vector<std::string> build_server_args(const std::string &runtime_dir)
     "--pid-file=" + runtime_dir + "/mariadb.pid",
     "--socket=" + runtime_dir + "/mariadb.sock"
   };
+  if (runtime.readonly)
+    args.push_back("--mylite-read-only=ON");
+  return args;
 }
 
 const char *default_lc_messages_dir()
@@ -1377,7 +1394,7 @@ int set_error_from_mysql_stmt(mylite_db *db, MYSQL_STMT *stmt)
   const unsigned error= mysql_stmt_errno(stmt);
   const char *sqlstate= mysql_stmt_sqlstate(stmt);
   const char *message= mysql_stmt_error(stmt);
-  const int code= classify_mariadb_error(sqlstate);
+  const int code= classify_mariadb_error(error, sqlstate, message);
   return set_error(db, code, error, sqlstate,
                    message && message[0] ? message :
                    "MariaDB prepared statement failed");
@@ -1388,7 +1405,7 @@ int set_error_from_mysql(mylite_db *db)
   const unsigned error= mysql_errno(db->mysql);
   const char *sqlstate= mysql_sqlstate(db->mysql);
   const char *message= mysql_error(db->mysql);
-  const int code= classify_mariadb_error(sqlstate);
+  const int code= classify_mariadb_error(error, sqlstate, message);
   return set_error(db, code, error, sqlstate,
                    message && message[0] ? message : "MariaDB query failed");
 }
@@ -1429,10 +1446,18 @@ char *duplicate_message(const std::string &message)
   return copy;
 }
 
-int classify_mariadb_error(const char *sqlstate)
+int classify_mariadb_error(unsigned error, const char *sqlstate,
+                           const char *message)
 {
   if (sqlstate && sqlstate[0] == '2' && sqlstate[1] == '3')
     return MYLITE_CONSTRAINT;
+  if (sqlstate && sqlstate[0] == '2' && sqlstate[1] == '5')
+    return MYLITE_READONLY;
+  if (error == ER_OPEN_AS_READONLY)
+    return MYLITE_READONLY;
+  if (error == ER_CANT_CREATE_TABLE && message &&
+      std::strstr(message, "Table is read only"))
+    return MYLITE_READONLY;
   return MYLITE_ERROR;
 }
 

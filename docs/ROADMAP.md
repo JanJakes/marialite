@@ -76,7 +76,10 @@ an exclusive advisory lock held on the
 `.mylite` file for the MyLite storage-engine lifetime; another process or
 external advisory-lock holder causes an explicit catalog operation failure
 until that lock is released, and the SQL-facing handler diagnostic now reports
-a lock timeout instead of misleading index corruption.
+a lock timeout instead of misleading index corruption. Public read-only opens
+now start the process-scoped runtime in read-only mode, take a shared advisory
+lock on the primary file, allow reads of existing MyLite rows, and reject
+MyLite DDL/DML mutations with public `MYLITE_READONLY` diagnostics.
 
 ## Implementation plan
 
@@ -116,7 +119,7 @@ a lock timeout instead of misleading index corruption.
 | 31 | `libmylite-prepared-statements` | Done | Add the first public no-parameter prepared statement lifecycle and column accessors. |
 | 32 | `libmylite-parameter-binding` | Done | Add the first public prepared-statement parameter binding API for NULL, numeric, text, and BLOB values. |
 | 33 | `libmylite-warning-enumeration` | Done | Add structured warning, note, and error-condition retrieval through the public `libmylite` handle. |
-| 34 | `libmylite-readonly-open` | In progress | Enforce `MYLITE_OPEN_READONLY` through runtime startup, storage-engine locking, and public read-only diagnostics. |
+| 34 | `libmylite-readonly-open` | Done | Enforce `MYLITE_OPEN_READONLY` through runtime startup, storage-engine locking, and public read-only diagnostics. |
 
 ## Size and profile direction
 

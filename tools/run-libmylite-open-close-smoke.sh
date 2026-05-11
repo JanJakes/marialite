@@ -47,21 +47,37 @@ run_inside_container() {
   local runtime_dir="${abs_build_dir}/libmylite-open-close"
   local database="${runtime_dir}/open-close.mylite"
   local report="${abs_build_dir}/libmylite-open-close-report.txt"
+  local readonly_report="${abs_build_dir}/libmylite-open-close-readonly-report.txt"
 
   rm -rf "${runtime_dir}"
   mkdir -p "${runtime_dir}"
 
   local smoke="${abs_build_dir}/mylite/mylite-open-close-smoke"
   local smoke_log="${abs_build_dir}/libmylite-open-close-output.log"
+  local readonly_log="${abs_build_dir}/libmylite-open-close-readonly-output.log"
   rm -f "${smoke_log}"
+  rm -f "${readonly_log}"
   local status=0
   "${smoke}" \
     "--database=${database}" \
+    "--mode=default" \
     "--report=${report}" > "${smoke_log}" 2>&1 || status=$?
 
+  local readonly_status=0
+  "${smoke}" \
+    "--database=${database}" \
+    "--mode=readonly" \
+    "--report=${readonly_report}" > "${readonly_log}" 2>&1 || readonly_status=$?
+
   append_observed_files "${runtime_dir}" "${report}" "${smoke_log}"
+  append_observed_files "${runtime_dir}" "${readonly_report}" "${readonly_log}"
   printf "libmylite open/close smoke report: %s\n" "${report}"
-  return "${status}"
+  printf "libmylite read-only smoke report: %s\n" "${readonly_report}"
+
+  if [[ "${status}" -ne 0 ]]; then
+    return "${status}"
+  fi
+  return "${readonly_status}"
 }
 
 append_observed_files() {

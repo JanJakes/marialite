@@ -7,9 +7,11 @@
 #include "mylite.h"
 
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -17,6 +19,14 @@ struct SmokeOptions
 {
   std::string database;
   std::string report;
+  std::string mode= "default";
+};
+
+struct FileSnapshot
+{
+  off_t size= 0;
+  std::time_t mtime_sec= 0;
+  long mtime_nsec= 0;
 };
 
 struct CaseResult
@@ -50,6 +60,11 @@ struct SmokeResult
   std::string warning_notfound_message;
   std::string warning_error;
   std::string warning_effects;
+  std::string readonly_rows;
+  std::string readonly_insert_message;
+  std::string readonly_create_message;
+  std::string readonly_prepare_message;
+  std::string readonly_file;
   std::string prepared_unbound_message;
   std::string prepared_invalid_bind_message;
   std::string prepared_rebind_message;
@@ -77,6 +92,10 @@ static int bind_destructor_calls= 0;
 static bool parse_options(int argc, char **argv, SmokeOptions *options,
                           std::string *error);
 static int run_smoke(const SmokeOptions &options, SmokeResult *result);
+static int run_default_smoke(const SmokeOptions &options,
+                             SmokeResult *result);
+static int run_readonly_smoke(const SmokeOptions &options,
+                              SmokeResult *result);
 static bool check_close_null(SmokeResult *result);
 static bool check_null_out_db(const SmokeOptions &options, SmokeResult *result);
 static bool check_null_filename(SmokeResult *result);
@@ -105,6 +124,8 @@ static bool check_statement_effects(const SmokeOptions &options,
                                     SmokeResult *result);
 static bool check_prepared_statement_api(const SmokeOptions &options,
                                          SmokeResult *result);
+static bool check_readonly_existing_database(const SmokeOptions &options,
+                                             SmokeResult *result);
 static bool exec_statement(mylite_db *db, const char *sql, const char *label,
                            SmokeResult *result);
 static bool exec_query_capture(mylite_db *db, const char *sql,
@@ -119,6 +140,9 @@ static std::string prepared_row_summary(mylite_stmt *stmt);
 static std::string prepared_bound_row_summary(mylite_stmt *stmt);
 static std::string prepared_type_summary(mylite_stmt *stmt);
 static std::string hex_bytes(const void *data, size_t length);
+static bool snapshot_file(const std::string &path, FileSnapshot *snapshot,
+                          std::string *message);
+static std::string file_snapshot_summary(const FileSnapshot &snapshot);
 static int capture_exec_row(void *ctx, int column_count, char **values,
                             char **column_names);
 static void count_bind_destructor(void *ptr);
@@ -158,6 +182,8 @@ static bool parse_options(int argc, char **argv, SmokeOptions *options,
       options->database= value;
     else if (option_value(argv[i], "--report=", &value))
       options->report= value;
+    else if (option_value(argv[i], "--mode=", &value))
+      options->mode= value;
     else
     {
       *error= std::string("unknown argument: ") + argv[i];
@@ -165,11 +191,25 @@ static bool parse_options(int argc, char **argv, SmokeOptions *options,
     }
   }
 
-  return require_option(options->database, "--database", error) &&
-         require_option(options->report, "--report", error);
+  if (!require_option(options->database, "--database", error) ||
+      !require_option(options->report, "--report", error))
+    return false;
+  if (options->mode != "default" && options->mode != "readonly")
+  {
+    *error= "unsupported mode: " + options->mode;
+    return false;
+  }
+  return true;
 }
 
 static int run_smoke(const SmokeOptions &options, SmokeResult *result)
+{
+  if (options.mode == "readonly")
+    return run_readonly_smoke(options, result);
+  return run_default_smoke(options, result);
+}
+
+static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 {
   bool ok= true;
 
@@ -233,6 +273,25 @@ static int run_smoke(const SmokeOptions &options, SmokeResult *result)
   return result->status;
 }
 
+static int run_readonly_smoke(const SmokeOptions &options, SmokeResult *result)
+{
+  bool ok= true;
+
+  result->phase= "readonly_existing_database";
+  ok= check_readonly_existing_database(options, result) && ok;
+
+  if (!ok)
+  {
+    result->message= "read-only smoke failed";
+    return result->status;
+  }
+
+  result->phase= "complete";
+  result->status= 0;
+  result->message= "ok";
+  return result->status;
+}
+
 static bool check_close_null(SmokeResult *result)
 {
   const int rc= mylite_close(nullptr);
@@ -257,14 +316,18 @@ static bool check_null_filename(SmokeResult *result)
 static bool check_readonly_missing(const SmokeOptions &options,
                                    SmokeResult *result)
 {
-  const std::string missing= options.database + ".missing";
+  const std::string missing_dir= options.database + ".readonly-missing-dir";
+  const std::string missing= missing_dir + "/missing.mylite";
   unlink(missing.c_str());
+  rmdir(missing_dir.c_str());
 
   mylite_db *db= nullptr;
   const int rc= mylite_open_v2(missing.c_str(), &db, MYLITE_OPEN_READONLY,
                                nullptr);
-  const bool ok= record_result(result, "readonly_missing", MYLITE_CANTOPEN,
-                               rc, db);
+  bool ok= record_result(result, "readonly_missing", MYLITE_CANTOPEN, rc,
+                         db);
+  if (access(missing_dir.c_str(), F_OK) == 0)
+    ok= false;
   mylite_close(db);
   return ok;
 }
@@ -1061,6 +1124,122 @@ static bool check_prepared_statement_api(const SmokeOptions &options,
   return ok;
 }
 
+static bool check_readonly_existing_database(const SmokeOptions &options,
+                                             SmokeResult *result)
+{
+  bool ok= true;
+  FileSnapshot before;
+  std::string snapshot_error;
+  if (!snapshot_file(options.database, &before, &snapshot_error))
+  {
+    result->message= snapshot_error;
+    return false;
+  }
+
+  mylite_db *db= nullptr;
+  int rc= mylite_open_v2(options.database.c_str(), &db, MYLITE_OPEN_READONLY,
+                         nullptr);
+  ok= record_result(result, "readonly_open", MYLITE_OK, rc, db) && ok;
+  if (!db)
+    return ok;
+
+  ExecCapture capture;
+  ok= exec_query_capture(db,
+                         "SELECT id, COALESCE(note, 'NULL') AS note "
+                         "FROM mylite.exec_rows ORDER BY id",
+                         "readonly_select_rows", &capture, result) && ok;
+  result->readonly_rows= join_strings(capture.rows, ",");
+  if (result->readonly_rows != "1:one,2:NULL")
+    ok= false;
+
+  mylite_db *second= nullptr;
+  rc= mylite_open_v2(options.database.c_str(), &second, MYLITE_OPEN_READONLY,
+                     nullptr);
+  ok= record_result(result, "readonly_second_open", MYLITE_OK, rc,
+                    second) && ok;
+  if (second)
+  {
+    rc= mylite_close(second);
+    ok= record_result(result, "readonly_second_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+
+  mylite_db *readwrite= nullptr;
+  rc= mylite_open(options.database.c_str(), &readwrite);
+  ok= record_result(result, "readonly_reject_readwrite_open", MYLITE_BUSY,
+                    rc, readwrite) && ok;
+  mylite_close(readwrite);
+
+  rc= mylite_exec(db, "INSERT INTO mylite.exec_rows VALUES (3, 'three')",
+                  nullptr, nullptr, nullptr);
+  result->readonly_insert_message= mylite_errmsg(db);
+  ok= record_result(result, "readonly_insert_rejected", MYLITE_READONLY, rc,
+                    db) && ok;
+  if (mylite_mariadb_errno(db) != 1036 ||
+      result->readonly_insert_message.find("read only") == std::string::npos)
+    ok= false;
+
+  rc= mylite_exec(db,
+                  "CREATE TABLE mylite.readonly_create "
+                  "(id INT NOT NULL, PRIMARY KEY(id)) ENGINE=MYLITE",
+                  nullptr, nullptr, nullptr);
+  result->readonly_create_message= mylite_errmsg(db);
+  ok= record_result(result, "readonly_create_rejected", MYLITE_READONLY, rc,
+                    db) && ok;
+  if (mylite_mariadb_errno(db) != 1005 ||
+      result->readonly_create_message.find("Table is read only") ==
+        std::string::npos)
+    ok= false;
+
+  mylite_stmt *stmt= nullptr;
+  const char *tail= nullptr;
+  rc= mylite_prepare(db,
+                     "INSERT INTO mylite.exec_rows VALUES (4, 'four')",
+                     0, &stmt, &tail);
+  ok= record_result(result, "readonly_prepare_insert", MYLITE_OK, rc,
+                    db) && ok;
+  if (stmt)
+  {
+    rc= mylite_step(stmt);
+    result->readonly_prepare_message= mylite_errmsg(db);
+    ok= record_result(result, "readonly_prepared_insert_rejected",
+                      MYLITE_READONLY, rc, db) && ok;
+    if (mylite_mariadb_errno(db) != 1036 ||
+        result->readonly_prepare_message.find("read only") ==
+          std::string::npos)
+      ok= false;
+    rc= mylite_finalize(stmt);
+    ok= record_result(result, "readonly_finalize_insert", MYLITE_OK, rc,
+                      db) && ok;
+  }
+
+  ExecCapture after_capture;
+  ok= exec_query_capture(db,
+                         "SELECT id, COALESCE(note, 'NULL') AS note "
+                         "FROM mylite.exec_rows ORDER BY id",
+                         "readonly_select_after_rejected",
+                         &after_capture, result) && ok;
+  if (join_strings(after_capture.rows, ",") != "1:one,2:NULL")
+    ok= false;
+
+  rc= mylite_close(db);
+  ok= record_result(result, "readonly_close", MYLITE_OK, rc, nullptr) && ok;
+
+  FileSnapshot after;
+  if (!snapshot_file(options.database, &after, &snapshot_error))
+  {
+    result->message= snapshot_error;
+    return false;
+  }
+  result->readonly_file= file_snapshot_summary(before) + "->" +
+                         file_snapshot_summary(after);
+  if (before.size != after.size || before.mtime_sec != after.mtime_sec ||
+      before.mtime_nsec != after.mtime_nsec)
+    ok= false;
+
+  return ok;
+}
+
 static bool exec_statement(mylite_db *db, const char *sql, const char *label,
                            SmokeResult *result)
 {
@@ -1152,6 +1331,34 @@ static std::string hex_bytes(const void *data, size_t length)
   return result;
 }
 
+static bool snapshot_file(const std::string &path, FileSnapshot *snapshot,
+                          std::string *message)
+{
+  struct stat st;
+  if (stat(path.c_str(), &st) != 0)
+  {
+    *message= "could not stat primary file: " + path;
+    return false;
+  }
+
+  snapshot->size= st.st_size;
+#ifdef __APPLE__
+  snapshot->mtime_sec= st.st_mtimespec.tv_sec;
+  snapshot->mtime_nsec= st.st_mtimespec.tv_nsec;
+#else
+  snapshot->mtime_sec= st.st_mtim.tv_sec;
+  snapshot->mtime_nsec= st.st_mtim.tv_nsec;
+#endif
+  return true;
+}
+
+static std::string file_snapshot_summary(const FileSnapshot &snapshot)
+{
+  return std::to_string(static_cast<long long>(snapshot.size)) + ":" +
+         std::to_string(static_cast<long long>(snapshot.mtime_sec)) + "." +
+         std::to_string(snapshot.mtime_nsec);
+}
+
 static void count_bind_destructor(void *ptr)
 {
   if (ptr)
@@ -1240,6 +1447,7 @@ static void write_report(const SmokeOptions &options,
 
   report << "# MyLite Open Close Smoke Report\n\n";
   report << "database=" << options.database << "\n\n";
+  report << "mode=" << options.mode << "\n\n";
   report << "## Result\n\n";
   report << "status=" << result.status << "\n";
   report << "phase=" << result.phase << "\n";
@@ -1275,6 +1483,19 @@ static void write_report(const SmokeOptions &options,
     report << "warning_error=" << result.warning_error << "\n";
   if (!result.warning_effects.empty())
     report << "warning_effects=" << result.warning_effects << "\n";
+  if (!result.readonly_rows.empty())
+    report << "readonly_rows=" << result.readonly_rows << "\n";
+  if (!result.readonly_insert_message.empty())
+    report << "readonly_insert_message=" << result.readonly_insert_message
+           << "\n";
+  if (!result.readonly_create_message.empty())
+    report << "readonly_create_message=" << result.readonly_create_message
+           << "\n";
+  if (!result.readonly_prepare_message.empty())
+    report << "readonly_prepare_message=" << result.readonly_prepare_message
+           << "\n";
+  if (!result.readonly_file.empty())
+    report << "readonly_file=" << result.readonly_file << "\n";
   if (!result.prepared_unbound_message.empty())
     report << "prepared_unbound_message=" << result.prepared_unbound_message
            << "\n";

@@ -281,6 +281,7 @@ static void mylite_clear_catalog_error();
 static void mylite_set_catalog_error(int error);
 static void mylite_set_catalog_errno_error();
 static int mylite_catalog_error_code();
+static bool mylite_catalog_read_only();
 static void mylite_clear_frm_definitions_locked();
 static bool mylite_load_catalog_locked();
 static bool mylite_ensure_catalog_file_locked();
@@ -471,6 +472,7 @@ static int mylite_deinit_func(void *p);
 
 static handlerton *mylite_hton;
 static char *mylite_catalog_file;
+static char mylite_read_only= 0;
 static const char mylite_seed_db[]= "mylite";
 static const char mylite_seed_table[]= "probe";
 static const char mylite_seed_sql[]=
@@ -554,8 +556,18 @@ static MYSQL_SYSVAR_STR(
   nullptr,
   nullptr);
 
+static MYSQL_SYSVAR_BOOL(
+  read_only,
+  mylite_read_only,
+  PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
+  "Open the primary MyLite catalog file in read-only mode.",
+  nullptr,
+  nullptr,
+  0);
+
 static struct st_mysql_sys_var *mylite_system_variables[]= {
   MYSQL_SYSVAR(catalog_file),
+  MYSQL_SYSVAR(read_only),
   nullptr
 };
 
@@ -847,6 +859,8 @@ int ha_mylite::create(const char *name, TABLE *table_arg,
                       HA_CREATE_INFO *create_info)
 {
   DBUG_ENTER("ha_mylite::create");
+  if (mylite_catalog_read_only())
+    DBUG_RETURN(HA_ERR_TABLE_READONLY);
   if (!mylite_table_supports_row_storage(table_arg) ||
       !mylite_table_supports_key_storage(table_arg))
     DBUG_RETURN(HA_ERR_UNSUPPORTED);
@@ -856,12 +870,16 @@ int ha_mylite::create(const char *name, TABLE *table_arg,
 int ha_mylite::delete_table(const char *name)
 {
   DBUG_ENTER("ha_mylite::delete_table");
+  if (mylite_catalog_read_only())
+    DBUG_RETURN(HA_ERR_TABLE_READONLY);
   DBUG_RETURN(mylite_remove_table_definition(name));
 }
 
 int ha_mylite::write_row(const uchar *buf)
 {
   DBUG_ENTER("ha_mylite::write_row");
+  if (mylite_catalog_read_only())
+    DBUG_RETURN(HA_ERR_TABLE_READONLY);
   lookup_errkey= static_cast<uint>(-1);
   if (table->next_number_field && buf == table->record[0])
   {
@@ -887,6 +905,8 @@ int ha_mylite::write_row(const uchar *buf)
 int ha_mylite::update_row(const uchar *, const uchar *new_data)
 {
   DBUG_ENTER("ha_mylite::update_row");
+  if (mylite_catalog_read_only())
+    DBUG_RETURN(HA_ERR_TABLE_READONLY);
   lookup_errkey= static_cast<uint>(-1);
   uint duplicate_key= static_cast<uint>(-1);
   const int error= mylite_update_row(db_name.c_str(), db_name.length(),
@@ -906,6 +926,8 @@ int ha_mylite::update_row(const uchar *, const uchar *new_data)
 int ha_mylite::delete_row(const uchar *)
 {
   DBUG_ENTER("ha_mylite::delete_row");
+  if (mylite_catalog_read_only())
+    DBUG_RETURN(HA_ERR_TABLE_READONLY);
   const int error= mylite_delete_row(db_name.c_str(), db_name.length(),
                                      opened_table_name.c_str(),
                                      opened_table_name.length(), ha_thd(),
@@ -1118,6 +1140,8 @@ void ha_mylite::get_auto_increment(ulonglong offset, ulonglong increment,
 int ha_mylite::reset_auto_increment(ulonglong value)
 {
   DBUG_ENTER("ha_mylite::reset_auto_increment");
+  if (mylite_catalog_read_only())
+    DBUG_RETURN(HA_ERR_TABLE_READONLY);
   DBUG_RETURN(mylite_reset_auto_increment_value(
     db_name.c_str(), db_name.length(), opened_table_name.c_str(),
     opened_table_name.length(), value));
@@ -1163,6 +1187,8 @@ THR_LOCK_DATA **ha_mylite::store_lock(THD *, THR_LOCK_DATA **to,
 int ha_mylite::rename_table(const char *from, const char *to)
 {
   DBUG_ENTER("ha_mylite::rename_table");
+  if (mylite_catalog_read_only())
+    DBUG_RETURN(HA_ERR_TABLE_READONLY);
   DBUG_RETURN(mylite_rename_table_definition(from, to));
 }
 
@@ -2360,6 +2386,8 @@ static int mylite_prepare_dml_mutation_locked(THD *thd)
 {
   if (!mylite_ensure_catalog_loaded_locked())
     return mylite_catalog_error_code();
+  if (mylite_catalog_read_only())
+    return HA_ERR_TABLE_READONLY;
 
   int error= mylite_register_transaction(thd, true);
   if (error)
@@ -2542,6 +2570,11 @@ static int mylite_catalog_error_code()
                                     HA_ERR_CRASHED;
 }
 
+static bool mylite_catalog_read_only()
+{
+  return mylite_read_only != 0;
+}
+
 static void mylite_clear_frm_definitions_locked()
 {
   for (std::vector<Mylite_table_definition>::iterator it=
@@ -2571,7 +2604,10 @@ static bool mylite_ensure_catalog_file_locked()
     return false;
   }
 
-  const int fd= open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+  const bool read_only= mylite_catalog_read_only();
+  const int open_flags= (read_only ? O_RDONLY : O_RDWR | O_CREAT) |
+                        O_CLOEXEC;
+  const int fd= open(path.c_str(), open_flags, 0666);
   if (fd < 0)
   {
     mylite_set_catalog_errno_error();
@@ -2579,7 +2615,7 @@ static bool mylite_ensure_catalog_file_locked()
     return false;
   }
 
-  if (my_lock(fd, F_WRLCK, 0, F_TO_EOF,
+  if (my_lock(fd, read_only ? F_RDLCK : F_WRLCK, 0, F_TO_EOF,
               MYF(MY_FORCE_LOCK | MY_NO_WAIT)) != 0)
   {
     const int saved_errno= my_errno > 0 ? my_errno :
@@ -3155,6 +3191,8 @@ static int mylite_flush_catalog_locked()
 {
   if (!mylite_catalog_file || !mylite_catalog_file[0])
     return 0;
+  if (mylite_catalog_read_only())
+    return HA_ERR_TABLE_READONLY;
 
   return mylite_write_catalog_locked() ? 0 : mylite_catalog_error_code();
 }

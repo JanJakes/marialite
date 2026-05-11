@@ -335,6 +335,8 @@ that permanently rule out useful write concurrency:
 
 - one process may open the database for write,
 - multiple handles in that process are coordinated by a shared runtime object,
+- a read-only process opens the primary file read-only, holds a shared advisory
+  lock, and rejects MyLite catalog or row mutations,
 - v1 may serialize writes if the first pager or recovery design requires it,
 - a second process gets `MYLITE_BUSY` or read-only access until cross-process
   locking is implemented and tested.

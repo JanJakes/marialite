@@ -36,6 +36,11 @@ process-scoped embedded runtime.
   rather than inventing a new SQL-layer error.
 - `vendor/mariadb/server/include/handler_state.h` maps both handler read-only
   errors to SQLSTATE `25000`.
+- The SQL layer can wrap handler read-only errors before they reach the C API:
+  observed `INSERT` and prepared `INSERT` failures preserve MariaDB errno 1036
+  (`ER_OPEN_AS_READONLY`) with SQLSTATE `HY000`, while `CREATE TABLE` preserves
+  errno 1005 (`ER_CANT_CREATE_TABLE`) with the handler errno 165 text embedded
+  in the message.
 
 ## Scope
 
@@ -50,7 +55,8 @@ This slice will:
   in read-only mode,
 - reject MyLite DDL and row/autoincrement mutations with MariaDB read-only
   handler diagnostics,
-- map SQLSTATE class `25` through the public C API to `MYLITE_READONLY`,
+- map SQLSTATE class `25` and the observed MariaDB read-only errno/message
+  shapes through the public C API to `MYLITE_READONLY`,
 - extend the `libmylite` smoke with a fresh-process read-only pass that proves
   existing rows can be read and DDL/DML cannot change the primary file.
 
@@ -108,9 +114,10 @@ before reserving a value.
 read-only opens. It should only ensure the parent directory when the requested
 flags include `MYLITE_OPEN_CREATE`.
 
-Public error classification should map SQLSTATE class `25` to
-`MYLITE_READONLY`, while preserving SQLSTATE and MariaDB errno for detailed
-diagnostics.
+Public error classification should map SQLSTATE class `25`,
+`ER_OPEN_AS_READONLY`, and `ER_CANT_CREATE_TABLE` messages that carry
+`"Table is read only"` to `MYLITE_READONLY`, while preserving the original
+SQLSTATE and MariaDB errno for detailed diagnostics.
 
 ## Affected Subsystems
 
@@ -169,7 +176,7 @@ MariaDB-derived source files.
   - verify a second read-only handle for the same path succeeds,
   - verify a same-path read-write open returns `MYLITE_BUSY`,
   - verify `INSERT` and `CREATE TABLE` return `MYLITE_READONLY`,
-  - verify SQLSTATE `25000` for read-only failures,
+  - verify MariaDB read-only errno/message details are preserved,
   - verify primary-file size and mtime do not change after failed mutations.
 - Run:
   - `MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh`
@@ -188,7 +195,7 @@ MariaDB-derived source files.
 - MyLite DDL, DML, and autoincrement mutations fail before changing catalog or
   allocator state.
 - Public C API execution and prepared-statement mutation failures classify as
-  `MYLITE_READONLY` with SQLSTATE `25000`.
+  `MYLITE_READONLY` while preserving MariaDB errno and SQLSTATE.
 - The smoke proves failed read-only mutations leave the primary file unchanged.
 - Same-path handles with incompatible open modes are rejected honestly while
   the embedded runtime remains process-global.
@@ -207,4 +214,24 @@ MariaDB-derived source files.
 
 ## Implementation Result
 
-Pending.
+Implemented as a startup-only runtime and storage-engine mode. Read-only opens
+now pass `--mylite-read-only=ON` into the embedded runtime, reject later
+same-path read-write opens in the same process, open the primary file
+`O_RDONLY`, hold a shared advisory lock, and reject MyLite DDL/DML mutation
+paths with `HA_ERR_TABLE_READONLY`.
+
+The `libmylite` diagnostic mapper now classifies MariaDB read-only shapes as
+`MYLITE_READONLY` while preserving the underlying MariaDB errno and SQLSTATE.
+The read-only smoke verifies existing-row reads, second read-only handles,
+read-write mode rejection, `INSERT`, `CREATE TABLE`, and prepared `INSERT`
+rejection, unchanged primary-file size/mtime, and no dynamic plugin artifacts.
+
+The post-implementation `MinSizeRel` build records:
+
+| Artifact | Size |
+| --- | ---: |
+| `build/mariadb-minsize/mylite/libmylite.a` | 87,174 bytes |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 44,415,928 bytes |
+
+The build report still records 571 `libmariadbd.a` archive objects and no
+dynamic plugin artifacts.
