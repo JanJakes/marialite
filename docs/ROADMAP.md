@@ -25,7 +25,7 @@ for dynamic plugin, UDF creation, and foreign-server metadata commands. The
 first static `libmylite` wrapper now exposes open/close and handle-owned
 diagnostics for one initialized database path per process.
 
-The next implementation step is `storage-engine-skeleton`, which should add the
+The active implementation step is `storage-engine-skeleton`, which adds the
 first static MyLite storage-engine shape for controlled handler smoke tests.
 
 ## Implementation plan
@@ -38,7 +38,7 @@ first static MyLite storage-engine shape for controlled handler smoke tests.
 | 3 | `embedded-bootstrap` | Done | Start an in-process MariaDB-derived runtime under MyLite-owned defaults without exposing daemon administration as the library model. |
 | 4 | `unsupported-server-surface` | Done | Make daemon-only and unsupported features fail explicitly instead of leaking partial server behavior. |
 | 5 | `libmylite-open-close` | Done | Add the first public C API for opening and closing a `.mylite` file with handle-owned diagnostics. |
-| 6 | `storage-engine-skeleton` | Planned | Add a static MyLite storage engine with enough handler shape for controlled smoke tests. |
+| 6 | `storage-engine-skeleton` | In progress | Add a static MyLite storage engine with enough handler shape for controlled smoke tests. |
 | 7 | `mylite-engine-discovery` | Planned | Reopen table definitions from the MyLite catalog through MariaDB table-discovery APIs. |
 | 8 | `ddl-metadata-routing` | Planned | Prove `CREATE`, `ALTER`, `DROP`, and `RENAME` do not leave durable `.frm` or schema-directory sidecars. |
 | 9 | `single-file-catalog` | Planned | Store schema, table definitions, engine metadata, and catalog versioning inside the `.mylite` file. |
