@@ -242,6 +242,47 @@ if not headers:
 
 headers.sort(reverse=True)
 
+def page_count(length):
+    return (length + page_payload_capacity - 1) // page_payload_capacity
+
+def page_range(root_offset, length):
+    return (root_offset // page_size, page_count(length))
+
+def ranges_overlap(left, right):
+    left_start, left_count = left
+    right_start, right_count = right
+    return (
+        left_start < right_start + right_count and
+        right_start < left_start + left_count
+    )
+
+def range_contains(outer, inner):
+    outer_start, outer_count = outer
+    inner_start, inner_count = inner
+    return (
+        outer_start <= inner_start and
+        inner_start + inner_count <= outer_start + outer_count
+    )
+
+def parse_freepage_records(catalog_lines):
+    ranges = []
+    for line in catalog_lines:
+        if not line.startswith("FREEPAGE\t"):
+            continue
+        parts = line.split("\t")
+        if len(parts) != 3:
+            fail("invalid FREEPAGE record")
+        page_id = int(parts[1])
+        page_count_value = int(parts[2])
+        if page_id < 2 or page_count_value == 0:
+            fail("invalid FREEPAGE range")
+        ranges.append((page_id, page_count_value))
+    ranges.sort()
+    for previous, current in zip(ranges, ranges[1:]):
+        if previous[0] + previous[1] >= current[0]:
+            fail("overlapping FREEPAGE ranges")
+    return ranges
+
 def read_chain(root_offset, length, expected_type, exact_payload_lengths):
     if root_offset < page_size * 2 or root_offset % page_size != 0:
         fail("invalid page-chain root offset")
@@ -297,6 +338,7 @@ except UnicodeDecodeError:
     fail("catalog payload is not ascii")
 
 catalog_row_records = [line for line in catalog_lines if line.startswith("ROW\t")]
+freepage_records = [line for line in catalog_lines if line.startswith("FREEPAGE\t")]
 rowpage_records = [line for line in catalog_lines if line.startswith("ROWPAGE\t")]
 indexpage_records = [line for line in catalog_lines if line.startswith("INDEXPAGE\t")]
 if catalog_row_records:
@@ -305,6 +347,11 @@ if not rowpage_records:
     fail("catalog has no ROWPAGE records")
 if not indexpage_records:
     fail("catalog has no INDEXPAGE records")
+if not freepage_records:
+    fail("catalog has no FREEPAGE records")
+
+free_ranges = parse_freepage_records(catalog_lines)
+live_ranges = [page_range(headers[0][2], headers[0][3])]
 
 row_payloads = []
 row_payload_page_counts = []
@@ -318,6 +365,7 @@ for line in rowpage_records:
     length = int(parts[4])
     if root_offset == 0 and length == 0:
         continue
+    live_ranges.append(page_range(root_offset, length))
     row_payload = (
         f"{bytes.fromhex(parts[1]).decode('ascii')}."
         f"{bytes.fromhex(parts[2]).decode('ascii')}"
@@ -385,6 +433,7 @@ for line in indexpage_records:
     key_length = int(parts[4])
     root_offset = int(parts[5])
     length = int(parts[6])
+    live_ranges.append(page_range(root_offset, length))
     payload, page_types, _ = read_chain(root_offset, length, 3, True)
     if len(payload) < 36:
         fail("short index payload")
@@ -410,12 +459,38 @@ if "mylite.persisted_keyed:0" not in index_payloads:
 if "mylite.persisted_keyed:1" not in index_payloads:
     fail("persisted keyed secondary index payload missing")
 
+for free_range in free_ranges:
+    for live_range in live_ranges:
+        if ranges_overlap(free_range, live_range):
+            fail("FREEPAGE range overlaps latest live payload")
+
+reused_ranges = []
+if len(headers) > 1:
+    previous_payload, _, _ = read_chain(headers[1][2], headers[1][3], 1, True)
+    try:
+        previous_lines = previous_payload.decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        fail("previous catalog payload is not ascii")
+    previous_free_ranges = parse_freepage_records(previous_lines)
+    for live_range in live_ranges:
+        for previous_free_range in previous_free_ranges:
+            if range_contains(previous_free_range, live_range):
+                reused_ranges.append(f"{live_range[0]}:{live_range[1]}")
+                break
+if not reused_ranges:
+    fail("no latest live payload reused a previous FREEPAGE range")
+
 with report.open("a") as out:
     out.write("\n## Row And Index Page Storage\n\n")
     out.write("status=0\n")
     out.write(f"latest_generation={headers[0][0]}\n")
     out.write(f"catalog_page_types={','.join(map(str, catalog_page_types))}\n")
     out.write(f"catalog_row_records={len(catalog_row_records)}\n")
+    out.write(f"freepage_records={len(freepage_records)}\n")
+    out.write(
+        f"freepage_pages={sum(count for _, count in free_ranges)}\n"
+    )
+    out.write(f"reused_page_ranges={','.join(reused_ranges)}\n")
     out.write(f"rowpage_records={len(rowpage_records)}\n")
     out.write(f"indexpage_records={len(indexpage_records)}\n")
     out.write(f"row_payloads={','.join(row_payloads)}\n")

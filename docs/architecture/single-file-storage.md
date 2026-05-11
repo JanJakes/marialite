@@ -190,8 +190,12 @@ The current primary file format stores catalog payload generations, row
 payloads, and index payloads in typed 4096-byte page chains. The two fixed
 header slots still publish the active catalog generation, and the catalog
 generation points to table row and index roots. The page store has catalog,
-row, and index page types; free-space tracking and transaction/recovery pages
-still need dedicated formats before the raw-record bridge can be retired.
+row, and index page types. The catalog now also stores `FREEPAGE` records for
+complete obsolete page ranges from accepted prior generations. Row and index
+page-chain writers can reuse those consecutive ranges; catalog payloads remain
+append-only until the free-space map is no longer self-described inside the
+logical catalog payload. Transaction/recovery pages still need dedicated
+formats before the raw-record bridge can be retired.
 
 Supported fixed MariaDB record images larger than one row slot page now split
 across `MYLITEROWOVF3` segment payloads inside row page type `2`. This lifts the

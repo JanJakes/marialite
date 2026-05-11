@@ -59,8 +59,8 @@ This slice will:
 - add a catalog-level `FREEPAGE` record for persistent free page ranges,
 - add an in-memory free range list loaded with each accepted catalog generation,
 - validate free ranges against active catalog, row, and index page-chain roots,
-- allocate new catalog, row, and index page chains from complete consecutive
-  free ranges when possible,
+- allocate new row and index page chains from complete consecutive free ranges
+  when possible,
 - fall back to EOF allocation when no free range is large enough,
 - record obsolete page chains from the previous accepted generation into the
   newly published generation's free list,
@@ -153,12 +153,15 @@ relaxing row/index/catalog readers before a fuller pager design exists.
 7. build the next free list from the allocator leftovers plus the old active
    row, index, dropped-table, and catalog payload ranges,
 8. serialize `FREEPAGE` records with the catalog payload,
-9. write the catalog payload using the allocator,
+9. append the catalog payload at EOF,
 10. fsync page data, publish the alternate header, and fsync the header.
 
-The previous catalog payload range must be added to the free list after the new
-catalog payload has been allocated. That prevents the new catalog payload from
-overwriting the old payload needed by the previous header.
+The previous catalog payload range is added to the free list for a later write,
+but the new catalog payload remains append-only in this slice. That avoids a
+self-referential allocation problem where the catalog payload both consumes and
+describes the free list in the same bytes. Later pager metadata can move the
+free-space map out of the logical catalog if catalog payload reuse becomes
+important.
 
 If the flush fails, the caller's existing catalog rollback restores table state,
 and `mylite_write_catalog_locked()` must restore the previous free range list.
@@ -284,8 +287,8 @@ The compatibility harness should continue to verify:
 - Accepted catalog generations can persist and reload `FREEPAGE` records.
 - Free ranges are rejected when malformed, overlapping, outside the file, or
   overlapping live catalog, row, or index page chains.
-- New page-chain writes consume only complete consecutive free ranges from the
-  previously accepted generation.
+- New row and index page-chain writes consume only complete consecutive free
+  ranges from the previously accepted generation.
 - Page chains made obsolete by the current generation are not reused until a
   later write.
 - Dropped table row and index roots are recorded as pending obsolete ranges and
@@ -306,4 +309,59 @@ The compatibility harness should continue to verify:
   become free.
 - The allocator still requires consecutive ranges because readers currently
   require sequential chains.
+- Catalog payloads remain append-only to avoid a self-referential free-list
+  dependency inside the logical catalog payload.
 - Full compaction and page-local row/index reuse remain separate slices.
+
+## Implementation Result
+
+The implemented slice adds persistent `FREEPAGE` catalog records and an
+in-memory free range list loaded with each accepted catalog generation:
+
+- `FREEPAGE` records store decimal `page_id` and `page_count` ranges.
+- Loading rejects malformed, overlapping, out-of-file, or live-root-overlapping
+  free ranges before accepting a generation.
+- Row and index page-chain writers allocate from complete consecutive accepted
+  free ranges before falling back to EOF.
+- Row/index chains made obsolete by DML refreshes are captured before index root
+  metadata is replaced.
+- Dropped tables record their row and index roots as pending obsolete ranges
+  before the table definition is erased.
+- New writes advance from the fully accepted in-memory catalog header, so a
+  rejected latest generation cannot cause MyLite to overwrite the last good
+  header slot.
+- Catalog payload chains are still appended at EOF, but previous catalog
+  payload chains are advertised as free for later row/index allocations.
+- The storage smoke physically compares the latest and previous valid header
+  generations and requires at least one latest live payload range to be fully
+  contained in a previous generation's `FREEPAGE` range.
+
+Observed storage smoke evidence after implementation:
+
+- `latest_generation=25`
+- `freepage_records=11`
+- `freepage_pages=141`
+- `reused_page_ranges=2:1,6:1,7:1,116:11,23:6,8:1,9:1,10:1`
+- `row_payload_page_counts=mylite.persisted:1,mylite.persisted_auto:1,mylite.persisted_keyed:1,mylite.persisted_large:12,mylite.persisted_wide:6`
+- `index_payload_page_counts=mylite.persisted_auto:0:1,mylite.persisted_keyed:0:1,mylite.persisted_keyed:1:1`
+- persisted catalog after read phase: 782,336 bytes
+
+Measured after the full verification plan:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,385,402 bytes
+- `build/mariadb-minsize/mylite/libmylite.a`: 29,698 bytes
+- `build/mariadb-minsize/mylite/mylite-storage-engine-smoke`: 22,768,440 bytes
+- `build/mariadb-minsize/mylite/mylite-compatibility-smoke`: 22,703,480 bytes
+- `build/mariadb-minsize/mylite/mylite-open-close-smoke`: 22,770,168 bytes
+- `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke`: 22,702,616 bytes
+
+Verification passed:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-embedded-bootstrap-smoke.sh
+bash -n tools/run-compatibility-test-harness.sh tools/run-storage-engine-smoke.sh tools/run-libmylite-open-close-smoke.sh tools/run-embedded-bootstrap-smoke.sh tools/build-mariadb-minsize.sh
+git diff --check
+```
