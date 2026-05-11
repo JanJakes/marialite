@@ -64,6 +64,10 @@ Foreign-key DDL is now rejected explicitly for MyLite tables until FK catalog,
 referential checks, locking, and cascade semantics are designed.
 Generated-column DDL is also rejected explicitly until expression metadata,
 materialization, generated indexes, and ALTER recomputation are designed.
+CHECK constraints are supported for MyLite tables through inherited MariaDB
+SQL-layer semantics; the current smoke proves invalid INSERT and UPDATE
+statements are rejected, valid rows remain unchanged, and CHECK metadata
+survives fresh-process reopen through the persisted table-definition image.
 Persistent free-page ranges now let later row, index, and catalog page-chain
 rewrites reuse complete obsolete ranges from accepted prior generations instead
 of always allocating at EOF. Allocator metadata now lives in dedicated type-4
@@ -141,7 +145,7 @@ documented read-write create combination.
 | 38 | `copy-alter-row-preservation` | Done | Prove populated copy ALTER preserves supported MyLite rows, indexes, BLOB/TEXT payloads, nullable keys, and autoincrement state. |
 | 39 | `foreign-key-rejection` | Done | Reject MyLite foreign-key DDL explicitly until FK catalog, enforcement, locking, and cascade semantics are designed. |
 | 40 | `generated-column-rejection` | Done | Reject MyLite generated-column DDL explicitly until expression storage, materialization, indexes, and ALTER recomputation are designed. |
-| 41 | `check-constraint-enforcement` | In progress | Prove CHECK constraints are enforced and persisted for supported MyLite tables through inherited MariaDB semantics. |
+| 41 | `check-constraint-enforcement` | Done | Prove CHECK constraints are enforced and persisted for supported MyLite tables through inherited MariaDB semantics. |
 
 ## Size and profile direction
 

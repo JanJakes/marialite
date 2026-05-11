@@ -127,4 +127,45 @@ MariaDB-derived source files.
 
 ## Implementation Result
 
-Pending.
+Implemented. No storage-engine expression evaluator was added; the slice relies
+on MariaDB's existing CHECK metadata and SQL-layer verification while proving
+that MyLite persists and rediscovers the generated table-definition image.
+
+The storage smoke now creates MyLite tables with column and table CHECK
+constraints, verifies failed invalid INSERT and UPDATE statements, confirms
+the valid rows remain `1:5:ok,2:3:NULL`, and repeats the persisted-table
+enforcement check after fresh-process reopen.
+
+Report evidence from `MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh`:
+
+- `build/mariadb-minsize/mylite-storage-engine-report.txt`:
+  - `status=0`
+  - `check_constraint_insert=rejected`
+  - `check_constraint_update=rejected`
+  - `check_constraint_rows=1:5:ok,2:3:NULL`
+- `build/mariadb-minsize/mylite-catalog-write-report.txt`:
+  - `status=0`
+  - `persisted_check_rows=1:5:ok,2:3:NULL`
+  - `persisted_check_insert=rejected`
+- `build/mariadb-minsize/mylite-catalog-read-report.txt`:
+  - `status=0`
+  - `persisted_check_rows=1:5:ok,2:3:NULL`
+  - `persisted_check_insert=rejected`
+
+Verification run:
+
+- `git diff --check`
+- `bash -n tools/run-compatibility-test-harness.sh
+  tools/run-storage-engine-smoke.sh tools/run-libmylite-open-close-smoke.sh
+  tools/run-embedded-bootstrap-smoke.sh tools/build-mariadb-minsize.sh`
+- `MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh`
+- `MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh`
+- `MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh`
+- `MYLITE_BUILD_JOBS=8 tools/run-embedded-bootstrap-smoke.sh`
+
+Measured `MinSizeRel` artifacts from
+`build/mariadb-minsize/mylite-build-report.txt` and `ls -l`:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,417,786 bytes,
+  571 objects.
+- `build/mariadb-minsize/mylite/libmylite.a`: 87,206 bytes.

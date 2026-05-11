@@ -272,7 +272,13 @@ explicitly until MyLite has FK catalog metadata, referential checks, cascade
 actions, FK-aware locking, and DDL recovery behavior. Generated-column DDL is
 also rejected explicitly until expression metadata, virtual/stored
 materialization, generated-column indexes, SQL-mode dependencies, and ALTER
-recomputation are designed.
+recomputation are designed. CHECK constraints are accepted for supported
+MyLite tables through MariaDB's table-definition metadata and SQL-layer
+expression evaluation. MyLite persists the generated table-definition image in
+the catalog and rediscovery restores CHECK metadata after fresh-process reopen;
+the current storage smoke proves invalid INSERT and UPDATE statements fail
+without mutating valid rows. MyLite does not own a separate CHECK expression
+evaluator.
 
 Current row payload pages are variable-sized slot and overflow pages. Runtime
 free-page accounting tracks their actual page-chain length in memory instead

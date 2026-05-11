@@ -77,6 +77,9 @@ struct SmokeResult
   std::string unsupported_generated_stored;
   std::string unsupported_generated_alter;
   std::string generated_base_count;
+  std::string check_constraint_insert;
+  std::string check_constraint_update;
+  std::string check_constraint_rows;
   std::string unsupported_geometry;
   std::string key_lookup_note;
   std::string key_order_ids;
@@ -108,6 +111,8 @@ struct SmokeResult
   std::string persisted_copy_alter_null_note_ids;
   std::string persisted_copy_alter_payload_lookup_id;
   std::string persisted_copy_alter_autoincrement_id;
+  std::string persisted_check_rows;
+  std::string persisted_check_insert;
   std::string recovery_marker;
   std::string recovery_reclaim;
   std::string transaction_rollback_rows;
@@ -1300,6 +1305,51 @@ static bool exercise_dml(MYSQL *mysql, SmokeResult *result)
   if (!execute_statement(mysql, "DROP TABLE mylite.generated_base",
                          "DROP generated column base table", result))
     return false;
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.check_rows "
+                         "(id INT NOT NULL, "
+                         "qty INT NOT NULL CHECK (qty > 0), "
+                         "note VARCHAR(12), PRIMARY KEY(id), "
+                         "CONSTRAINT note_not_empty "
+                         "CHECK (note IS NULL OR note <> '')) "
+                         "ENGINE=MYLITE",
+                         "CREATE CHECK constraint table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.check_rows VALUES "
+                         "(1, 5, 'ok'), (2, 3, NULL)",
+                         "INSERT CHECK constraint rows", result))
+    return false;
+  if (!execute_statement_expect_error(mysql,
+                                      "INSERT INTO mylite.check_rows VALUES "
+                                      "(3, 0, 'bad')",
+                                      "CHECK constraint insert",
+                                      &result->check_constraint_insert,
+                                      result))
+    return false;
+  if (!execute_statement_expect_error(mysql,
+                                      "UPDATE mylite.check_rows "
+                                      "SET note = '' WHERE id = 1",
+                                      "CHECK constraint update",
+                                      &result->check_constraint_update,
+                                      result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT("
+                          "id, ':', qty, ':', COALESCE(note, 'NULL')) "
+                          "ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.check_rows",
+                          "CHECK constraint rows",
+                          &result->check_constraint_rows, result))
+    return false;
+  if (result->check_constraint_rows != "1:5:ok,2:3:NULL")
+  {
+    result->message= "CHECK constraint rows returned an unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql, "DROP TABLE mylite.check_rows",
+                         "DROP CHECK constraint table", result))
+    return false;
   if (!execute_statement_expect_error(mysql,
                                       "CREATE TABLE mylite.unsupported_geometry "
                                       "(id INT NOT NULL, location GEOMETRY NOT NULL) "
@@ -1932,6 +1982,43 @@ static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result)
     return false;
   }
 
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.persisted_check_rows "
+                         "(id INT NOT NULL, "
+                         "qty INT NOT NULL CHECK (qty > 0), "
+                         "note VARCHAR(12), PRIMARY KEY(id), "
+                         "CONSTRAINT note_not_empty "
+                         "CHECK (note IS NULL OR note <> '')) "
+                         "ENGINE=MYLITE",
+                         "CREATE persisted CHECK constraint table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.persisted_check_rows VALUES "
+                         "(1, 5, 'ok'), (2, 3, NULL)",
+                         "INSERT persisted CHECK constraint rows", result))
+    return false;
+  if (!execute_statement_expect_error(
+        mysql,
+        "INSERT INTO mylite.persisted_check_rows VALUES (3, -1, 'bad')",
+        "persisted write CHECK constraint insert",
+        &result->persisted_check_insert,
+        result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT("
+                          "id, ':', qty, ':', COALESCE(note, 'NULL')) "
+                          "ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_check_rows",
+                          "persisted write CHECK constraint rows",
+                          &result->persisted_check_rows, result))
+    return false;
+  if (result->persisted_check_rows != "1:5:ok,2:3:NULL")
+  {
+    result->message= "persisted write CHECK constraint rows returned an "
+                     "unexpected value";
+    return false;
+  }
+
   return true;
 }
 
@@ -2277,6 +2364,33 @@ static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result)
                      "unexpected value";
     return false;
   }
+
+  if (!verify_table_present(mysql,
+                            "SHOW TABLES FROM mylite "
+                            "LIKE 'persisted_check_rows'",
+                            "persisted CHECK constraint table", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT("
+                          "id, ':', qty, ':', COALESCE(note, 'NULL')) "
+                          "ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_check_rows",
+                          "persisted read CHECK constraint rows",
+                          &result->persisted_check_rows, result))
+    return false;
+  if (result->persisted_check_rows != "1:5:ok,2:3:NULL")
+  {
+    result->message= "persisted read CHECK constraint rows returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!execute_statement_expect_error(
+        mysql,
+        "INSERT INTO mylite.persisted_check_rows VALUES (3, 0, 'bad')",
+        "persisted read CHECK constraint insert",
+        &result->persisted_check_insert,
+        result))
+    return false;
 
   return true;
 }
@@ -3052,6 +3166,15 @@ static void write_report(const SmokeOptions &options,
   if (!result.generated_base_count.empty())
     report << "generated_base_count="
            << result.generated_base_count << "\n";
+  if (!result.check_constraint_insert.empty())
+    report << "check_constraint_insert="
+           << result.check_constraint_insert << "\n";
+  if (!result.check_constraint_update.empty())
+    report << "check_constraint_update="
+           << result.check_constraint_update << "\n";
+  if (!result.check_constraint_rows.empty())
+    report << "check_constraint_rows="
+           << result.check_constraint_rows << "\n";
   if (!result.unsupported_geometry.empty())
     report << "unsupported_geometry=" << result.unsupported_geometry << "\n";
   if (!result.key_lookup_note.empty())
@@ -3135,6 +3258,12 @@ static void write_report(const SmokeOptions &options,
   if (!result.persisted_copy_alter_autoincrement_id.empty())
     report << "persisted_copy_alter_autoincrement_id="
            << result.persisted_copy_alter_autoincrement_id << "\n";
+  if (!result.persisted_check_rows.empty())
+    report << "persisted_check_rows="
+           << result.persisted_check_rows << "\n";
+  if (!result.persisted_check_insert.empty())
+    report << "persisted_check_insert="
+           << result.persisted_check_insert << "\n";
   if (!result.recovery_marker.empty())
     report << "recovery_marker=" << result.recovery_marker << "\n";
   if (!result.recovery_reclaim.empty())
