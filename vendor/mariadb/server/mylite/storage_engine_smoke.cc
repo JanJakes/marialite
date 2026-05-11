@@ -72,6 +72,13 @@ struct SmokeResult
   std::string transaction_release_rows;
   std::string transaction_rows;
   std::string transaction_rollback_warnings;
+  std::string statement_autocommit_error;
+  std::string statement_autocommit_rows;
+  std::string statement_autocommit_warnings;
+  std::string statement_transaction_error;
+  std::string statement_transaction_rows;
+  std::string statement_transaction_warnings;
+  std::string statement_rows;
 };
 
 static bool parse_options(int argc, char **argv, SmokeOptions *options,
@@ -94,6 +101,10 @@ static bool exercise_transaction_boundary_write(MYSQL *mysql,
                                                 SmokeResult *result);
 static bool exercise_transaction_boundary_read(MYSQL *mysql,
                                                SmokeResult *result);
+static bool exercise_statement_error_rollback_write(MYSQL *mysql,
+                                                    SmokeResult *result);
+static bool exercise_statement_error_rollback_read(MYSQL *mysql,
+                                                   SmokeResult *result);
 static bool write_recovery_page_payload(MYSQL *mysql, const char *table_name,
                                         char fill, std::string *count,
                                         SmokeResult *result);
@@ -1454,6 +1465,9 @@ static bool exercise_transaction_boundary_write(MYSQL *mysql,
     return false;
   }
 
+  if (!exercise_statement_error_rollback_write(mysql, result))
+    return false;
+
   return execute_statement(mysql, "FLUSH TABLES",
                            "FLUSH TABLES after transaction boundary",
                            result);
@@ -1482,6 +1496,128 @@ static bool exercise_transaction_boundary_read(MYSQL *mysql,
   if (result->transaction_rows != "1:uno,2:dos,4:four")
   {
     result->message= "transaction boundary rows did not persist";
+    return false;
+  }
+  return exercise_statement_error_rollback_read(mysql, result);
+}
+
+static bool exercise_statement_error_rollback_write(MYSQL *mysql,
+                                                    SmokeResult *result)
+{
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.statement_error "
+                         "(id INT NOT NULL, note VARCHAR(12) NOT NULL, "
+                         "PRIMARY KEY(id)) ENGINE=MYLITE",
+                         "CREATE statement error table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.statement_error VALUES "
+                         "(1, 'one')",
+                         "INSERT statement error baseline", result))
+    return false;
+  if (!execute_statement_expect_error(
+        mysql,
+        "INSERT INTO mylite.statement_error VALUES "
+        "(2, 'two'), (1, 'duplicate')",
+        "duplicate autocommit statement insert",
+        &result->statement_autocommit_error, result))
+    return false;
+  if (!fetch_warning_summary(mysql, "duplicate autocommit statement warnings",
+                             &result->statement_autocommit_warnings, result))
+    return false;
+  if (result->statement_autocommit_warnings.find(":1196:") !=
+      std::string::npos)
+  {
+    result->message= "autocommit statement rollback emitted warning 1196";
+    return false;
+  }
+  if (!fetch_single_value(
+        mysql,
+        "SELECT GROUP_CONCAT(CONCAT(id, ':', note) "
+        "ORDER BY id SEPARATOR ',') "
+        "FROM mylite.statement_error",
+        "statement autocommit rows",
+        &result->statement_autocommit_rows, result))
+    return false;
+  if (result->statement_autocommit_rows != "1:one")
+  {
+    result->message= "autocommit statement rollback leaked rows";
+    return false;
+  }
+
+  if (!execute_statement(mysql, "START TRANSACTION",
+                         "START statement error transaction", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.statement_error VALUES "
+                         "(3, 'three')",
+                         "INSERT statement error transaction row", result))
+    return false;
+  if (!execute_statement_expect_error(
+        mysql,
+        "INSERT INTO mylite.statement_error VALUES "
+        "(4, 'four'), (1, 'duplicate')",
+        "duplicate transaction statement insert",
+        &result->statement_transaction_error, result))
+    return false;
+  if (!fetch_warning_summary(mysql, "duplicate transaction statement warnings",
+                             &result->statement_transaction_warnings, result))
+    return false;
+  if (result->statement_transaction_warnings.find(":1196:") !=
+      std::string::npos)
+  {
+    result->message= "transaction statement rollback emitted warning 1196";
+    return false;
+  }
+  if (!fetch_single_value(
+        mysql,
+        "SELECT GROUP_CONCAT(CONCAT(id, ':', note) "
+        "ORDER BY id SEPARATOR ',') "
+        "FROM mylite.statement_error",
+        "statement transaction rows",
+        &result->statement_transaction_rows, result))
+    return false;
+  if (result->statement_transaction_rows != "1:one,3:three")
+  {
+    result->message= "transaction statement rollback returned unexpected rows";
+    return false;
+  }
+  if (!execute_statement(mysql, "COMMIT",
+                         "COMMIT statement error transaction", result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT GROUP_CONCAT(CONCAT(id, ':', note) "
+        "ORDER BY id SEPARATOR ',') "
+        "FROM mylite.statement_error",
+        "statement committed rows", &result->statement_rows, result))
+    return false;
+  if (result->statement_rows != "1:one,3:three")
+  {
+    result->message= "statement error rows did not commit";
+    return false;
+  }
+
+  return true;
+}
+
+static bool exercise_statement_error_rollback_read(MYSQL *mysql,
+                                                   SmokeResult *result)
+{
+  if (!verify_table_present(mysql,
+                            "SHOW TABLES FROM mylite LIKE 'statement_error'",
+                            "statement error table", result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT GROUP_CONCAT(CONCAT(id, ':', note) "
+        "ORDER BY id SEPARATOR ',') "
+        "FROM mylite.statement_error",
+        "statement persisted rows", &result->statement_rows, result))
+    return false;
+  if (result->statement_rows != "1:one,3:three")
+  {
+    result->message= "statement error rows did not persist";
     return false;
   }
   return true;
@@ -1837,6 +1973,26 @@ static void write_report(const SmokeOptions &options,
   if (!result.transaction_rollback_warnings.empty())
     report << "transaction_rollback_warnings="
            << result.transaction_rollback_warnings << "\n";
+  if (!result.statement_autocommit_error.empty())
+    report << "statement_autocommit_error="
+           << result.statement_autocommit_error << "\n";
+  if (!result.statement_autocommit_rows.empty())
+    report << "statement_autocommit_rows="
+           << result.statement_autocommit_rows << "\n";
+  if (!result.statement_autocommit_warnings.empty())
+    report << "statement_autocommit_warnings="
+           << result.statement_autocommit_warnings << "\n";
+  if (!result.statement_transaction_error.empty())
+    report << "statement_transaction_error="
+           << result.statement_transaction_error << "\n";
+  if (!result.statement_transaction_rows.empty())
+    report << "statement_transaction_rows="
+           << result.statement_transaction_rows << "\n";
+  if (!result.statement_transaction_warnings.empty())
+    report << "statement_transaction_warnings="
+           << result.statement_transaction_warnings << "\n";
+  if (!result.statement_rows.empty())
+    report << "statement_rows=" << result.statement_rows << "\n";
 }
 
 static bool option_value(const char *arg, const char *name, std::string *value)

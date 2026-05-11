@@ -87,7 +87,8 @@ path:
 4. expect the statement to fail,
 5. verify the first row from the failed statement is absent and the baseline
    row remains,
-6. verify warning summary is `none` rather than warning `1196`,
+6. verify the warning summary contains only the duplicate-key error and no
+   warning `1196`,
 7. start an explicit transaction,
 8. insert one successful transaction row,
 9. run another failed multi-row duplicate-key statement,
@@ -122,13 +123,46 @@ No public API or file-format change.
 
 ## Binary-Size Impact
 
-Expected impact is limited to smoke coverage unless a small handler fix is
-needed. No dependency or new compiled MariaDB subsystem should be added.
-Measured sizes should be recorded after implementation.
+The implementation is smoke coverage only; no handler fix was needed. It adds
+no dependency or new compiled MariaDB subsystem. Measured after implementation
+with `MYLITE_BUILD_JOBS=8` and the Docker-based `mariadb-minsize` profile:
+
+| Artifact | Size |
+| --- | ---: |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 44,408,362 bytes |
+| `build/mariadb-minsize/mylite/libmylite.a` | 29,698 bytes |
+| `build/mariadb-minsize/mylite/mylite-storage-engine-smoke` | 22,772,184 bytes |
+| `build/mariadb-minsize/mylite/mylite-compatibility-smoke` | 22,772,400 bytes |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 22,773,128 bytes |
+| `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke` | 22,771,440 bytes |
 
 ## License, Trademark, And Dependency Impact
 
 No new dependencies, license changes, or trademark changes.
+
+## Implementation Result
+
+Implemented in `vendor/mariadb/server/mylite/storage_engine_smoke.cc` and
+roadmap and architecture docs. The existing handler statement snapshot logic
+already satisfied the new smoke, so no MyLite handler changes were required.
+
+Observed storage-smoke statement-error report:
+
+- autocommit duplicate-key statement: `statement_autocommit_error=rejected`,
+- autocommit rows after failed statement:
+  `statement_autocommit_rows=1:one`,
+- autocommit warning summary:
+  `statement_autocommit_warnings=Error:1062:Duplicate entry '1' for key 'PRIMARY'`,
+- explicit-transaction duplicate-key statement:
+  `statement_transaction_error=rejected`,
+- explicit-transaction rows after failed statement:
+  `statement_transaction_rows=1:one,3:three`,
+- explicit-transaction warning summary:
+  `statement_transaction_warnings=Error:1062:Duplicate entry '1' for key 'PRIMARY'`,
+- committed and fresh-process reopen rows:
+  `statement_rows=1:one,3:three`.
+
+Both warning summaries exclude warning `1196`.
 
 ## Test And Verification Plan
 

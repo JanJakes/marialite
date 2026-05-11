@@ -212,7 +212,9 @@ allocator snapshots before the first supported row mutation, defers durable
 `.mylite` header publication until commit, and restores snapshots on rollback.
 The storage smoke verifies that rolled-back DML returns to the baseline row
 state with no warning `1196`, and that committed DML survives fresh-process
-reopen.
+reopen. It also verifies that failed multi-row duplicate-key inserts restore
+the pre-statement snapshot in autocommit and explicit transaction modes without
+leaking partial rows.
 
 MyLite savepoints reuse the same in-memory transaction context. MariaDB
 savepoint storage holds a small MyLite savepoint ID, while the actual catalog
