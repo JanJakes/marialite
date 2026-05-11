@@ -72,6 +72,9 @@ Persistent schema-object DDL for views, triggers, stored routines, packages,
 and events is now rejected explicitly until those object definitions can live
 in the MyLite catalog without durable MariaDB datadir sidecars or hidden
 `mysql.*` system table writes.
+FULLTEXT, SPATIAL, HASH, and descending indexes are being covered as explicit
+DDL rejections until their search, geometry, hash, ordering, and storage
+semantics are designed for MyLite's durable index format.
 Persistent free-page ranges now let later row, index, and catalog page-chain
 rewrites reuse complete obsolete ranges from accepted prior generations instead
 of always allocating at EOF. Allocator metadata now lives in dedicated type-4
@@ -151,6 +154,7 @@ documented read-write create combination.
 | 40 | `generated-column-rejection` | Done | Reject MyLite generated-column DDL explicitly until expression storage, materialization, indexes, and ALTER recomputation are designed. |
 | 41 | `check-constraint-enforcement` | Done | Prove CHECK constraints are enforced and persisted for supported MyLite tables through inherited MariaDB semantics. |
 | 42 | `schema-object-ddl-rejection` | Done | Reject persistent schema-object DDL that still depends on view, trigger, routine, package, or event metadata outside the MyLite catalog. |
+| 43 | `unsupported-index-ddl-rejection` | In progress | Prove FULLTEXT, SPATIAL, HASH, and descending indexes fail explicitly without storing unsupported MyLite table definitions. |
 
 ## Size and profile direction
 

@@ -266,8 +266,10 @@ records directly, but decodes stored MyLite rows into temporary MariaDB record
 buffers first so key generation never reads cleared native BLOB pointer bytes.
 Nullable unique keys allow multiple rows when any user key part is NULL and
 still reject duplicate all-non-NULL key tuples. Reverse-sort parts, fulltext
-indexes, spatial indexes, and GEOMETRY columns remain unsupported for now
-because their semantics need separate design. Foreign-key DDL is rejected
+indexes, spatial indexes, HASH indexes, and GEOMETRY columns remain
+unsupported for now because their semantics need separate design. Unsupported
+specialized index DDL must fail before MyLite stores a table-definition image
+for a table it cannot maintain. Foreign-key DDL is rejected
 explicitly until MyLite has FK catalog metadata, referential checks, cascade
 actions, FK-aware locking, and DDL recovery behavior. Generated-column DDL is
 also rejected explicitly until expression metadata, virtual/stored
