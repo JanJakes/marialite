@@ -36,8 +36,16 @@ struct SmokeResult
   std::string altered_column;
   std::string renamed_count;
   std::string dropped_table;
+  std::string row_count;
+  std::string row_notes;
+  std::string row_updated_note;
+  std::string row_deleted_count;
+  std::string unsupported_blob;
+  std::string unsupported_key;
+  std::string unsupported_autoincrement;
   std::string persisted_count;
   std::string persisted_column;
+  std::string persisted_notes;
   std::string recovery_marker;
 };
 
@@ -51,12 +59,17 @@ static bool fetch_mylite_engine(MYSQL *mysql, SmokeResult *result);
 static bool fetch_discovered_table(MYSQL *mysql, SmokeResult *result);
 static bool fetch_probe_count(MYSQL *mysql, SmokeResult *result);
 static bool exercise_ddl(MYSQL *mysql, SmokeResult *result);
+static bool exercise_dml(MYSQL *mysql, SmokeResult *result);
 static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result);
 static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result);
 static bool exercise_recovery_latest(MYSQL *mysql, SmokeResult *result);
 static bool exercise_recovery_read(MYSQL *mysql, SmokeResult *result);
 static bool execute_statement(MYSQL *mysql, const char *statement,
                               const char *label, SmokeResult *result);
+static bool execute_statement_expect_error(MYSQL *mysql, const char *statement,
+                                           const char *label,
+                                           std::string *value,
+                                           SmokeResult *result);
 static bool fetch_single_value(MYSQL *mysql, const char *query,
                                const char *label, std::string *value,
                                SmokeResult *result);
@@ -253,6 +266,9 @@ static int run_smoke(const SmokeOptions &options,
   {
     result->phase= "ddl_lifecycle";
     if (!exercise_ddl(mysql, result))
+      goto done;
+    result->phase= "dml_lifecycle";
+    if (!exercise_dml(mysql, result))
       goto done;
   }
 
@@ -464,6 +480,101 @@ static bool exercise_ddl(MYSQL *mysql, SmokeResult *result)
   return fetch_discovered_table(mysql, result);
 }
 
+static bool exercise_dml(MYSQL *mysql, SmokeResult *result)
+{
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.rows "
+                         "(id INT, note VARCHAR(12)) ENGINE=MYLITE",
+                         "CREATE rows table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.rows VALUES "
+                         "(1, 'one'), (2, 'two')",
+                         "INSERT rows", result))
+    return false;
+
+  if (!fetch_single_value(mysql, "SELECT COUNT(*) FROM mylite.rows",
+                          "row count", &result->row_count, result))
+    return false;
+  if (result->row_count != "2")
+  {
+    result->message= "row count returned an unexpected value";
+    return false;
+  }
+
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(note ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.rows",
+                          "row notes", &result->row_notes, result))
+    return false;
+  if (result->row_notes != "one,two")
+  {
+    result->message= "row notes returned an unexpected value";
+    return false;
+  }
+
+  if (!execute_statement(mysql,
+                         "UPDATE mylite.rows SET note = 'deux' WHERE id = 2",
+                         "UPDATE rows", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT note FROM mylite.rows WHERE id = 2",
+                          "updated row note", &result->row_updated_note,
+                          result))
+    return false;
+  if (result->row_updated_note != "deux")
+  {
+    result->message= "updated row note returned an unexpected value";
+    return false;
+  }
+
+  if (!execute_statement(mysql, "DELETE FROM mylite.rows WHERE id = 1",
+                         "DELETE rows", result))
+    return false;
+  if (!fetch_single_value(mysql, "SELECT COUNT(*) FROM mylite.rows",
+                          "deleted row count",
+                          &result->row_deleted_count, result))
+    return false;
+  if (result->row_deleted_count != "1")
+  {
+    result->message= "deleted row count returned an unexpected value";
+    return false;
+  }
+
+  if (!execute_statement(mysql, "DROP TABLE mylite.rows", "DROP rows table",
+                         result))
+    return false;
+  if (!execute_statement(mysql, "FLUSH TABLES",
+                         "FLUSH TABLES after DML DROP", result))
+    return false;
+
+  if (!verify_table_absent(mysql, "SHOW TABLES FROM mylite LIKE 'rows'",
+                           "rows table", result))
+    return false;
+
+  if (!execute_statement_expect_error(mysql,
+                                      "CREATE TABLE mylite.unsupported_blob "
+                                      "(id INT, note TEXT) ENGINE=MYLITE",
+                                      "unsupported BLOB/TEXT table",
+                                      &result->unsupported_blob, result))
+    return false;
+  if (!execute_statement_expect_error(mysql,
+                                      "CREATE TABLE mylite.unsupported_key "
+                                      "(id INT, KEY(id)) ENGINE=MYLITE",
+                                      "unsupported keyed table",
+                                      &result->unsupported_key, result))
+    return false;
+  if (!execute_statement_expect_error(
+        mysql,
+        "CREATE TABLE mylite.unsupported_autoincrement "
+        "(id INT NOT NULL AUTO_INCREMENT, PRIMARY KEY(id)) ENGINE=MYLITE",
+        "unsupported autoincrement table", &result->unsupported_autoincrement,
+        result))
+    return false;
+
+  return true;
+}
+
 static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result)
 {
   if (!execute_statement(mysql,
@@ -471,15 +582,20 @@ static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result)
                          "(id INT, note VARCHAR(12)) ENGINE=MYLITE",
                          "CREATE persisted table", result))
     return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.persisted VALUES "
+                         "(7, 'seven'), (8, 'eight')",
+                         "INSERT persisted rows", result))
+    return false;
   if (!execute_statement(mysql, "FLUSH TABLES",
-                         "FLUSH TABLES after persisted CREATE", result))
+                         "FLUSH TABLES after persisted INSERT", result))
     return false;
 
   if (!fetch_single_value(mysql, "SELECT COUNT(*) FROM mylite.persisted",
                           "persisted write count",
                           &result->persisted_count, result))
     return false;
-  if (result->persisted_count != "0")
+  if (result->persisted_count != "2")
   {
     result->message= "persisted write count returned an unexpected value";
     return false;
@@ -493,6 +609,18 @@ static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result)
   if (result->persisted_column != "note")
   {
     result->message= "persisted write table did not expose the note column";
+    return false;
+  }
+
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(note ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted",
+                          "persisted write notes",
+                          &result->persisted_notes, result))
+    return false;
+  if (result->persisted_notes != "seven,eight")
+  {
+    result->message= "persisted write notes returned an unexpected value";
     return false;
   }
 
@@ -514,7 +642,7 @@ static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result)
                           "persisted read count",
                           &result->persisted_count, result))
     return false;
-  if (result->persisted_count != "0")
+  if (result->persisted_count != "2")
   {
     result->message= "persisted read count returned an unexpected value";
     return false;
@@ -528,6 +656,18 @@ static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result)
   if (result->persisted_column != "note")
   {
     result->message= "persisted read table did not expose the note column";
+    return false;
+  }
+
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(note ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted",
+                          "persisted read notes",
+                          &result->persisted_notes, result))
+    return false;
+  if (result->persisted_notes != "seven,eight")
+  {
+    result->message= "persisted read notes returned an unexpected value";
     return false;
   }
 
@@ -579,6 +719,21 @@ static bool execute_statement(MYSQL *mysql, const char *statement,
     return true;
 
   result->message= std::string(label) + " failed: " + mysql_error(mysql);
+  return false;
+}
+
+static bool execute_statement_expect_error(MYSQL *mysql, const char *statement,
+                                           const char *label,
+                                           std::string *value,
+                                           SmokeResult *result)
+{
+  if (mysql_query(mysql, statement))
+  {
+    *value= "rejected";
+    return true;
+  }
+
+  result->message= std::string(label) + " unexpectedly succeeded";
   return false;
 }
 
@@ -730,10 +885,27 @@ static void write_report(const SmokeOptions &options,
     report << "renamed_count=" << result.renamed_count << "\n";
   if (!result.dropped_table.empty())
     report << "dropped_table=" << result.dropped_table << "\n";
+  if (!result.row_count.empty())
+    report << "row_count=" << result.row_count << "\n";
+  if (!result.row_notes.empty())
+    report << "row_notes=" << result.row_notes << "\n";
+  if (!result.row_updated_note.empty())
+    report << "row_updated_note=" << result.row_updated_note << "\n";
+  if (!result.row_deleted_count.empty())
+    report << "row_deleted_count=" << result.row_deleted_count << "\n";
+  if (!result.unsupported_blob.empty())
+    report << "unsupported_blob=" << result.unsupported_blob << "\n";
+  if (!result.unsupported_key.empty())
+    report << "unsupported_key=" << result.unsupported_key << "\n";
+  if (!result.unsupported_autoincrement.empty())
+    report << "unsupported_autoincrement="
+           << result.unsupported_autoincrement << "\n";
   if (!result.persisted_count.empty())
     report << "persisted_count=" << result.persisted_count << "\n";
   if (!result.persisted_column.empty())
     report << "persisted_column=" << result.persisted_column << "\n";
+  if (!result.persisted_notes.empty())
+    report << "persisted_notes=" << result.persisted_notes << "\n";
   if (!result.recovery_marker.empty())
     report << "recovery_marker=" << result.recovery_marker << "\n";
 }

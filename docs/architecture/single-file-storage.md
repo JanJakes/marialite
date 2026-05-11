@@ -169,6 +169,12 @@ inactive header. This protects table-definition catalog publication from a
 corrupted latest payload, but it is not yet a row-storage pager or full
 transaction recovery system.
 
+The first row-storage proof also stores simple keyless, non-BLOB row images in
+that catalog payload with hidden 64-bit row ids. This validates MariaDB handler
+read/write/update/delete integration and fresh-process persistence, but it is a
+temporary bridge. Real row and index pages still need a pager, free-space
+management, transaction recovery, autoincrement metadata, and key enforcement.
+
 ## Schemas
 
 MariaDB's `database.table` model should map to namespaces inside the catalog:

@@ -10,6 +10,7 @@
 #include "sql_class.h"
 #include "table.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -25,12 +26,21 @@
 #define O_CLOEXEC 0
 #endif
 
+struct Mylite_row
+{
+  uint64_t rowid;
+  bool deleted;
+  std::vector<uchar> record;
+};
+
 struct Mylite_table_definition
 {
   std::string db;
   std::string table_name;
   std::string seed_sql;
   std::vector<uchar> frm_image;
+  uint64_t next_rowid;
+  std::vector<Mylite_row> rows;
 };
 
 struct Mylite_catalog_header
@@ -60,6 +70,31 @@ static int mylite_store_table_definition(const char *path,
                                          const TABLE_SHARE *share);
 static int mylite_remove_table_definition(const char *path);
 static int mylite_rename_table_definition(const char *from, const char *to);
+static int mylite_store_row(const char *db, size_t db_length,
+                            const char *table_name,
+                            size_t table_name_length, const TABLE *table,
+                            const uchar *record);
+static int mylite_update_row(const char *db, size_t db_length,
+                             const char *table_name,
+                             size_t table_name_length, const TABLE *table,
+                             uint64_t rowid, const uchar *record);
+static int mylite_delete_row(const char *db, size_t db_length,
+                             const char *table_name,
+                             size_t table_name_length, uint64_t rowid);
+static int mylite_read_row(const char *db, size_t db_length,
+                           const char *table_name, size_t table_name_length,
+                           const TABLE *table, size_t *scan_index,
+                           uint64_t *rowid, uchar *record);
+static int mylite_read_row_by_id(const char *db, size_t db_length,
+                                 const char *table_name,
+                                 size_t table_name_length, const TABLE *table,
+                                 uint64_t rowid, uchar *record);
+static size_t mylite_count_rows(const char *db, size_t db_length,
+                                const char *table_name,
+                                size_t table_name_length);
+static bool mylite_table_supports_row_storage(const TABLE *table);
+static Mylite_row *mylite_find_row_locked(Mylite_table_definition *definition,
+                                          uint64_t rowid);
 static bool mylite_table_definition_exists(const char *db, size_t db_length,
                                            const char *table_name,
                                            size_t table_name_length);
@@ -75,9 +110,21 @@ static int mylite_flush_catalog_locked();
 static bool mylite_write_catalog_locked();
 static std::string mylite_serialize_catalog_locked();
 static bool mylite_parse_catalog_payload_locked(const std::string &content);
+static bool mylite_parse_table_payload_record_locked(
+    const std::string &line, std::vector<Mylite_table_definition> *loaded);
+static bool mylite_parse_next_rowid_payload_record_locked(
+    const std::string &line, std::vector<Mylite_table_definition> *loaded);
+static bool mylite_parse_row_payload_record_locked(
+    const std::string &line, std::vector<Mylite_table_definition> *loaded);
 static bool mylite_catalog_contains_definition(
     const std::vector<Mylite_table_definition> &catalog,
     const std::string &db, const std::string &table_name);
+static Mylite_table_definition *mylite_find_table_definition_in_catalog(
+    std::vector<Mylite_table_definition> *catalog, const std::string &db,
+    const std::string &table_name);
+static bool mylite_parse_decimal_uint64(const std::string &value,
+                                        uint64_t *result);
+static std::string mylite_format_decimal_uint64(uint64_t value);
 static bool mylite_find_latest_catalog_header(int fd, off_t file_size,
                                               Mylite_catalog_header *latest);
 static bool mylite_read_catalog_header(int fd, size_t slot, off_t file_size,
@@ -129,7 +176,8 @@ static std::mutex mylite_catalog_mutex;
 static bool mylite_catalog_loaded= false;
 static bool mylite_catalog_load_failed= false;
 static std::vector<Mylite_table_definition> mylite_catalog= {
-  { mylite_seed_db, mylite_seed_table, mylite_seed_sql, std::vector<uchar>() }
+  { mylite_seed_db, mylite_seed_table, mylite_seed_sql, std::vector<uchar>(),
+    1, std::vector<Mylite_row>() }
 };
 
 static MYSQL_SYSVAR_STR(
@@ -264,11 +312,20 @@ static bool mylite_table_definition_exists(const char *db, size_t db_length,
 
 ha_mylite::ha_mylite(handlerton *hton, TABLE_SHARE *table_arg)
   :handler(hton, table_arg)
-{}
+{
+  ref_length= sizeof(uint64_t);
+}
 
-int ha_mylite::open(const char *, int, uint)
+int ha_mylite::open(const char *name, int, uint)
 {
   DBUG_ENTER("ha_mylite::open");
+
+  if (!mylite_parse_table_path(name, &db_name, &opened_table_name))
+  {
+    db_name.assign(table_share->db.str, table_share->db.length);
+    opened_table_name.assign(table_share->table_name.str,
+                             table_share->table_name.length);
+  }
 
   if (!(share= get_share()))
     DBUG_RETURN(HA_ERR_OUT_OF_MEM);
@@ -287,6 +344,8 @@ int ha_mylite::close()
 int ha_mylite::create(const char *name, TABLE *table_arg, HA_CREATE_INFO *)
 {
   DBUG_ENTER("ha_mylite::create");
+  if (!mylite_table_supports_row_storage(table_arg))
+    DBUG_RETURN(HA_ERR_UNSUPPORTED);
   DBUG_RETURN(mylite_store_table_definition(name, table_arg->s));
 }
 
@@ -296,36 +355,73 @@ int ha_mylite::delete_table(const char *name)
   DBUG_RETURN(mylite_remove_table_definition(name));
 }
 
+int ha_mylite::write_row(const uchar *buf)
+{
+  DBUG_ENTER("ha_mylite::write_row");
+  DBUG_RETURN(mylite_store_row(db_name.c_str(), db_name.length(),
+                               opened_table_name.c_str(),
+                               opened_table_name.length(), table, buf));
+}
+
+int ha_mylite::update_row(const uchar *, const uchar *new_data)
+{
+  DBUG_ENTER("ha_mylite::update_row");
+  DBUG_RETURN(mylite_update_row(db_name.c_str(), db_name.length(),
+                                opened_table_name.c_str(),
+                                opened_table_name.length(), table,
+                                current_rowid, new_data));
+}
+
+int ha_mylite::delete_row(const uchar *)
+{
+  DBUG_ENTER("ha_mylite::delete_row");
+  DBUG_RETURN(mylite_delete_row(db_name.c_str(), db_name.length(),
+                                opened_table_name.c_str(),
+                                opened_table_name.length(), current_rowid));
+}
+
 int ha_mylite::rnd_init(bool)
 {
   DBUG_ENTER("ha_mylite::rnd_init");
+  scan_index= 0;
+  current_rowid= 0;
   DBUG_RETURN(0);
 }
 
-int ha_mylite::rnd_next(uchar *)
+int ha_mylite::rnd_next(uchar *buf)
 {
   DBUG_ENTER("ha_mylite::rnd_next");
-  DBUG_RETURN(HA_ERR_END_OF_FILE);
+  DBUG_RETURN(mylite_read_row(db_name.c_str(), db_name.length(),
+                              opened_table_name.c_str(),
+                              opened_table_name.length(), table, &scan_index,
+                              &current_rowid, buf));
 }
 
-int ha_mylite::rnd_pos(uchar *, uchar *)
+int ha_mylite::rnd_pos(uchar *buf, uchar *pos)
 {
   DBUG_ENTER("ha_mylite::rnd_pos");
-  DBUG_RETURN(HA_ERR_WRONG_COMMAND);
+  current_rowid= mylite_read_le64(pos);
+  DBUG_RETURN(mylite_read_row_by_id(db_name.c_str(), db_name.length(),
+                                    opened_table_name.c_str(),
+                                    opened_table_name.length(), table,
+                                    current_rowid, buf));
 }
 
 void ha_mylite::position(const uchar *)
 {
   DBUG_ENTER("ha_mylite::position");
+  mylite_store_le64(ref, current_rowid);
   DBUG_VOID_RETURN;
 }
 
 int ha_mylite::info(uint)
 {
   DBUG_ENTER("ha_mylite::info");
-  stats.records= 0;
+  stats.records= mylite_count_rows(db_name.c_str(), db_name.length(),
+                                   opened_table_name.c_str(),
+                                   opened_table_name.length());
   stats.deleted= 0;
-  stats.data_file_length= 0;
+  stats.data_file_length= stats.records * table_share->reclength;
   stats.index_file_length= 0;
   DBUG_RETURN(0);
 }
@@ -402,6 +498,7 @@ static int mylite_store_table_definition(const char *path,
   definition.frm_image.assign(share->frm_image->str,
                               share->frm_image->str +
                                 share->frm_image->length);
+  definition.next_rowid= 1;
   mylite_catalog.push_back(definition);
   const int error= mylite_flush_catalog_locked();
   if (error)
@@ -470,6 +567,194 @@ static int mylite_rename_table_definition(const char *from, const char *to)
   if (error)
     mylite_catalog= before;
   return error;
+}
+
+static int mylite_store_row(const char *db, size_t db_length,
+                            const char *table_name,
+                            size_t table_name_length, const TABLE *table,
+                            const uchar *record)
+{
+  if (!record || !mylite_table_supports_row_storage(table))
+    return HA_ERR_UNSUPPORTED;
+
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return HA_ERR_CRASHED;
+
+  Mylite_table_definition *definition=
+    mylite_find_table_definition_locked(db, db_length, table_name,
+                                        table_name_length);
+  if (!definition)
+    return HA_ERR_NO_SUCH_TABLE;
+  if (definition->next_rowid == ~static_cast<uint64_t>(0))
+    return HA_ERR_RECORD_FILE_FULL;
+
+  const std::vector<Mylite_table_definition> before= mylite_catalog;
+  Mylite_row row;
+  row.rowid= definition->next_rowid++;
+  row.deleted= false;
+  row.record.assign(record, record + table->s->reclength);
+  definition->rows.push_back(row);
+
+  const int error= mylite_flush_catalog_locked();
+  if (error)
+    mylite_catalog= before;
+  return error;
+}
+
+static int mylite_update_row(const char *db, size_t db_length,
+                             const char *table_name,
+                             size_t table_name_length, const TABLE *table,
+                             uint64_t rowid, const uchar *record)
+{
+  if (!record || rowid == 0 || !mylite_table_supports_row_storage(table))
+    return HA_ERR_UNSUPPORTED;
+
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return HA_ERR_CRASHED;
+
+  Mylite_table_definition *definition=
+    mylite_find_table_definition_locked(db, db_length, table_name,
+                                        table_name_length);
+  if (!definition)
+    return HA_ERR_NO_SUCH_TABLE;
+
+  Mylite_row *row= mylite_find_row_locked(definition, rowid);
+  if (!row)
+    return HA_ERR_KEY_NOT_FOUND;
+
+  const std::vector<Mylite_table_definition> before= mylite_catalog;
+  row->record.assign(record, record + table->s->reclength);
+  const int error= mylite_flush_catalog_locked();
+  if (error)
+    mylite_catalog= before;
+  return error;
+}
+
+static int mylite_delete_row(const char *db, size_t db_length,
+                             const char *table_name,
+                             size_t table_name_length, uint64_t rowid)
+{
+  if (rowid == 0)
+    return HA_ERR_KEY_NOT_FOUND;
+
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return HA_ERR_CRASHED;
+
+  Mylite_table_definition *definition=
+    mylite_find_table_definition_locked(db, db_length, table_name,
+                                        table_name_length);
+  if (!definition)
+    return HA_ERR_NO_SUCH_TABLE;
+
+  Mylite_row *row= mylite_find_row_locked(definition, rowid);
+  if (!row)
+    return HA_ERR_KEY_NOT_FOUND;
+
+  const std::vector<Mylite_table_definition> before= mylite_catalog;
+  row->deleted= true;
+  const int error= mylite_flush_catalog_locked();
+  if (error)
+    mylite_catalog= before;
+  return error;
+}
+
+static int mylite_read_row(const char *db, size_t db_length,
+                           const char *table_name, size_t table_name_length,
+                           const TABLE *table, size_t *scan_index,
+                           uint64_t *rowid, uchar *record)
+{
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return HA_ERR_CRASHED;
+
+  Mylite_table_definition *definition=
+    mylite_find_table_definition_locked(db, db_length, table_name,
+                                        table_name_length);
+  if (!definition)
+    return HA_ERR_NO_SUCH_TABLE;
+
+  while (*scan_index < definition->rows.size())
+  {
+    const Mylite_row &row= definition->rows[(*scan_index)++];
+    if (row.deleted)
+      continue;
+    if (row.record.size() != table->s->reclength)
+      return HA_ERR_CRASHED;
+    std::memcpy(record, row.record.data(), row.record.size());
+    *rowid= row.rowid;
+    return 0;
+  }
+
+  return HA_ERR_END_OF_FILE;
+}
+
+static int mylite_read_row_by_id(const char *db, size_t db_length,
+                                 const char *table_name,
+                                 size_t table_name_length, const TABLE *table,
+                                 uint64_t rowid, uchar *record)
+{
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return HA_ERR_CRASHED;
+
+  Mylite_table_definition *definition=
+    mylite_find_table_definition_locked(db, db_length, table_name,
+                                        table_name_length);
+  if (!definition)
+    return HA_ERR_NO_SUCH_TABLE;
+
+  const Mylite_row *row= mylite_find_row_locked(definition, rowid);
+  if (!row)
+    return HA_ERR_KEY_NOT_FOUND;
+  if (row->record.size() != table->s->reclength)
+    return HA_ERR_CRASHED;
+
+  std::memcpy(record, row->record.data(), row->record.size());
+  return 0;
+}
+
+static size_t mylite_count_rows(const char *db, size_t db_length,
+                                const char *table_name,
+                                size_t table_name_length)
+{
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return 0;
+
+  Mylite_table_definition *definition=
+    mylite_find_table_definition_locked(db, db_length, table_name,
+                                        table_name_length);
+  if (!definition)
+    return 0;
+
+  size_t rows= 0;
+  for (const Mylite_row &row : definition->rows)
+  {
+    if (!row.deleted)
+      ++rows;
+  }
+  return rows;
+}
+
+static bool mylite_table_supports_row_storage(const TABLE *table)
+{
+  return table && table->s && table->s->blob_fields == 0 &&
+         table->s->keys == 0 && !table->found_next_number_field &&
+         !table->next_number_field;
+}
+
+static Mylite_row *mylite_find_row_locked(Mylite_table_definition *definition,
+                                          uint64_t rowid)
+{
+  for (Mylite_row &row : definition->rows)
+  {
+    if (!row.deleted && row.rowid == rowid)
+      return &row;
+  }
+  return nullptr;
 }
 
 static Mylite_table_definition *mylite_find_table_definition_locked(
@@ -707,6 +992,39 @@ static std::string mylite_serialize_catalog_locked()
     content.append(mylite_hex_encode(definition.frm_image.data(),
                                      definition.frm_image.size()));
     content.push_back('\n');
+
+    content.append("NEXTROWID\t");
+    content.append(mylite_hex_encode(
+      reinterpret_cast<const uchar *>(definition.db.data()),
+      definition.db.length()));
+    content.push_back('\t');
+    content.append(mylite_hex_encode(
+      reinterpret_cast<const uchar *>(definition.table_name.data()),
+      definition.table_name.length()));
+    content.push_back('\t');
+    content.append(mylite_format_decimal_uint64(definition.next_rowid));
+    content.push_back('\n');
+
+    for (const Mylite_row &row : definition.rows)
+    {
+      if (row.deleted)
+        continue;
+
+      content.append("ROW\t");
+      content.append(mylite_hex_encode(
+        reinterpret_cast<const uchar *>(definition.db.data()),
+        definition.db.length()));
+      content.push_back('\t');
+      content.append(mylite_hex_encode(
+        reinterpret_cast<const uchar *>(definition.table_name.data()),
+        definition.table_name.length()));
+      content.push_back('\t');
+      content.append(mylite_format_decimal_uint64(row.rowid));
+      content.push_back('\t');
+      content.append(mylite_hex_encode(row.record.data(),
+                                       row.record.size()));
+      content.push_back('\n');
+    }
   }
 
   return content;
@@ -735,54 +1053,201 @@ static bool mylite_parse_catalog_payload_locked(const std::string &content)
     if (line.empty())
       continue;
 
-    const std::string::size_type first= line.find('\t');
-    const std::string::size_type second= first == std::string::npos
-      ? std::string::npos
-      : line.find('\t', first + 1);
-    const std::string::size_type third= second == std::string::npos
-      ? std::string::npos
-      : line.find('\t', second + 1);
-
-    if (first == std::string::npos || second == std::string::npos ||
-        third == std::string::npos || line.substr(0, first) != "TABLE")
+    if (line.compare(0, 6, "TABLE\t") == 0)
     {
-      sql_print_error("MyLite: invalid catalog record in %s",
-                      mylite_catalog_file);
-      return false;
+      if (!mylite_parse_table_payload_record_locked(line, &loaded))
+        return false;
+      continue;
+    }
+    if (line.compare(0, 10, "NEXTROWID\t") == 0)
+    {
+      if (!mylite_parse_next_rowid_payload_record_locked(line, &loaded))
+        return false;
+      continue;
+    }
+    if (line.compare(0, 4, "ROW\t") == 0)
+    {
+      if (!mylite_parse_row_payload_record_locked(line, &loaded))
+        return false;
+      continue;
     }
 
-    std::vector<uchar> db_bytes;
-    std::vector<uchar> table_bytes;
-    Mylite_table_definition definition;
-    if (!mylite_hex_decode(line.substr(first + 1, second - first - 1),
-                           &db_bytes) ||
-        !mylite_hex_decode(line.substr(second + 1, third - second - 1),
-                           &table_bytes) ||
-        !mylite_hex_decode(line.substr(third + 1), &definition.frm_image) ||
-        db_bytes.empty() || table_bytes.empty() ||
-        definition.frm_image.empty())
-    {
-      sql_print_error("MyLite: invalid catalog encoding in %s",
-                      mylite_catalog_file);
-      return false;
-    }
-
-    definition.db.assign(reinterpret_cast<const char *>(db_bytes.data()),
-                         db_bytes.size());
-    definition.table_name.assign(
-      reinterpret_cast<const char *>(table_bytes.data()), table_bytes.size());
-    if (mylite_catalog_contains_definition(loaded, definition.db,
-                                           definition.table_name))
-    {
-      sql_print_error("MyLite: duplicate catalog table in %s",
-                      mylite_catalog_file);
-      return false;
-    }
-
-    loaded.push_back(definition);
+    sql_print_error("MyLite: invalid catalog record in %s",
+                    mylite_catalog_file);
+    return false;
   }
 
   mylite_catalog.swap(loaded);
+  return true;
+}
+
+static bool mylite_parse_table_payload_record_locked(
+    const std::string &line, std::vector<Mylite_table_definition> *loaded)
+{
+  const std::string::size_type first= line.find('\t');
+  const std::string::size_type second= first == std::string::npos
+    ? std::string::npos
+    : line.find('\t', first + 1);
+  const std::string::size_type third= second == std::string::npos
+    ? std::string::npos
+    : line.find('\t', second + 1);
+
+  if (first == std::string::npos || second == std::string::npos ||
+      third == std::string::npos || line.substr(0, first) != "TABLE")
+  {
+    sql_print_error("MyLite: invalid catalog record in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  std::vector<uchar> db_bytes;
+  std::vector<uchar> table_bytes;
+  Mylite_table_definition definition;
+  if (!mylite_hex_decode(line.substr(first + 1, second - first - 1),
+                         &db_bytes) ||
+      !mylite_hex_decode(line.substr(second + 1, third - second - 1),
+                         &table_bytes) ||
+      !mylite_hex_decode(line.substr(third + 1), &definition.frm_image) ||
+      db_bytes.empty() || table_bytes.empty() ||
+      definition.frm_image.empty())
+  {
+    sql_print_error("MyLite: invalid catalog encoding in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  definition.db.assign(reinterpret_cast<const char *>(db_bytes.data()),
+                       db_bytes.size());
+  definition.table_name.assign(
+    reinterpret_cast<const char *>(table_bytes.data()), table_bytes.size());
+  definition.next_rowid= 1;
+  if (mylite_catalog_contains_definition(*loaded, definition.db,
+                                         definition.table_name))
+  {
+    sql_print_error("MyLite: duplicate catalog table in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  loaded->push_back(definition);
+  return true;
+}
+
+static bool mylite_parse_next_rowid_payload_record_locked(
+    const std::string &line, std::vector<Mylite_table_definition> *loaded)
+{
+  const std::string::size_type first= line.find('\t');
+  const std::string::size_type second= first == std::string::npos
+    ? std::string::npos
+    : line.find('\t', first + 1);
+  const std::string::size_type third= second == std::string::npos
+    ? std::string::npos
+    : line.find('\t', second + 1);
+
+  if (first == std::string::npos || second == std::string::npos ||
+      third == std::string::npos || line.substr(0, first) != "NEXTROWID")
+  {
+    sql_print_error("MyLite: invalid catalog rowid record in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  std::vector<uchar> db_bytes;
+  std::vector<uchar> table_bytes;
+  uint64_t next_rowid= 0;
+  if (!mylite_hex_decode(line.substr(first + 1, second - first - 1),
+                         &db_bytes) ||
+      !mylite_hex_decode(line.substr(second + 1, third - second - 1),
+                         &table_bytes) ||
+      !mylite_parse_decimal_uint64(line.substr(third + 1), &next_rowid) ||
+      db_bytes.empty() || table_bytes.empty() || next_rowid == 0)
+  {
+    sql_print_error("MyLite: invalid catalog rowid encoding in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  const std::string db(reinterpret_cast<const char *>(db_bytes.data()),
+                       db_bytes.size());
+  const std::string table_name(
+    reinterpret_cast<const char *>(table_bytes.data()), table_bytes.size());
+  Mylite_table_definition *definition=
+    mylite_find_table_definition_in_catalog(loaded, db, table_name);
+  if (!definition)
+  {
+    sql_print_error("MyLite: rowid record before table in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  definition->next_rowid= next_rowid;
+  return true;
+}
+
+static bool mylite_parse_row_payload_record_locked(
+    const std::string &line, std::vector<Mylite_table_definition> *loaded)
+{
+  const std::string::size_type first= line.find('\t');
+  const std::string::size_type second= first == std::string::npos
+    ? std::string::npos
+    : line.find('\t', first + 1);
+  const std::string::size_type third= second == std::string::npos
+    ? std::string::npos
+    : line.find('\t', second + 1);
+  const std::string::size_type fourth= third == std::string::npos
+    ? std::string::npos
+    : line.find('\t', third + 1);
+
+  if (first == std::string::npos || second == std::string::npos ||
+      third == std::string::npos || fourth == std::string::npos ||
+      line.substr(0, first) != "ROW")
+  {
+    sql_print_error("MyLite: invalid catalog row record in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  std::vector<uchar> db_bytes;
+  std::vector<uchar> table_bytes;
+  Mylite_row row;
+  if (!mylite_hex_decode(line.substr(first + 1, second - first - 1),
+                         &db_bytes) ||
+      !mylite_hex_decode(line.substr(second + 1, third - second - 1),
+                         &table_bytes) ||
+      !mylite_parse_decimal_uint64(
+        line.substr(third + 1, fourth - third - 1), &row.rowid) ||
+      !mylite_hex_decode(line.substr(fourth + 1), &row.record) ||
+      db_bytes.empty() || table_bytes.empty() || row.rowid == 0 ||
+      row.record.empty())
+  {
+    sql_print_error("MyLite: invalid catalog row encoding in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  const std::string db(reinterpret_cast<const char *>(db_bytes.data()),
+                       db_bytes.size());
+  const std::string table_name(
+    reinterpret_cast<const char *>(table_bytes.data()), table_bytes.size());
+  Mylite_table_definition *definition=
+    mylite_find_table_definition_in_catalog(loaded, db, table_name);
+  if (!definition || mylite_find_row_locked(definition, row.rowid))
+  {
+    sql_print_error("MyLite: invalid catalog row owner in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  row.deleted= false;
+  if (row.rowid == ~static_cast<uint64_t>(0))
+  {
+    sql_print_error("MyLite: catalog row id is exhausted in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+  if (row.rowid >= definition->next_rowid)
+    definition->next_rowid= row.rowid + 1;
+  definition->rows.push_back(row);
   return true;
 }
 
@@ -796,6 +1261,54 @@ static bool mylite_catalog_contains_definition(
       return true;
   }
   return false;
+}
+
+static Mylite_table_definition *mylite_find_table_definition_in_catalog(
+    std::vector<Mylite_table_definition> *catalog, const std::string &db,
+    const std::string &table_name)
+{
+  for (Mylite_table_definition &definition : *catalog)
+  {
+    if (definition.db == db && definition.table_name == table_name)
+      return &definition;
+  }
+  return nullptr;
+}
+
+static bool mylite_parse_decimal_uint64(const std::string &value,
+                                        uint64_t *result)
+{
+  if (value.empty())
+    return false;
+
+  uint64_t parsed= 0;
+  for (char c : value)
+  {
+    if (c < '0' || c > '9')
+      return false;
+    const uint64_t digit= static_cast<uint64_t>(c - '0');
+    if (parsed > (~static_cast<uint64_t>(0) - digit) / 10)
+      return false;
+    parsed= parsed * 10 + digit;
+  }
+
+  *result= parsed;
+  return true;
+}
+
+static std::string mylite_format_decimal_uint64(uint64_t value)
+{
+  if (value == 0)
+    return "0";
+
+  std::string result;
+  while (value > 0)
+  {
+    result.push_back(static_cast<char>('0' + (value % 10)));
+    value/= 10;
+  }
+  std::reverse(result.begin(), result.end());
+  return result;
 }
 
 static bool mylite_find_latest_catalog_header(int fd, off_t file_size,

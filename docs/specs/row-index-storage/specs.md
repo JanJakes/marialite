@@ -108,7 +108,8 @@ Per table, keep:
 
 Write policy:
 
-1. `write_row()` rejects unsupported BLOB/TEXT table definitions.
+1. `write_row()` rejects unsupported BLOB/TEXT, user-key, and autoincrement
+   table definitions.
 2. It copies `table->s->reclength` bytes from the supplied record buffer.
 3. It assigns `next_rowid`, increments the counter, stores the row, and
    publishes a new catalog generation.
@@ -216,9 +217,61 @@ surface changes.
 - Recovery fallback keeps the previous valid row generation readable after the
   latest row payload is corrupted.
 - DDL table definition persistence and recovery smokes still pass.
-- Unsupported BLOB/TEXT row storage fails explicitly rather than persisting
-  pointer-bearing record images.
+- Unsupported BLOB/TEXT, user-key, and autoincrement row storage fails
+  explicitly rather than persisting pointer-bearing or unenforced record
+  semantics.
 - No `.frm` or dynamic plugin artifacts are introduced.
+
+## Implementation Result
+
+The MyLite storage engine now stores simple non-BLOB, keyless table rows in the
+primary `.mylite` payload. The implementation adds:
+
+- hidden 64-bit row ids per table,
+- `NEXTROWID` and `ROW` payload records,
+- `write_row()`, `update_row()`, `delete_row()`, `rnd_next()`, `rnd_pos()`,
+  `position()`, and exact `info()` row counts,
+- `HA_REC_NOT_IN_SEQ`, `HA_NO_TRANSACTIONS`, and exact-record statistics flags,
+- explicit rejection of BLOB/TEXT, user-key, and autoincrement table shapes.
+
+Rows are still raw MariaDB record images, not the final row-page format. They
+remain protected by the existing v1 two-header catalog publication protocol.
+
+Verification passed:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-embedded-bootstrap-smoke.sh
+bash -n tools/run-storage-engine-smoke.sh tools/run-libmylite-open-close-smoke.sh tools/run-embedded-bootstrap-smoke.sh tools/build-mariadb-minsize.sh
+git diff --check
+```
+
+Observed reports after implementation:
+
+- `mylite-storage-engine-report.txt`: `row_count=2`, `row_notes=one,two`,
+  `row_updated_note=deux`, `row_deleted_count=1`,
+  `unsupported_blob=rejected`, `unsupported_key=rejected`,
+  `unsupported_autoincrement=rejected`, no `.frm` artifacts.
+- `mylite-catalog-read-report.txt`: `persisted_count=2`,
+  `persisted_notes=seven,eight`, no `.frm` artifacts, no catalog sidecars.
+- `mylite-catalog-recovery-read-report.txt`: `persisted_count=2`,
+  `persisted_notes=seven,eight`, `recovery_marker=absent`, no `.frm`
+  artifacts, no catalog sidecars.
+
+Observed artifacts after this slice:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,293,306 bytes.
+- `build/mariadb-minsize/mylite/libmylite.a`: 29,698 bytes.
+- `build/mariadb-minsize/mylite/mylite-storage-engine-smoke`: 22,688,656
+  bytes.
+- `build/mariadb-minsize/mylite/mylite-open-close-smoke`: 22,690,088 bytes.
+- `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke`: 22,688,272
+  bytes.
+- `build/mariadb-minsize/mylite-catalog-persistence/catalog.mylite`: 11,957
+  bytes.
+- `build/mariadb-minsize/mylite-catalog-recovery/catalog.mylite`: 14,332
+  bytes.
 
 ## Risks And Unresolved Questions
 

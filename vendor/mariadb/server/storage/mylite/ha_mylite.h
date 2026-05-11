@@ -12,6 +12,9 @@
 #include "my_base.h"
 #include "thr_lock.h"
 
+#include <cstdint>
+#include <string>
+
 class Mylite_share : public Handler_share
 {
 public:
@@ -35,7 +38,8 @@ public:
 
   ulonglong table_flags() const override
   {
-    return HA_BINLOG_STMT_CAPABLE;
+    return HA_BINLOG_STMT_CAPABLE | HA_NO_TRANSACTIONS |
+           HA_REC_NOT_IN_SEQ | HA_STATS_RECORDS_IS_EXACT;
   }
 
   ulong index_flags(uint, uint, bool) const override
@@ -84,6 +88,9 @@ public:
   int create(const char *name, TABLE *table_arg,
              HA_CREATE_INFO *create_info) override;
   int delete_table(const char *name) override;
+  int write_row(const uchar *buf) override;
+  int update_row(const uchar *old_data, const uchar *new_data) override;
+  int delete_row(const uchar *buf) override;
   int rnd_init(bool scan) override;
   int rnd_next(uchar *buf) override;
   int rnd_pos(uchar *buf, uchar *pos) override;
@@ -101,6 +108,10 @@ private:
 
   THR_LOCK_DATA lock;
   Mylite_share *share= nullptr;
+  std::string db_name;
+  std::string opened_table_name;
+  size_t scan_index= 0;
+  uint64_t current_rowid= 0;
 };
 
 #endif
