@@ -164,8 +164,19 @@ journal/WAL slice adds the required durable state.
 ## Binary-Size Impact
 
 Expected binary-size impact is negligible: one handlerton flag and focused
-smoke coverage. Record measured artifacts after implementation if any binary is
-rebuilt.
+smoke coverage.
+
+Measured after implementation with `MYLITE_BUILD_JOBS=8` and the
+Docker-based `mariadb-minsize` profile:
+
+| Artifact | Size |
+| --- | ---: |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 44,391,138 bytes |
+| `build/mariadb-minsize/mylite/libmylite.a` | 29,698 bytes |
+| `build/mariadb-minsize/mylite/mylite-storage-engine-smoke` | 22,769,400 bytes |
+| `build/mariadb-minsize/mylite/mylite-compatibility-smoke` | 22,704,248 bytes |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 22,770,928 bytes |
+| `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke` | 22,703,384 bytes |
 
 ## License, Trademark, And Dependency Impact
 
@@ -208,11 +219,28 @@ The storage smoke should report:
 - The slice does not add transaction hooks or recovery files without a real
   durable rollback design.
 
+## Implementation Result
+
+Implemented in `vendor/mariadb/server/storage/mylite/ha_mylite.cc`,
+`vendor/mariadb/server/mylite/storage_engine_smoke.cc`, and
+`tools/run-storage-engine-smoke.sh`.
+
+- `mylite_hton->flags` now includes `HTON_NO_ROLLBACK` while MyLite table flags
+  continue to include `HA_NO_TRANSACTIONS`.
+- Storage smoke adds `transaction-write` and `transaction-read` phases using a
+  fresh `.mylite` file and a fresh-process reopen.
+- Observed MariaDB 11.8.6 rollback warning after MyLite DML inside
+  `START TRANSACTION`: warning code `1196`, message "Some non-transactional
+  changed tables couldn't be rolled back."
+- Observed MyLite row state after `ROLLBACK` and after reopen:
+  `transaction_rows=2:deux,3:three`.
+- No transaction hooks, journal/WAL files, or file-format fields were added.
+
 ## Risks And Unresolved Questions
 
 - The exact warning behavior may depend on whether MariaDB registers MyLite as a
-  transaction participant despite `HA_NO_TRANSACTIONS`; the implementation
-  should assert the observed behavior for MariaDB 11.8.6 rather than guess.
+  transaction participant despite `HA_NO_TRANSACTIONS`; the implemented smoke
+  asserts the observed MariaDB 11.8.6 warning and row state.
 - Some users may expect `START TRANSACTION` to be rejected for MyLite tables.
   Rejecting generic transaction SQL is a broader SQL-layer policy decision and
   is not part of this slice.

@@ -498,7 +498,8 @@ static int mylite_init_func(void *p)
 
   mylite_hton= static_cast<handlerton *>(p);
   mylite_hton->create= mylite_create_handler;
-  mylite_hton->flags= HTON_NO_PARTITION | HTON_TEMPORARY_NOT_SUPPORTED;
+  mylite_hton->flags= HTON_NO_PARTITION | HTON_TEMPORARY_NOT_SUPPORTED |
+                      HTON_NO_ROLLBACK;
   mylite_hton->tablefile_extensions= ha_mylite_exts;
   mylite_hton->discover_table= mylite_discover_table;
   mylite_hton->discover_table_names= mylite_discover_table_names;

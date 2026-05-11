@@ -85,6 +85,29 @@ run_inside_container() {
     "${catalog_file}" \
     "${abs_build_dir}/mylite-catalog-read-report.txt" || status=1
 
+  local transaction_root="${abs_build_dir}/mylite-transaction-boundary"
+  local transaction_file="${transaction_root}/catalog.mylite"
+  rm -rf "${transaction_root}"
+  mkdir -p "${transaction_root}"
+
+  run_smoke_phase \
+    "${smoke}" \
+    "${abs_build_dir}/sql/share" \
+    "${transaction_root}/write" \
+    "${abs_build_dir}/mylite-transaction-boundary-write-report.txt" \
+    "${abs_build_dir}/mylite-transaction-boundary-write-output.log" \
+    "${transaction_file}" \
+    "transaction-write" || status=1
+
+  run_smoke_phase \
+    "${smoke}" \
+    "${abs_build_dir}/sql/share" \
+    "${transaction_root}/read" \
+    "${abs_build_dir}/mylite-transaction-boundary-read-report.txt" \
+    "${abs_build_dir}/mylite-transaction-boundary-read-output.log" \
+    "${transaction_file}" \
+    "transaction-read" || status=1
+
   local legacy_root="${abs_build_dir}/mylite-catalog-legacy-v2"
   local legacy_file="${legacy_root}/catalog.mylite"
   rm -rf "${legacy_root}"
@@ -175,6 +198,8 @@ run_inside_container() {
   printf "Storage engine smoke report: %s\n" "${report}"
   printf "Catalog write smoke report: %s\n" "${abs_build_dir}/mylite-catalog-write-report.txt"
   printf "Catalog read smoke report: %s\n" "${abs_build_dir}/mylite-catalog-read-report.txt"
+  printf "Transaction boundary write smoke report: %s\n" "${abs_build_dir}/mylite-transaction-boundary-write-report.txt"
+  printf "Transaction boundary read smoke report: %s\n" "${abs_build_dir}/mylite-transaction-boundary-read-report.txt"
   printf "Legacy v2 catalog fixture report: %s\n" "${abs_build_dir}/mylite-catalog-legacy-v2-fixture-report.txt"
   printf "Legacy v2 catalog write smoke report: %s\n" "${abs_build_dir}/mylite-catalog-legacy-v2-write-report.txt"
   printf "Legacy v2 catalog read smoke report: %s\n" "${abs_build_dir}/mylite-catalog-legacy-v2-read-report.txt"

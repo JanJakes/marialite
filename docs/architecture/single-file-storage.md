@@ -205,6 +205,15 @@ pages, including pages left by a rejected newer generation, are published in
 the allocator payload on the next successful write. Transaction/recovery pages
 still need dedicated formats before the raw-record bridge can be retired.
 
+MyLite tables are currently explicit non-transactional/no-rollback MariaDB
+tables. The engine advertises `HA_NO_TRANSACTIONS` and `HTON_NO_ROLLBACK`, and
+the storage smoke verifies that MyLite DML inside `START TRANSACTION` survives
+`ROLLBACK` with MariaDB warning `1196`, then persists across a fresh embedded
+process reopen. This is a documented boundary, not the target transaction
+architecture. A later journal/WAL slice must add undo/redo state, transaction
+hooks, savepoint behavior, and recovery rules before MyLite can claim SQL
+rollback semantics.
+
 Supported fixed MariaDB record images larger than one row slot page now split
 across `MYLITEROWOVF3` segment payloads inside row page type `2`. This lifts the
 one-page row-size limit for non-BLOB rows while preserving the raw fixed-record

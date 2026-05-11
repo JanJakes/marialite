@@ -52,7 +52,11 @@ of always allocating at EOF. Allocator metadata now lives in dedicated type-4
 page chains instead of logical catalog `FREEPAGE` records. Accepted-generation
 load now also reclaims complete unreferenced pages left by unpublished or
 rejected generations and publishes them through the allocator payload on the
-next durable write.
+next durable write. MyLite tables are currently explicit non-transactional,
+no-rollback MariaDB tables: storage smokes verify that MyLite DML inside
+`START TRANSACTION` survives `ROLLBACK` with MariaDB warning `1196` and
+persists across fresh-process reopen. Real SQL rollback semantics remain future
+journal/WAL work.
 
 ## Implementation plan
 
@@ -80,7 +84,7 @@ next durable write.
 | 19 | `free-list-page-reuse` | Done | Persist and validate free page ranges, then reuse complete obsolete row and index page chains from accepted prior generations. |
 | 20 | `orphan-page-reclaim` | Done | Reclaim complete unreferenced pages left by rejected or unpublished generations after recovery accepts a safe catalog generation. |
 | 21 | `allocator-page-store` | Done | Store free-page ranges in a dedicated allocator page chain so catalog payload chains can reuse accepted free ranges. |
-| 22 | `transaction-boundary-semantics` | In progress | Make MyLite's current non-transactional rollback boundary explicit in engine flags, tests, and docs before real journal/WAL work. |
+| 22 | `transaction-boundary-semantics` | Done | Make MyLite's current non-transactional rollback boundary explicit in engine flags, tests, and docs before real journal/WAL work. |
 
 ## Size and profile direction
 

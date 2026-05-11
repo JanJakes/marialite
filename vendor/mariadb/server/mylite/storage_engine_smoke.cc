@@ -65,6 +65,8 @@ struct SmokeResult
   std::string persisted_wide_count;
   std::string recovery_marker;
   std::string recovery_reclaim;
+  std::string transaction_rows;
+  std::string transaction_rollback_warnings;
 };
 
 static bool parse_options(int argc, char **argv, SmokeOptions *options,
@@ -83,6 +85,10 @@ static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result);
 static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result);
 static bool exercise_recovery_latest(MYSQL *mysql, SmokeResult *result);
 static bool exercise_recovery_read(MYSQL *mysql, SmokeResult *result);
+static bool exercise_transaction_boundary_write(MYSQL *mysql,
+                                                SmokeResult *result);
+static bool exercise_transaction_boundary_read(MYSQL *mysql,
+                                               SmokeResult *result);
 static bool write_recovery_page_payload(MYSQL *mysql, const char *table_name,
                                         char fill, std::string *count,
                                         SmokeResult *result);
@@ -95,6 +101,8 @@ static bool execute_statement_expect_error(MYSQL *mysql, const char *statement,
 static bool fetch_single_value(MYSQL *mysql, const char *query,
                                const char *label, std::string *value,
                                SmokeResult *result);
+static bool fetch_warning_summary(MYSQL *mysql, const char *label,
+                                  std::string *value, SmokeResult *result);
 static bool verify_table_present(MYSQL *mysql, const char *query,
                                  const char *label, SmokeResult *result);
 static bool verify_table_absent(MYSQL *mysql, const char *query,
@@ -156,7 +164,9 @@ static bool parse_options(int argc, char **argv, SmokeOptions *options,
       options->persistence_phase != "read" &&
       options->persistence_phase != "recovery-base" &&
       options->persistence_phase != "recovery-latest" &&
-      options->persistence_phase != "recovery-read")
+      options->persistence_phase != "recovery-read" &&
+      options->persistence_phase != "transaction-write" &&
+      options->persistence_phase != "transaction-read")
   {
     *error= "unsupported persistence phase";
     return false;
@@ -276,6 +286,18 @@ static int run_smoke(const SmokeOptions &options,
   {
     result->phase= "recovery_read";
     if (!exercise_recovery_read(mysql, result))
+      goto done;
+  }
+  else if (options.persistence_phase == "transaction-write")
+  {
+    result->phase= "transaction_boundary_write";
+    if (!exercise_transaction_boundary_write(mysql, result))
+      goto done;
+  }
+  else if (options.persistence_phase == "transaction-read")
+  {
+    result->phase= "transaction_boundary_read";
+    if (!exercise_transaction_boundary_read(mysql, result))
       goto done;
   }
   else if (options.persistence_phase == "read")
@@ -1219,6 +1241,102 @@ static bool exercise_recovery_read(MYSQL *mysql, SmokeResult *result)
   return true;
 }
 
+static bool exercise_transaction_boundary_write(MYSQL *mysql,
+                                                SmokeResult *result)
+{
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.transaction_boundary "
+                         "(id INT NOT NULL, note VARCHAR(12) NOT NULL, "
+                         "PRIMARY KEY(id)) ENGINE=MYLITE",
+                         "CREATE transaction boundary table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.transaction_boundary VALUES "
+                         "(1, 'one'), (2, 'two')",
+                         "INSERT transaction boundary baseline", result))
+    return false;
+  if (!execute_statement(mysql, "FLUSH TABLES",
+                         "FLUSH TABLES after transaction baseline", result))
+    return false;
+
+  if (!execute_statement(mysql, "START TRANSACTION",
+                         "START transaction boundary transaction", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.transaction_boundary VALUES "
+                         "(3, 'three')",
+                         "INSERT transaction boundary row", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "UPDATE mylite.transaction_boundary "
+                         "SET note = 'deux' WHERE id = 2",
+                         "UPDATE transaction boundary row", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "DELETE FROM mylite.transaction_boundary "
+                         "WHERE id = 1",
+                         "DELETE transaction boundary row", result))
+    return false;
+  if (!execute_statement(mysql, "ROLLBACK",
+                         "ROLLBACK transaction boundary transaction", result))
+    return false;
+  if (!fetch_warning_summary(mysql, "ROLLBACK warnings",
+                             &result->transaction_rollback_warnings, result))
+    return false;
+  if (result->transaction_rollback_warnings !=
+      "Warning:1196:Some non-transactional changed tables couldn't be "
+      "rolled back")
+  {
+    result->message= "ROLLBACK warning returned an unexpected value";
+    return false;
+  }
+
+  if (!fetch_single_value(
+        mysql,
+        "SELECT GROUP_CONCAT(CONCAT(id, ':', note) "
+        "ORDER BY id SEPARATOR ',') "
+        "FROM mylite.transaction_boundary",
+        "transaction boundary rows", &result->transaction_rows, result))
+    return false;
+  if (result->transaction_rows != "2:deux,3:three")
+  {
+    result->message= "transaction boundary rows were rolled back";
+    return false;
+  }
+
+  return execute_statement(mysql, "FLUSH TABLES",
+                           "FLUSH TABLES after transaction boundary",
+                           result);
+}
+
+static bool exercise_transaction_boundary_read(MYSQL *mysql,
+                                               SmokeResult *result)
+{
+  if (!execute_statement(mysql, "FLUSH TABLES",
+                         "FLUSH TABLES before transaction boundary read",
+                         result))
+    return false;
+  if (!verify_table_present(
+        mysql,
+        "SHOW TABLES FROM mylite LIKE 'transaction_boundary'",
+        "transaction boundary table", result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT GROUP_CONCAT(CONCAT(id, ':', note) "
+        "ORDER BY id SEPARATOR ',') "
+        "FROM mylite.transaction_boundary",
+        "transaction boundary persisted rows", &result->transaction_rows,
+        result))
+    return false;
+  if (result->transaction_rows != "2:deux,3:three")
+  {
+    result->message= "transaction boundary rows did not persist";
+    return false;
+  }
+  return true;
+}
+
 static bool write_recovery_page_payload(MYSQL *mysql, const char *table_name,
                                         char fill, std::string *count,
                                         SmokeResult *result)
@@ -1326,6 +1444,50 @@ static bool fetch_single_value(MYSQL *mysql, const char *query,
   return ok;
 }
 
+static bool fetch_warning_summary(MYSQL *mysql, const char *label,
+                                  std::string *value, SmokeResult *result)
+{
+  if (mysql_query(mysql, "SHOW WARNINGS"))
+  {
+    result->message= std::string(label) + " query failed: " +
+                     mysql_error(mysql);
+    return false;
+  }
+
+  MYSQL_RES *res= mysql_store_result(mysql);
+  if (!res)
+  {
+    result->message= std::string(label) + " result failed: " +
+                     mysql_error(mysql);
+    return false;
+  }
+
+  value->clear();
+  MYSQL_ROW row;
+  while ((row= mysql_fetch_row(res)))
+  {
+    if (mysql_num_fields(res) < 3 || !row[0] || !row[1] || !row[2])
+    {
+      mysql_free_result(res);
+      result->message= std::string(label) +
+                       " returned an unexpected warning row";
+      return false;
+    }
+    if (!value->empty())
+      value->push_back(';');
+    value->append(row[0]);
+    value->push_back(':');
+    value->append(row[1]);
+    value->push_back(':');
+    value->append(row[2]);
+  }
+
+  if (value->empty())
+    *value= "none";
+  mysql_free_result(res);
+  return true;
+}
+
 static bool verify_table_present(MYSQL *mysql, const char *query,
                                  const char *label, SmokeResult *result)
 {
@@ -1387,7 +1549,8 @@ static bool phase_loads_existing_catalog(const std::string &phase)
 {
   return phase == "read" ||
          phase == "recovery-latest" ||
-         phase == "recovery-read";
+         phase == "recovery-read" ||
+         phase == "transaction-read";
 }
 
 static void write_report(const SmokeOptions &options,
@@ -1505,6 +1668,11 @@ static void write_report(const SmokeOptions &options,
     report << "recovery_marker=" << result.recovery_marker << "\n";
   if (!result.recovery_reclaim.empty())
     report << "recovery_reclaim=" << result.recovery_reclaim << "\n";
+  if (!result.transaction_rows.empty())
+    report << "transaction_rows=" << result.transaction_rows << "\n";
+  if (!result.transaction_rollback_warnings.empty())
+    report << "transaction_rollback_warnings="
+           << result.transaction_rollback_warnings << "\n";
 }
 
 static bool option_value(const char *arg, const char *name, std::string *value)
