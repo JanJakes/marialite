@@ -142,6 +142,14 @@ MyLite currently contains project documentation and workflow guidance.
 Implementation work should start from a pinned MariaDB 11.8 LTS source ref,
 keep upstream imports mechanical, and keep MyLite changes narrow.
 
+Current design documents:
+
+- [MariaDB source analysis](docs/research/mariadb-source-analysis.md) records
+  the initial source-level findings.
+- [Single-file storage design](docs/architecture/single-file-storage.md)
+  describes the target storage architecture.
+- [libmylite C API](docs/api/libmylite-c-api.md) sketches the first public API.
+
 ## References
 
 - [MariaDB Server](https://github.com/MariaDB/server) is the upstream source
