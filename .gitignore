@@ -1,0 +1,17 @@
+# Build output
+/build/
+/build-*/
+/out/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# Local editor and OS metadata
+.DS_Store
+.idea/
+.vscode/
+
+# Local crash artifacts
+*.core
+core
