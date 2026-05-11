@@ -7,6 +7,7 @@
 #include <my_global.h>
 #include <my_sys.h>
 #include <mysql/plugin.h>
+#include "field.h"
 #include "ha_mylite.h"
 #include "key.h"
 #include "sql_class.h"
@@ -163,12 +164,14 @@ static int mylite_delete_row(const char *db, size_t db_length,
                              TABLE *table, uint64_t rowid);
 static int mylite_read_row(const char *db, size_t db_length,
                            const char *table_name, size_t table_name_length,
-                           const TABLE *table, size_t *scan_index,
-                           uint64_t *rowid, uchar *record);
+                           TABLE *table, size_t *scan_index, uint64_t *rowid,
+                           uchar *record,
+                           std::vector<uchar> *blob_buffer);
 static int mylite_read_row_by_id(const char *db, size_t db_length,
                                  const char *table_name,
-                                 size_t table_name_length, const TABLE *table,
-                                 uint64_t rowid, uchar *record);
+                                 size_t table_name_length, TABLE *table,
+                                 uint64_t rowid, uchar *record,
+                                 std::vector<uchar> *blob_buffer);
 static int mylite_build_index_entries(
     const char *db, size_t db_length, const char *table_name,
     size_t table_name_length, TABLE *table, uint key_index,
@@ -193,7 +196,13 @@ static bool mylite_read_auto_increment_value(const char *db, size_t db_length,
                                              const char *table_name,
                                              size_t table_name_length,
                                              ulonglong *value);
+static int mylite_encode_record(TABLE *table, const uchar *record,
+                                std::vector<uchar> *encoded);
+static int mylite_decode_record(TABLE *table, const Mylite_row &row,
+                                uchar *record,
+                                std::vector<uchar> *blob_buffer);
 static bool mylite_table_supports_row_storage(const TABLE *table);
+static bool mylite_table_supports_blob_storage(const TABLE *table);
 static bool mylite_table_supports_key_storage(const TABLE *table);
 static bool mylite_key_supports_storage(const KEY &key);
 static bool mylite_key_part_supports_storage(const KEY_PART_INFO &key_part);
@@ -830,6 +839,7 @@ int ha_mylite::close()
   DBUG_ENTER("ha_mylite::close");
   share= nullptr;
   index_cursor_rowids.clear();
+  blob_read_buffer.clear();
   DBUG_RETURN(0);
 }
 
@@ -940,7 +950,7 @@ int ha_mylite::index_read_map(uchar *buf, const uchar *key,
   DBUG_RETURN(mylite_read_row_by_id(db_name.c_str(), db_name.length(),
                                     opened_table_name.c_str(),
                                     opened_table_name.length(), table,
-                                    current_rowid, buf));
+                                    current_rowid, buf, &blob_read_buffer));
 }
 
 int ha_mylite::index_next(uchar *buf)
@@ -953,7 +963,7 @@ int ha_mylite::index_next(uchar *buf)
   DBUG_RETURN(mylite_read_row_by_id(db_name.c_str(), db_name.length(),
                                     opened_table_name.c_str(),
                                     opened_table_name.length(), table,
-                                    current_rowid, buf));
+                                    current_rowid, buf, &blob_read_buffer));
 }
 
 int ha_mylite::index_prev(uchar *buf)
@@ -966,7 +976,7 @@ int ha_mylite::index_prev(uchar *buf)
   DBUG_RETURN(mylite_read_row_by_id(db_name.c_str(), db_name.length(),
                                     opened_table_name.c_str(),
                                     opened_table_name.length(), table,
-                                    current_rowid, buf));
+                                    current_rowid, buf, &blob_read_buffer));
 }
 
 int ha_mylite::index_first(uchar *buf)
@@ -997,7 +1007,7 @@ int ha_mylite::index_first(uchar *buf)
   DBUG_RETURN(mylite_read_row_by_id(db_name.c_str(), db_name.length(),
                                     opened_table_name.c_str(),
                                     opened_table_name.length(), table,
-                                    current_rowid, buf));
+                                    current_rowid, buf, &blob_read_buffer));
 }
 
 int ha_mylite::index_last(uchar *buf)
@@ -1028,7 +1038,7 @@ int ha_mylite::index_last(uchar *buf)
   DBUG_RETURN(mylite_read_row_by_id(db_name.c_str(), db_name.length(),
                                     opened_table_name.c_str(),
                                     opened_table_name.length(), table,
-                                    current_rowid, buf));
+                                    current_rowid, buf, &blob_read_buffer));
 }
 
 int ha_mylite::rnd_init(bool)
@@ -1037,6 +1047,7 @@ int ha_mylite::rnd_init(bool)
   scan_index= 0;
   current_rowid= 0;
   index_cursor_rowids.clear();
+  blob_read_buffer.clear();
   DBUG_RETURN(0);
 }
 
@@ -1046,7 +1057,7 @@ int ha_mylite::rnd_next(uchar *buf)
   DBUG_RETURN(mylite_read_row(db_name.c_str(), db_name.length(),
                               opened_table_name.c_str(),
                               opened_table_name.length(), table, &scan_index,
-                              &current_rowid, buf));
+                              &current_rowid, buf, &blob_read_buffer));
 }
 
 int ha_mylite::rnd_pos(uchar *buf, uchar *pos)
@@ -1056,7 +1067,7 @@ int ha_mylite::rnd_pos(uchar *buf, uchar *pos)
   DBUG_RETURN(mylite_read_row_by_id(db_name.c_str(), db_name.length(),
                                     opened_table_name.c_str(),
                                     opened_table_name.length(), table,
-                                    current_rowid, buf));
+                                    current_rowid, buf, &blob_read_buffer));
 }
 
 void ha_mylite::position(const uchar *)
@@ -1336,10 +1347,19 @@ static int mylite_store_row(const char *db, size_t db_length,
     return HA_ERR_RECORD_FILE_FULL;
   }
 
+  std::vector<uchar> encoded_record;
+  error= mylite_encode_record(table, record, &encoded_record);
+  if (error)
+  {
+    mylite_catalog= before;
+    mylite_pending_free_page_ranges= pending_before;
+    return error;
+  }
+
   Mylite_row row;
   row.rowid= definition->next_rowid++;
   row.deleted= false;
-  row.record.assign(record, record + table->s->reclength);
+  row.record.swap(encoded_record);
   definition->rows.push_back(row);
   if (!mylite_refresh_index_roots_locked(definition, table))
   {
@@ -1402,7 +1422,15 @@ static int mylite_update_row(const char *db, size_t db_length,
     mylite_pending_free_page_ranges= pending_before;
     return HA_ERR_RECORD_FILE_FULL;
   }
-  row->record.assign(record, record + table->s->reclength);
+  std::vector<uchar> encoded_record;
+  error= mylite_encode_record(table, record, &encoded_record);
+  if (error)
+  {
+    mylite_catalog= before;
+    mylite_pending_free_page_ranges= pending_before;
+    return error;
+  }
+  row->record.swap(encoded_record);
   if (!mylite_refresh_index_roots_locked(definition, table))
   {
     mylite_catalog= before;
@@ -1470,8 +1498,9 @@ static int mylite_delete_row(const char *db, size_t db_length,
 
 static int mylite_read_row(const char *db, size_t db_length,
                            const char *table_name, size_t table_name_length,
-                           const TABLE *table, size_t *scan_index,
-                           uint64_t *rowid, uchar *record)
+                           TABLE *table, size_t *scan_index, uint64_t *rowid,
+                           uchar *record,
+                           std::vector<uchar> *blob_buffer)
 {
   std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
   if (!mylite_ensure_catalog_loaded_locked())
@@ -1488,9 +1517,9 @@ static int mylite_read_row(const char *db, size_t db_length,
     const Mylite_row &row= definition->rows[(*scan_index)++];
     if (row.deleted)
       continue;
-    if (row.record.size() != table->s->reclength)
-      return HA_ERR_CRASHED;
-    std::memcpy(record, row.record.data(), row.record.size());
+    const int error= mylite_decode_record(table, row, record, blob_buffer);
+    if (error)
+      return error;
     *rowid= row.rowid;
     return 0;
   }
@@ -1500,8 +1529,9 @@ static int mylite_read_row(const char *db, size_t db_length,
 
 static int mylite_read_row_by_id(const char *db, size_t db_length,
                                  const char *table_name,
-                                 size_t table_name_length, const TABLE *table,
-                                 uint64_t rowid, uchar *record)
+                                 size_t table_name_length, TABLE *table,
+                                 uint64_t rowid, uchar *record,
+                                 std::vector<uchar> *blob_buffer)
 {
   std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
   if (!mylite_ensure_catalog_loaded_locked())
@@ -1516,11 +1546,8 @@ static int mylite_read_row_by_id(const char *db, size_t db_length,
   const Mylite_row *row= mylite_find_row_locked(definition, rowid);
   if (!row)
     return HA_ERR_KEY_NOT_FOUND;
-  if (row->record.size() != table->s->reclength)
-    return HA_ERR_CRASHED;
 
-  std::memcpy(record, row->record.data(), row->record.size());
-  return 0;
+  return mylite_decode_record(table, *row, record, blob_buffer);
 }
 
 static int mylite_build_index_entries(
@@ -1566,7 +1593,7 @@ static int mylite_build_index_entries_from_rows_locked(
   {
     if (row.deleted)
       continue;
-    if (row.record.size() != table->s->reclength)
+    if (row.record.size() < table->s->reclength)
       return HA_ERR_CRASHED;
 
     Mylite_index_entry entry;
@@ -1736,9 +1763,146 @@ static bool mylite_read_auto_increment_value(const char *db, size_t db_length,
   return true;
 }
 
+static int mylite_encode_record(TABLE *table, const uchar *record,
+                                std::vector<uchar> *encoded)
+{
+  if (!table || !table->s || !record || !encoded)
+    return HA_ERR_CRASHED;
+
+  try
+  {
+    encoded->assign(record, record + table->s->reclength);
+    if (table->s->blob_fields == 0)
+      return 0;
+
+    uint *blob= table->s->blob_field;
+    uint *blob_end= blob + table->s->blob_fields;
+    for (; blob != blob_end; ++blob)
+    {
+      Field_blob *field= static_cast<Field_blob *>(table->field[*blob]);
+      const uint field_offset= field->offset(table->record[0]);
+      const uint fixed_length= field->pack_length();
+      const uint length_bytes= field->pack_length_no_ptr();
+      if (field_offset > table->s->reclength ||
+          fixed_length > table->s->reclength - field_offset ||
+          length_bytes > fixed_length)
+        return HA_ERR_CRASHED;
+
+      const uchar *field_ptr= field->ptr_in_record(record);
+      const uint32 length= field->get_length(field_ptr);
+      uchar *data= field->get_ptr(field_ptr);
+      if (length > 0 && !data)
+        return HA_ERR_CRASHED;
+
+      const size_t pointer_offset= field_offset + length_bytes;
+      const size_t pointer_bytes= fixed_length - length_bytes;
+      if (pointer_bytes > 0)
+        std::memset(encoded->data() + pointer_offset, 0, pointer_bytes);
+      if (length > 0)
+        encoded->insert(encoded->end(), data, data + length);
+    }
+  }
+  catch (const std::bad_alloc &)
+  {
+    encoded->clear();
+    return HA_ERR_OUT_OF_MEM;
+  }
+
+  return 0;
+}
+
+static int mylite_decode_record(TABLE *table, const Mylite_row &row,
+                                uchar *record,
+                                std::vector<uchar> *blob_buffer)
+{
+  if (!table || !table->s || !record || !blob_buffer ||
+      row.record.size() < table->s->reclength)
+    return HA_ERR_CRASHED;
+
+  if (table->s->blob_fields == 0)
+  {
+    if (row.record.size() != table->s->reclength)
+      return HA_ERR_CRASHED;
+    std::memcpy(record, row.record.data(), row.record.size());
+    blob_buffer->clear();
+    return 0;
+  }
+
+  size_t required_blob_bytes= 0;
+  uint *blob= table->s->blob_field;
+  uint *blob_end= blob + table->s->blob_fields;
+  for (; blob != blob_end; ++blob)
+  {
+    Field_blob *field= static_cast<Field_blob *>(table->field[*blob]);
+    const uint field_offset= field->offset(table->record[0]);
+    const uint fixed_length= field->pack_length();
+    if (field_offset > table->s->reclength ||
+        fixed_length > table->s->reclength - field_offset)
+      return HA_ERR_CRASHED;
+    const uint32 length= field->get_length(row.record.data() + field_offset);
+    if (required_blob_bytes > row.record.size() - table->s->reclength ||
+        length > row.record.size() - table->s->reclength -
+                   required_blob_bytes)
+      return HA_ERR_CRASHED;
+    required_blob_bytes+= length;
+  }
+  if (table->s->reclength + required_blob_bytes != row.record.size())
+    return HA_ERR_CRASHED;
+
+  try
+  {
+    blob_buffer->resize(required_blob_bytes);
+  }
+  catch (const std::bad_alloc &)
+  {
+    blob_buffer->clear();
+    return HA_ERR_OUT_OF_MEM;
+  }
+
+  std::memcpy(record, row.record.data(), table->s->reclength);
+  const my_ptrdiff_t record_offset= record - table->record[0];
+  size_t source_offset= table->s->reclength;
+  size_t buffer_offset= 0;
+  blob= table->s->blob_field;
+  for (; blob != blob_end; ++blob)
+  {
+    Field_blob *field= static_cast<Field_blob *>(table->field[*blob]);
+    const uint field_offset= field->offset(table->record[0]);
+    const uint32 length= field->get_length(row.record.data() + field_offset);
+    uchar *data= nullptr;
+    if (length > 0)
+    {
+      data= blob_buffer->data() + buffer_offset;
+      std::memcpy(data, row.record.data() + source_offset, length);
+    }
+    field->set_ptr_offset(record_offset, length, data);
+    source_offset+= length;
+    buffer_offset+= length;
+  }
+
+  return 0;
+}
+
 static bool mylite_table_supports_row_storage(const TABLE *table)
 {
-  return table && table->s && table->s->blob_fields == 0;
+  return mylite_table_supports_blob_storage(table);
+}
+
+static bool mylite_table_supports_blob_storage(const TABLE *table)
+{
+  if (!table || !table->s)
+    return false;
+
+  uint *blob= table->s->blob_field;
+  uint *blob_end= blob + table->s->blob_fields;
+  for (; blob != blob_end; ++blob)
+  {
+    Field *field= table->field[*blob];
+    if (!field || field->type() == MYSQL_TYPE_GEOMETRY)
+      return false;
+  }
+
+  return true;
 }
 
 static bool mylite_table_supports_key_storage(const TABLE *table)
@@ -1820,7 +1984,7 @@ static int mylite_check_unique_constraints_locked(
     {
       if (row.deleted || row.rowid == ignored_rowid)
         continue;
-      if (row.record.size() != table->s->reclength)
+      if (row.record.size() < table->s->reclength)
         return HA_ERR_CRASHED;
 
       std::vector<uchar> stored_key;

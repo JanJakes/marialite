@@ -47,6 +47,11 @@ struct SmokeResult
   std::string large_row_value;
   std::string large_row_updated_length;
   std::string large_row_deleted_count;
+  std::string blob_text_lengths;
+  std::string blob_text_edges;
+  std::string blob_text_updated;
+  std::string blob_text_deleted_count;
+  std::string unsupported_geometry;
   std::string key_lookup_note;
   std::string key_order_ids;
   std::string duplicate_key;
@@ -64,6 +69,9 @@ struct SmokeResult
   std::string persisted_large_lengths;
   std::string persisted_large_edges;
   std::string persisted_wide_count;
+  std::string persisted_blob_text_lengths;
+  std::string persisted_blob_text_edges;
+  std::string persisted_blob_text_rollback;
   std::string recovery_marker;
   std::string recovery_reclaim;
   std::string transaction_rollback_rows;
@@ -638,12 +646,6 @@ static bool exercise_dml(MYSQL *mysql, SmokeResult *result)
                            "rows table", result))
     return false;
 
-  if (!execute_statement_expect_error(mysql,
-                                      "CREATE TABLE mylite.unsupported_blob "
-                                      "(id INT, note TEXT) ENGINE=MYLITE",
-                                      "unsupported BLOB/TEXT table",
-                                      &result->unsupported_blob, result))
-    return false;
   if (!execute_statement(mysql,
                          "CREATE TABLE mylite.large_rows "
                          "(id INT, note VARCHAR(5000) NOT NULL) "
@@ -700,6 +702,92 @@ static bool exercise_dml(MYSQL *mysql, SmokeResult *result)
   }
   if (!execute_statement(mysql, "DROP TABLE mylite.large_rows",
                          "DROP large row table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.blob_text_rows "
+                         "(id INT NOT NULL, note TEXT NOT NULL, "
+                         "payload BLOB NOT NULL) ENGINE=MYLITE",
+                         "CREATE BLOB/TEXT row table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.blob_text_rows VALUES "
+                         "(1, REPEAT('n', 3000), REPEAT('p', 5000)), "
+                         "(2, 'short', '')",
+                         "INSERT BLOB/TEXT rows", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(CHAR_LENGTH(note), "
+                          "':', LENGTH(payload)) ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.blob_text_rows",
+                          "BLOB/TEXT lengths", &result->blob_text_lengths,
+                          result))
+    return false;
+  if (result->blob_text_lengths != "3000:5000,5:0")
+  {
+    result->message= "BLOB/TEXT lengths returned an unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(LEFT(note, 1), ':', "
+                          "RIGHT(payload, 1)) ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.blob_text_rows",
+                          "BLOB/TEXT edges", &result->blob_text_edges,
+                          result))
+    return false;
+  if (result->blob_text_edges != "n:p,s:")
+  {
+    result->message= "BLOB/TEXT edges returned an unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "UPDATE mylite.blob_text_rows "
+                         "SET note = REPEAT('u', 4200), "
+                         "payload = REPEAT('q', 4100) WHERE id = 2",
+                         "UPDATE BLOB/TEXT row", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT CONCAT(CHAR_LENGTH(note), ':', "
+                          "LENGTH(payload), ':', LEFT(note, 1), ':', "
+                          "RIGHT(payload, 1)) "
+                          "FROM mylite.blob_text_rows WHERE id = 2",
+                          "updated BLOB/TEXT row",
+                          &result->blob_text_updated, result))
+    return false;
+  if (result->blob_text_updated != "4200:4100:u:q")
+  {
+    result->message= "BLOB/TEXT update returned an unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "DELETE FROM mylite.blob_text_rows WHERE id = 1",
+                         "DELETE BLOB/TEXT row", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT COUNT(*) FROM mylite.blob_text_rows",
+                          "BLOB/TEXT deleted count",
+                          &result->blob_text_deleted_count, result))
+    return false;
+  if (result->blob_text_deleted_count != "1")
+  {
+    result->message= "BLOB/TEXT delete returned an unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql, "DROP TABLE mylite.blob_text_rows",
+                         "DROP BLOB/TEXT row table", result))
+    return false;
+  if (!execute_statement_expect_error(mysql,
+                                      "CREATE TABLE mylite.unsupported_blob "
+                                      "(note TEXT NOT NULL, KEY(note(4))) "
+                                      "ENGINE=MYLITE",
+                                      "unsupported BLOB/TEXT key table",
+                                      &result->unsupported_blob, result))
+    return false;
+  if (!execute_statement_expect_error(mysql,
+                                      "CREATE TABLE mylite.unsupported_geometry "
+                                      "(id INT NOT NULL, location GEOMETRY NOT NULL) "
+                                      "ENGINE=MYLITE",
+                                      "unsupported GEOMETRY table",
+                                      &result->unsupported_geometry, result))
     return false;
   if (!execute_statement_expect_error(mysql,
                                       "CREATE TABLE mylite.unsupported_key "
@@ -1059,6 +1147,73 @@ static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result)
     return false;
   }
 
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.persisted_blob_text "
+                         "(id INT NOT NULL, note TEXT NOT NULL, "
+                         "payload BLOB NOT NULL) ENGINE=MYLITE",
+                         "CREATE persisted BLOB/TEXT table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.persisted_blob_text VALUES "
+                         "(1, REPEAT('x', 5000), REPEAT('a', 4200)), "
+                         "(2, REPEAT('y', 300), '')",
+                         "INSERT persisted BLOB/TEXT rows", result))
+    return false;
+  if (!execute_statement(mysql, "START TRANSACTION",
+                         "START persisted BLOB/TEXT rollback", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "UPDATE mylite.persisted_blob_text "
+                         "SET note = REPEAT('r', 4500), "
+                         "payload = REPEAT('s', 4100) WHERE id = 1",
+                         "UPDATE persisted BLOB/TEXT rollback row", result))
+    return false;
+  if (!execute_statement(mysql, "ROLLBACK",
+                         "ROLLBACK persisted BLOB/TEXT update", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(CHAR_LENGTH(note), "
+                          "':', LENGTH(payload)) ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_blob_text",
+                          "persisted BLOB/TEXT rollback",
+                          &result->persisted_blob_text_rollback, result))
+    return false;
+  if (result->persisted_blob_text_rollback != "5000:4200,300:0")
+  {
+    result->message= "persisted BLOB/TEXT rollback returned an unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "UPDATE mylite.persisted_blob_text "
+                         "SET note = REPEAT('z', 700), "
+                         "payload = REPEAT('w', 800) WHERE id = 2",
+                         "UPDATE persisted BLOB/TEXT row", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(CHAR_LENGTH(note), "
+                          "':', LENGTH(payload)) ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_blob_text",
+                          "persisted BLOB/TEXT lengths",
+                          &result->persisted_blob_text_lengths, result))
+    return false;
+  if (result->persisted_blob_text_lengths != "5000:4200,700:800")
+  {
+    result->message= "persisted BLOB/TEXT lengths returned an unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(LEFT(note, 1), ':', "
+                          "RIGHT(payload, 1)) ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_blob_text",
+                          "persisted BLOB/TEXT edges",
+                          &result->persisted_blob_text_edges, result))
+    return false;
+  if (result->persisted_blob_text_edges != "x:a,z:w")
+  {
+    result->message= "persisted BLOB/TEXT edges returned an unexpected value";
+    return false;
+  }
+
   return true;
 }
 
@@ -1221,6 +1376,38 @@ static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result)
   if (result->persisted_wide_count != "6")
   {
     result->message= "persisted read wide count returned an unexpected value";
+    return false;
+  }
+
+  if (!verify_table_present(mysql,
+                            "SHOW TABLES FROM mylite "
+                            "LIKE 'persisted_blob_text'",
+                            "persisted BLOB/TEXT table", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(CHAR_LENGTH(note), "
+                          "':', LENGTH(payload)) ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_blob_text",
+                          "persisted read BLOB/TEXT lengths",
+                          &result->persisted_blob_text_lengths, result))
+    return false;
+  if (result->persisted_blob_text_lengths != "5000:4200,700:800")
+  {
+    result->message= "persisted read BLOB/TEXT lengths returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(LEFT(note, 1), ':', "
+                          "RIGHT(payload, 1)) ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_blob_text",
+                          "persisted read BLOB/TEXT edges",
+                          &result->persisted_blob_text_edges, result))
+    return false;
+  if (result->persisted_blob_text_edges != "x:a,z:w")
+  {
+    result->message= "persisted read BLOB/TEXT edges returned an "
+                     "unexpected value";
     return false;
   }
 
@@ -1910,6 +2097,17 @@ static void write_report(const SmokeOptions &options,
   if (!result.large_row_deleted_count.empty())
     report << "large_row_deleted_count="
            << result.large_row_deleted_count << "\n";
+  if (!result.blob_text_lengths.empty())
+    report << "blob_text_lengths=" << result.blob_text_lengths << "\n";
+  if (!result.blob_text_edges.empty())
+    report << "blob_text_edges=" << result.blob_text_edges << "\n";
+  if (!result.blob_text_updated.empty())
+    report << "blob_text_updated=" << result.blob_text_updated << "\n";
+  if (!result.blob_text_deleted_count.empty())
+    report << "blob_text_deleted_count="
+           << result.blob_text_deleted_count << "\n";
+  if (!result.unsupported_geometry.empty())
+    report << "unsupported_geometry=" << result.unsupported_geometry << "\n";
   if (!result.key_lookup_note.empty())
     report << "key_lookup_note=" << result.key_lookup_note << "\n";
   if (!result.key_order_ids.empty())
@@ -1952,6 +2150,15 @@ static void write_report(const SmokeOptions &options,
            << result.persisted_large_edges << "\n";
   if (!result.persisted_wide_count.empty())
     report << "persisted_wide_count=" << result.persisted_wide_count << "\n";
+  if (!result.persisted_blob_text_lengths.empty())
+    report << "persisted_blob_text_lengths="
+           << result.persisted_blob_text_lengths << "\n";
+  if (!result.persisted_blob_text_edges.empty())
+    report << "persisted_blob_text_edges="
+           << result.persisted_blob_text_edges << "\n";
+  if (!result.persisted_blob_text_rollback.empty())
+    report << "persisted_blob_text_rollback="
+           << result.persisted_blob_text_rollback << "\n";
   if (!result.recovery_marker.empty())
     report << "recovery_marker=" << result.recovery_marker << "\n";
   if (!result.recovery_reclaim.empty())

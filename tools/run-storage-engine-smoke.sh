@@ -912,6 +912,30 @@ def range_contains(outer, inner):
         inner_start + inner_count <= outer_start + outer_count
     )
 
+def normalize_ranges(ranges):
+    normalized = []
+    for current in sorted(ranges):
+        if not normalized:
+            normalized.append(current)
+            continue
+        previous_start, previous_count = normalized[-1]
+        previous_end = previous_start + previous_count
+        current_start, current_count = current
+        current_end = current_start + current_count
+        if current_start < previous_end:
+            fail("overlapping page ranges")
+        if current_start == previous_end:
+            normalized[-1] = (previous_start, previous_count + current_count)
+        else:
+            normalized.append(current)
+    return normalized
+
+def page_in_ranges(page_id, ranges):
+    for start, count in ranges:
+        if start <= page_id < start + count:
+            return True
+    return False
+
 def parse_freepage_records(catalog_lines):
     ranges = []
     for line in catalog_lines:
@@ -930,6 +954,47 @@ def parse_freepage_records(catalog_lines):
         if previous[0] + previous[1] >= current[0]:
             fail("overlapping FREEPAGE ranges")
     return ranges
+
+def catalog_payload_ranges(catalog_lines):
+    ranges = []
+    for line in catalog_lines:
+        if line.startswith("ROWPAGE\t"):
+            parts = line.split("\t")
+            if len(parts) != 6:
+                fail("invalid ROWPAGE record")
+            root_offset = int(parts[3])
+            length = int(parts[4])
+            if root_offset != 0 or length != 0:
+                ranges.append(page_range(root_offset, length))
+        elif line.startswith("INDEXPAGE\t"):
+            parts = line.split("\t")
+            if len(parts) != 8:
+                fail("invalid INDEXPAGE record")
+            ranges.append(page_range(int(parts[5]), int(parts[6])))
+    return ranges
+
+def reclaimable_ranges(known_ranges, reusable_ranges):
+    protected = normalize_ranges(known_ranges)
+    previous_complete_pages = 0
+    for start, count in protected:
+        previous_complete_pages = max(previous_complete_pages, start + count)
+
+    orphan_ranges = []
+    orphan_start = None
+    for page_id in range(2, previous_complete_pages):
+        if page_in_ranges(page_id, protected):
+            if orphan_start is not None:
+                orphan_ranges.append((orphan_start, page_id - orphan_start))
+                orphan_start = None
+            continue
+        if orphan_start is None:
+            orphan_start = page_id
+    if orphan_start is not None:
+        orphan_ranges.append(
+            (orphan_start, previous_complete_pages - orphan_start)
+        )
+
+    return normalize_ranges(reusable_ranges + orphan_ranges)
 
 def read_chain(root_offset, length, expected_type, exact_payload_lengths):
     if root_offset < page_size * 2 or root_offset % page_size != 0:
@@ -1138,8 +1203,18 @@ for free_range in free_ranges:
 
 reused_ranges = []
 catalog_reused_ranges = []
+previous_reclaimable_ranges = []
 if len(headers) > 1:
     if headers[1][2] == 3:
+        previous_catalog_payload, _, _ = read_chain(
+            headers[1][3], headers[1][4], 1, True
+        )
+        try:
+            previous_catalog_lines = (
+                previous_catalog_payload.decode("ascii").splitlines()
+            )
+        except UnicodeDecodeError:
+            fail("previous catalog payload is not ascii")
         previous_payload, _, _ = read_chain(headers[1][5], headers[1][6], 4, True)
         try:
             previous_lines = previous_payload.decode("ascii").splitlines()
@@ -1153,11 +1228,21 @@ if len(headers) > 1:
             previous_lines = previous_payload.decode("ascii").splitlines()
         except UnicodeDecodeError:
             fail("previous catalog payload is not ascii")
+        previous_catalog_lines = previous_lines
     previous_free_ranges = parse_freepage_records(previous_lines)
+    previous_known_ranges = previous_free_ranges + [
+        page_range(headers[1][3], headers[1][4])
+    ]
+    if headers[1][2] == 3:
+        previous_known_ranges.append(page_range(headers[1][5], headers[1][6]))
+    previous_known_ranges.extend(catalog_payload_ranges(previous_catalog_lines))
+    previous_reclaimable_ranges = reclaimable_ranges(
+        previous_known_ranges, previous_free_ranges
+    )
     catalog_range = page_range(headers[0][3], headers[0][4])
     for live_range in live_ranges:
-        for previous_free_range in previous_free_ranges:
-            if range_contains(previous_free_range, live_range):
+        for previous_reclaimable_range in previous_reclaimable_ranges:
+            if range_contains(previous_reclaimable_range, live_range):
                 reused_ranges.append(f"{live_range[0]}:{live_range[1]}")
                 if live_range == catalog_range:
                     catalog_reused_ranges.append(f"{live_range[0]}:{live_range[1]}")
@@ -1182,6 +1267,10 @@ with report.open("a") as out:
     )
     out.write(f"reused_page_ranges={','.join(reused_ranges)}\n")
     out.write(f"catalog_reused_page_ranges={','.join(catalog_reused_ranges)}\n")
+    out.write(
+        "previous_reclaimable_page_ranges="
+        f"{','.join(f'{start}:{count}' for start, count in previous_reclaimable_ranges)}\n"
+    )
     out.write(f"rowpage_records={len(rowpage_records)}\n")
     out.write(f"indexpage_records={len(indexpage_records)}\n")
     out.write(f"row_payloads={','.join(row_payloads)}\n")

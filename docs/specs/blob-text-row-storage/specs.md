@@ -62,7 +62,7 @@ This slice will:
 ## Non-Goals
 
 - Do not support BLOB/TEXT key parts, FULLTEXT, SPATIAL, prefix indexes over
-  BLOB/TEXT, or generated keys.
+  BLOB/TEXT, GEOMETRY columns, or generated keys.
 - Do not add a final typed row format, column-level encoding, compression, or
   per-column page layout.
 - Do not add page-level undo, redo, WAL, or MVCC.
@@ -141,10 +141,16 @@ Existing row payload records remain readable:
 
 ## Binary-Size Impact
 
-Expected impact is small: record encode/decode helpers, a handler-owned blob
-read buffer, and smoke coverage. No dependency or new compiled MariaDB
-subsystem should be added. Measured sizes should be recorded after
-implementation.
+Measured impact is small in scope: the implementation adds record
+encode/decode helpers, a handler-owned blob read buffer, verifier logic, and
+smoke coverage. It adds no dependency and no new compiled MariaDB subsystem.
+
+The post-implementation `MinSizeRel` build report from
+`MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh` records:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,415,256 bytes,
+- archive objects: 571,
+- dynamic plugin artifacts: none.
 
 ## License, Trademark, And Dependency Impact
 
@@ -172,8 +178,36 @@ Storage smoke should verify:
 - transaction rollback restores BLOB/TEXT payload state,
 - fresh-process reopen returns committed BLOB/TEXT payloads,
 - BLOB/TEXT key parts remain rejected,
+- GEOMETRY columns remain rejected,
 - no `.frm`, journal/WAL companions, dynamic plugin artifacts, or catalog
   temporary sidecars are introduced.
+
+## Implementation Result
+
+Implemented in `vendor/mariadb/server/storage/mylite/ha_mylite.cc` and
+`ha_mylite.h` with `mylite_encode_record()` and `mylite_decode_record()`.
+Tables without BLOB fields keep the existing exact fixed-record encoding.
+Tables with BLOB/TEXT fields store a fixed record prefix with pointer bytes
+zeroed, followed by BLOB/TEXT bytes in `TABLE_SHARE::blob_field` order. Reads
+validate the stored length, rebuild handler-owned BLOB buffers, and call
+`Field_blob::set_ptr_offset()` for table scans, position reads, and index
+reads.
+
+The storage smoke now covers non-key BLOB/TEXT insert, update, delete,
+rollback, and fresh-process reopen. It also keeps BLOB/TEXT key parts and
+GEOMETRY columns rejected, and updates row-page verification to compare reuse
+against explicit free-list ranges plus orphan gaps that the loader can reclaim
+before allocation.
+
+Observed report evidence:
+
+- `blob_text_lengths=3000:5000,5:0`,
+- `blob_text_edges=n:p,s:`,
+- `blob_text_updated=4200:4100:u:q`,
+- `unsupported_geometry=rejected`,
+- `persisted_blob_text_lengths=5000:4200,700:800`,
+- `persisted_blob_text_edges=x:a,z:w`,
+- `row_overflow_payloads=mylite.persisted_large,mylite.persisted_blob_text`.
 
 ## Acceptance Criteria
 

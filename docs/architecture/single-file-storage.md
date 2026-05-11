@@ -247,8 +247,15 @@ contents remain corruption failures.
 Supported fixed MariaDB record images larger than one row slot page now split
 across `MYLITEROWOVF3` segment payloads inside row page type `2`. This lifts the
 one-page row-size limit for non-BLOB rows while preserving the raw fixed-record
-bridge. BLOB/TEXT tables remain unsupported because MariaDB blob fields carry
-pointer-backed row-buffer state that needs a separate durable representation.
+bridge. Non-key BLOB/TEXT columns now use the same row and overflow page
+storage: MyLite stores a fixed record prefix with native BLOB pointer bytes
+cleared, appends BLOB/TEXT payload bytes in MariaDB `TABLE_SHARE::blob_field`
+order, and reconstructs `Field_blob` pointers into handler-owned read buffers
+on table scan, position read, and index read paths. BLOB/TEXT key parts remain
+unsupported because key image generation and prefix semantics need a separate
+design. GEOMETRY columns also remain unsupported for now because MariaDB models
+them as a `Field_blob` subclass but their spatial semantics are outside this
+slice.
 
 ## Schemas
 

@@ -130,6 +130,7 @@ private:
   uint64_t current_rowid= 0;
   std::vector<uint64_t> index_cursor_rowids;
   size_t index_cursor_position= 0;
+  std::vector<uchar> blob_read_buffer;
 };
 
 #endif
