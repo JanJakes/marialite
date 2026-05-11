@@ -43,7 +43,9 @@ struct SmokeResult
   std::string unsupported_blob;
   std::string unsupported_key;
   std::string unsupported_autoincrement;
-  std::string unsupported_large_row;
+  std::string large_row_value;
+  std::string large_row_updated_length;
+  std::string large_row_deleted_count;
   std::string key_lookup_note;
   std::string key_order_ids;
   std::string duplicate_key;
@@ -58,6 +60,8 @@ struct SmokeResult
   std::string persisted_key_order_ids;
   std::string persisted_note_lookup_id;
   std::string persisted_note_order_ids;
+  std::string persisted_large_lengths;
+  std::string persisted_large_edges;
   std::string persisted_wide_count;
   std::string recovery_marker;
 };
@@ -575,6 +579,63 @@ static bool exercise_dml(MYSQL *mysql, SmokeResult *result)
                                       "unsupported BLOB/TEXT table",
                                       &result->unsupported_blob, result))
     return false;
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.large_rows "
+                         "(id INT, note VARCHAR(5000) NOT NULL) "
+                         "ENGINE=MYLITE",
+                         "CREATE large row table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.large_rows VALUES "
+                         "(1, REPEAT('a', 5000)), "
+                         "(2, REPEAT('b', 4200))",
+                         "INSERT large rows", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT CONCAT(CHAR_LENGTH(note), ':', "
+                          "LEFT(note, 1), ':', RIGHT(note, 1)) "
+                          "FROM mylite.large_rows WHERE id = 1",
+                          "large row value", &result->large_row_value,
+                          result))
+    return false;
+  if (result->large_row_value != "5000:a:a")
+  {
+    result->message= "large row value returned an unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "UPDATE mylite.large_rows "
+                         "SET note = REPEAT('c', 4500) WHERE id = 2",
+                         "UPDATE large row", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT CHAR_LENGTH(note) "
+                          "FROM mylite.large_rows WHERE id = 2",
+                          "large row updated length",
+                          &result->large_row_updated_length, result))
+    return false;
+  if (result->large_row_updated_length != "4500")
+  {
+    result->message= "large row update returned an unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "DELETE FROM mylite.large_rows WHERE id = 1",
+                         "DELETE large row", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT COUNT(*) FROM mylite.large_rows",
+                          "large row deleted count",
+                          &result->large_row_deleted_count, result))
+    return false;
+  if (result->large_row_deleted_count != "1")
+  {
+    result->message= "large row delete returned an unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql, "DROP TABLE mylite.large_rows",
+                         "DROP large row table", result))
+    return false;
   if (!execute_statement_expect_error(mysql,
                                       "CREATE TABLE mylite.unsupported_key "
                                       "(id INT, KEY(id)) ENGINE=MYLITE",
@@ -589,15 +650,6 @@ static bool exercise_dml(MYSQL *mysql, SmokeResult *result)
         "unsupported autoincrement table", &result->unsupported_autoincrement,
         result))
     return false;
-  if (!execute_statement_expect_error(mysql,
-                                      "CREATE TABLE mylite.unsupported_large_row "
-                                      "(note VARCHAR(5000) NOT NULL) "
-                                      "ENGINE=MYLITE",
-                                      "unsupported large row table",
-                                      &result->unsupported_large_row,
-                                      result))
-    return false;
-
   return true;
 }
 
@@ -879,6 +931,43 @@ static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result)
   }
 
   if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.persisted_large "
+                         "(id INT NOT NULL, note VARCHAR(5000) NOT NULL) "
+                         "ENGINE=MYLITE",
+                         "CREATE persisted large row table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.persisted_large VALUES "
+                         "(1, REPEAT('x', 5000)), "
+                         "(2, REPEAT('y', 4200))",
+                         "INSERT persisted large rows", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CHAR_LENGTH(note) "
+                          "ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_large",
+                          "persisted write large lengths",
+                          &result->persisted_large_lengths, result))
+    return false;
+  if (result->persisted_large_lengths != "5000,4200")
+  {
+    result->message= "persisted write large lengths returned an unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(LEFT(note, 1), "
+                          "RIGHT(note, 1)) ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_large",
+                          "persisted write large edges",
+                          &result->persisted_large_edges, result))
+    return false;
+  if (result->persisted_large_edges != "xx,yy")
+  {
+    result->message= "persisted write large edges returned an unexpected value";
+    return false;
+  }
+
+  if (!execute_statement(mysql,
                          "CREATE TABLE mylite.persisted_wide "
                          "(id INT, note VARCHAR(900) NOT NULL) "
                          "ENGINE=MYLITE",
@@ -1023,6 +1112,35 @@ static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result)
   if (result->persisted_note_order_ids != "1,3,2")
   {
     result->message= "persisted read note order returned an unexpected value";
+    return false;
+  }
+
+  if (!verify_table_present(mysql,
+                            "SHOW TABLES FROM mylite LIKE 'persisted_large'",
+                            "persisted large table", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CHAR_LENGTH(note) "
+                          "ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_large",
+                          "persisted read large lengths",
+                          &result->persisted_large_lengths, result))
+    return false;
+  if (result->persisted_large_lengths != "5000,4200")
+  {
+    result->message= "persisted read large lengths returned an unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(LEFT(note, 1), "
+                          "RIGHT(note, 1)) ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_large",
+                          "persisted read large edges",
+                          &result->persisted_large_edges, result))
+    return false;
+  if (result->persisted_large_edges != "xx,yy")
+  {
+    result->message= "persisted read large edges returned an unexpected value";
     return false;
   }
 
@@ -1270,9 +1388,14 @@ static void write_report(const SmokeOptions &options,
   if (!result.unsupported_autoincrement.empty())
     report << "unsupported_autoincrement="
            << result.unsupported_autoincrement << "\n";
-  if (!result.unsupported_large_row.empty())
-    report << "unsupported_large_row="
-           << result.unsupported_large_row << "\n";
+  if (!result.large_row_value.empty())
+    report << "large_row_value=" << result.large_row_value << "\n";
+  if (!result.large_row_updated_length.empty())
+    report << "large_row_updated_length="
+           << result.large_row_updated_length << "\n";
+  if (!result.large_row_deleted_count.empty())
+    report << "large_row_deleted_count="
+           << result.large_row_deleted_count << "\n";
   if (!result.key_lookup_note.empty())
     report << "key_lookup_note=" << result.key_lookup_note << "\n";
   if (!result.key_order_ids.empty())
@@ -1307,6 +1430,12 @@ static void write_report(const SmokeOptions &options,
   if (!result.persisted_note_order_ids.empty())
     report << "persisted_note_order_ids="
            << result.persisted_note_order_ids << "\n";
+  if (!result.persisted_large_lengths.empty())
+    report << "persisted_large_lengths="
+           << result.persisted_large_lengths << "\n";
+  if (!result.persisted_large_edges.empty())
+    report << "persisted_large_edges="
+           << result.persisted_large_edges << "\n";
   if (!result.persisted_wide_count.empty())
     report << "persisted_wide_count=" << result.persisted_wide_count << "\n";
   if (!result.recovery_marker.empty())

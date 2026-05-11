@@ -176,26 +176,28 @@ inside the logical catalog payload. New writes use page-local binary row slot
 directories and packed record bytes inside row payload pages. This validates
 MariaDB handler read/write/update/delete integration, fresh-process
 persistence, and row-page recovery fallback, but it is still a temporary
-raw-record bridge. Page reuse, overflow rows, transaction recovery, and durable
-index pages are still needed.
+raw-record bridge. Page reuse, typed column encoding, transaction recovery, and
+durable B-tree index pages are still needed.
 
 The current bridge layer accepts supported non-null BTREE/undefined keys and
-autoincrement columns without adding durable index sidecars. It stores
-autoincrement counters in catalog payload records and rebuilds ordered index
-cursors from row payload pages in memory. This proves MariaDB's indexed handler
-path and uniqueness enforcement, but it is still not the final B-tree storage
-architecture.
+autoincrement columns. It stores autoincrement counters in catalog payload
+records and now stores durable primary and secondary key-entry streams in typed
+index payload pages addressed by catalog `INDEXPAGE` roots. This proves
+MariaDB's indexed handler path and uniqueness enforcement, but it is still not
+the final B-tree storage architecture.
 
-The current primary file format stores catalog payload generations and simple
-row payloads in typed 4096-byte page chains. The two fixed header slots still
-publish the active catalog generation, and the catalog generation points to
-table row roots. The page store has catalog and row page types; indexes,
-free-space tracking, and transaction/recovery pages still need dedicated
-formats before the raw-record bridge can be retired.
+The current primary file format stores catalog payload generations, row
+payloads, and index payloads in typed 4096-byte page chains. The two fixed
+header slots still publish the active catalog generation, and the catalog
+generation points to table row and index roots. The page store has catalog,
+row, and index page types; free-space tracking and transaction/recovery pages
+still need dedicated formats before the raw-record bridge can be retired.
 
-Until overflow pages exist, supported fixed MariaDB record images must fit in a
-single row slot page. With the current page size this means a maximum fixed
-record image of 3984 bytes. Larger non-BLOB tables are rejected explicitly.
+Supported fixed MariaDB record images larger than one row slot page now split
+across `MYLITEROWOVF3` segment payloads inside row page type `2`. This lifts the
+one-page row-size limit for non-BLOB rows while preserving the raw fixed-record
+bridge. BLOB/TEXT tables remain unsupported because MariaDB blob fields carry
+pointer-backed row-buffer state that needs a separate durable representation.
 
 ## Schemas
 

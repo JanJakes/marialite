@@ -31,11 +31,11 @@ fixed record images while keeping BLOB/TEXT handling deferred.
   `mylite_table_supports_row_storage()`,
   `mylite_pack_row_slot_page_payloads_locked()`,
   `mylite_append_row_slot_page_payload()`,
-  `mylite_parse_row_slot_pages_locked()`, and
+  `mylite_parse_row_payload_pages_locked()`, and
   `mylite_parse_row_slot_page_payload_locked()`.
-- Storage smoke currently records `unsupported_large_row=rejected` in
-  `vendor/mariadb/server/mylite/storage_engine_smoke.cc` and verifies row page
-  type `2` in `tools/run-storage-engine-smoke.sh`.
+- Storage smoke covers row DML, persistence, recovery, and physical row page
+  inspection in `vendor/mariadb/server/mylite/storage_engine_smoke.cc` and
+  `tools/run-storage-engine-smoke.sh`.
 
 ## Scope
 
@@ -174,9 +174,21 @@ compaction work exists.
 
 ## Binary-Size Impact
 
-Expected impact is first-party code for overflow segment packing, parsing,
-validation, and smoke assertions. No dependency is allowed. Record measured
-artifacts after implementation.
+The implemented slice adds first-party code for overflow segment packing,
+parsing, validation, and smoke assertions. It adds no dependency.
+
+Measured after `MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh` and the
+full verification plan:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,367,576 bytes
+- `build/mariadb-minsize/mylite/libmylite.a`: 29,698 bytes
+- `build/mariadb-minsize/mylite/mylite-compatibility-smoke`: 22,699,760 bytes
+- `build/mariadb-minsize/mylite/mylite-storage-engine-smoke`: 22,764,792 bytes
+- `build/mariadb-minsize/mylite/mylite-open-close-smoke`: 22,700,880 bytes
+- `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke`: 22,698,504 bytes
+
+The persisted catalog inspected by storage smoke was 1,859,584 bytes after the
+fresh-process read phase.
 
 ## Test And Verification Plan
 
@@ -202,6 +214,31 @@ The storage smoke should verify:
 - `unsupported_blob=rejected` remains true for BLOB/TEXT tables,
 - no `.frm` artifacts,
 - no catalog temporary sidecars.
+
+Observed storage smoke evidence:
+
+- `unsupported_blob=rejected`
+- `large_row_value=5000:a:a`
+- `large_row_updated_length=4500`
+- `large_row_deleted_count=1`
+- `persisted_large_lengths=5000,4200`
+- `persisted_large_edges=xx,yy`
+- `row_payloads=mylite.persisted,mylite.persisted_auto,mylite.persisted_keyed,mylite.persisted_large,mylite.persisted_wide`
+- `row_payload_page_counts=mylite.persisted:1,mylite.persisted_auto:1,mylite.persisted_keyed:1,mylite.persisted_large:12,mylite.persisted_wide:6`
+- `row_overflow_payloads=mylite.persisted_large`
+- `row_overflow_page_counts=mylite.persisted_large:12`
+- `row_overflow_magic=MYLITEROWOVF3`
+
+Verification passed:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-embedded-bootstrap-smoke.sh
+bash -n tools/run-compatibility-test-harness.sh tools/run-storage-engine-smoke.sh tools/run-libmylite-open-close-smoke.sh tools/run-embedded-bootstrap-smoke.sh tools/build-mariadb-minsize.sh
+git diff --check
+```
 
 The compatibility harness should continue to verify:
 

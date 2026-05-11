@@ -252,6 +252,7 @@ def read_chain(root_offset, length, expected_type, exact_payload_lengths):
     remaining = length
     payload = bytearray()
     page_types = []
+    page_payloads = []
     while remaining > 0:
         start = page_id * page_size
         page = data[start:start + page_size]
@@ -274,7 +275,9 @@ def read_chain(root_offset, length, expected_type, exact_payload_lengths):
         elif used == 0 or used > remaining:
             fail("unexpected page payload length")
         page_types.append(page_type)
-        payload.extend(page[page_payload_offset:page_payload_offset + used])
+        page_payload = page[page_payload_offset:page_payload_offset + used]
+        page_payloads.append(bytes(page_payload))
+        payload.extend(page_payload)
         remaining -= used
         if remaining == 0:
             if next_page_id != 0:
@@ -283,9 +286,9 @@ def read_chain(root_offset, length, expected_type, exact_payload_lengths):
         if next_page_id != page_id + 1:
             fail("nonsequential next page")
         page_id = next_page_id
-    return bytes(payload), page_types
+    return bytes(payload), page_types, page_payloads
 
-catalog_payload, catalog_page_types = read_chain(
+catalog_payload, catalog_page_types, _ = read_chain(
     headers[0][2], headers[0][3], 1, True
 )
 try:
@@ -305,6 +308,8 @@ if not indexpage_records:
 
 row_payloads = []
 row_payload_page_counts = []
+row_overflow_payloads = []
+row_overflow_page_counts = []
 for line in rowpage_records:
     parts = line.split("\t")
     if len(parts) != 6:
@@ -313,22 +318,55 @@ for line in rowpage_records:
     length = int(parts[4])
     if root_offset == 0 and length == 0:
         continue
-    payload, page_types = read_chain(root_offset, length, 2, False)
-    if not payload.startswith(b"MYLITEROWSLOT2\0\0"):
-        fail("invalid row slot payload magic")
-    if read_u32(payload, 16) != 2:
-        fail("invalid row slot format version")
-    row_count = read_u32(payload, 20)
-    if row_count == 0:
-        fail("row slot payload has no row records")
     row_payload = (
         f"{bytes.fromhex(parts[1]).decode('ascii')}."
         f"{bytes.fromhex(parts[2]).decode('ascii')}"
     )
+    payload, page_types, page_payloads = read_chain(
+        root_offset, length, 2, False
+    )
+    slot_pages = 0
+    overflow_pages = 0
+    for page_payload in page_payloads:
+        if page_payload.startswith(b"MYLITEROWSLOT2\0\0"):
+            if read_u32(page_payload, 16) != 2:
+                fail("invalid row slot format version")
+            row_count = read_u32(page_payload, 20)
+            if row_count == 0:
+                fail("row slot payload has no row records")
+            slot_pages += 1
+        elif page_payload.startswith(b"MYLITEROWOVF3\0\0\0"):
+            if len(page_payload) < 52:
+                fail("short row overflow payload")
+            if read_u32(page_payload, 16) != 3:
+                fail("invalid row overflow format version")
+            rowid = read_u64(page_payload, 20)
+            total_length = read_u64(page_payload, 28)
+            segment_offset = read_u64(page_payload, 36)
+            segment_length = read_u32(page_payload, 44)
+            reserved = read_u32(page_payload, 48)
+            if rowid == 0 or total_length <= 3984:
+                fail("invalid row overflow row metadata")
+            if segment_length == 0 or len(page_payload) != 52 + segment_length:
+                fail("invalid row overflow segment length")
+            if segment_offset > total_length:
+                fail("invalid row overflow segment offset")
+            if segment_length > total_length - segment_offset:
+                fail("row overflow segment exceeds total length")
+            if reserved != 0:
+                fail("nonzero row overflow reserved bytes")
+            overflow_pages += 1
+        else:
+            fail("invalid row payload magic")
     if row_payload == "mylite.persisted_wide" and len(page_types) < 2:
         fail("wide row payload did not span pages")
+    if row_payload == "mylite.persisted_large" and overflow_pages < 2:
+        fail("large row payload did not use overflow pages")
     row_payloads.append(row_payload)
     row_payload_page_counts.append(f"{row_payload}:{len(page_types)}")
+    if overflow_pages:
+        row_overflow_payloads.append(row_payload)
+        row_overflow_page_counts.append(f"{row_payload}:{overflow_pages}")
 
 if not row_payloads:
     fail("no nonempty row payload chains")
@@ -347,7 +385,7 @@ for line in indexpage_records:
     key_length = int(parts[4])
     root_offset = int(parts[5])
     length = int(parts[6])
-    payload, page_types = read_chain(root_offset, length, 3, True)
+    payload, page_types, _ = read_chain(root_offset, length, 3, True)
     if len(payload) < 36:
         fail("short index payload")
     if not payload.startswith(b"MYLITEINDEXPG1\0\0"):
@@ -384,6 +422,9 @@ with report.open("a") as out:
     out.write(f"row_payload_page_counts={','.join(row_payload_page_counts)}\n")
     out.write("row_payload_magic=MYLITEROWSLOT2\n")
     out.write("row_payload_page_type=2\n")
+    out.write(f"row_overflow_payloads={','.join(row_overflow_payloads)}\n")
+    out.write(f"row_overflow_page_counts={','.join(row_overflow_page_counts)}\n")
+    out.write("row_overflow_magic=MYLITEROWOVF3\n")
     out.write(f"index_payloads={','.join(index_payloads)}\n")
     out.write(f"index_payload_page_counts={','.join(index_payload_page_counts)}\n")
     out.write("index_payload_magic=MYLITEINDEXPG1\n")

@@ -44,10 +44,8 @@ with oversized fixed row images rejected explicitly until overflow pages are
 designed. Supported primary and secondary key indexes now publish durable
 `INDEXPAGE` roots to typed index payload pages and handler index reads use those
 loaded roots when they match open MariaDB key metadata.
-
-The active implementation step is `row-overflow-storage`, which should lift the
-one-page row-size limit for non-BLOB fixed MariaDB record images while keeping
-BLOB/TEXT payloads deferred.
+Large non-BLOB fixed MariaDB record images now split across row overflow segment
+pages inside the primary file while BLOB/TEXT payloads remain deferred.
 
 ## Implementation plan
 
@@ -71,7 +69,7 @@ BLOB/TEXT payloads deferred.
 | 15 | `row-page-storage` | Done | Move simple row images from the logical catalog payload into typed row pages addressed through table catalog roots. |
 | 16 | `row-slot-storage` | Done | Replace table-sized row payload streams with page-local row records and slot directories. |
 | 17 | `index-page-storage` | Done | Add durable primary/secondary index page roots for supported keys instead of rebuilding all index cursors from rows. |
-| 18 | `row-overflow-storage` | In progress | Add overflow row payload segments so large non-BLOB fixed row images can span row pages. |
+| 18 | `row-overflow-storage` | Done | Add overflow row payload segments so large non-BLOB fixed row images can span row pages. |
 
 ## Size and profile direction
 
