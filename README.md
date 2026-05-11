@@ -184,6 +184,15 @@ DDL yet.
 
 Current design documents:
 
+The grouped compatibility harness can be run with:
+
+```sh
+tools/run-compatibility-test-harness.sh
+```
+
+That harness runs the embedded lifecycle, `libmylite` lifecycle, storage,
+catalog recovery, MariaDB reference comparison, and MyLite sidecar scan groups.
+
 - [Roadmap](docs/ROADMAP.md) tracks the ordered engineering slices and current
   progress.
 - [MariaDB source analysis](docs/research/mariadb-source-analysis.md) records

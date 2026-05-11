@@ -246,3 +246,73 @@ The harness itself should run or reuse:
   results and selected error identities.
 - The sidecar scan intentionally carries a short-lived exception for inherited
   Aria startup logs. That exception should shrink, not grow.
+
+## Implementation Result
+
+MyLite now has a grouped compatibility harness:
+
+- `tools/run-compatibility-test-harness.sh` runs the existing lifecycle and
+  storage smokes, then runs a new MariaDB-reference comparison and MyLite
+  sidecar scan.
+- `mylite-compatibility-smoke` runs the supported scalar, row, key, duplicate,
+  and autoincrement subset against either `ENGINE=Aria` or `ENGINE=MYLITE`.
+- The harness writes detailed reference and MyLite reports plus compact
+  fingerprints and fails on `diff -u` mismatches.
+- The sidecar scan fails unexpected MyLite runtime `.frm`, engine, binlog,
+  relay-log, InnoDB log, dynamic plugin, and lingering catalog temporary files.
+- Known inherited `aria_log.*` startup files are reported separately from
+  unexpected sidecars.
+
+The comparison exposed a MyLite duplicate-key diagnostic mismatch during
+implementation: MyLite returned SQLSTATE `23000`, but mapped primary-key
+duplicates to errno `1022` instead of MariaDB's `1062`. The storage handler now
+sets `lookup_errkey` for duplicate insert/update errors so MariaDB's common
+`handler::print_error()` path emits `ER_DUP_ENTRY`.
+
+Verification passed:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+bash -n tools/run-compatibility-test-harness.sh tools/run-storage-engine-smoke.sh tools/run-libmylite-open-close-smoke.sh tools/run-embedded-bootstrap-smoke.sh tools/build-mariadb-minsize.sh
+git diff --check
+```
+
+Observed harness groups:
+
+- `embedded_lifecycle`: `status=0`.
+- `libmylite_lifecycle`: `status=0`.
+- `storage_single_file`: `status=0`.
+- `mariadb_comparison`: `status=0`.
+- `sidecar_scan`: `status=0`, `unexpected_sidecars=none`.
+
+Observed comparison fingerprint for both `ENGINE=Aria` and `ENGINE=MYLITE`:
+
+```text
+scalar_add=3
+scalar_concat=mylite
+scalar_coalesce=fallback
+row_count=2
+row_values=2:TWO,3:three
+key_lookup=two
+key_order=1,2,3
+key_duplicate=error:1062:23000
+auto_values=1,2,10,12
+```
+
+Observed artifacts after this slice:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,313,562 bytes.
+- `build/mariadb-minsize/mylite/libmylite.a`: 29,698 bytes.
+- `build/mariadb-minsize/mylite/mylite-compatibility-smoke`: 22,692,632
+  bytes.
+- `build/mariadb-minsize/mylite/mylite-storage-engine-smoke`: 22,692,464
+  bytes.
+- `build/mariadb-minsize/mylite/mylite-open-close-smoke`: 22,693,600 bytes.
+- `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke`: 22,691,496
+  bytes.
+- `build/mariadb-minsize/mylite-compatibility-mylite/catalog.mylite`: 55,175
+  bytes.
+- `build/mariadb-minsize/mylite-catalog-persistence/catalog.mylite`: 43,120
+  bytes.
+- `build/mariadb-minsize/mylite-catalog-recovery/catalog.mylite`: 39,938
+  bytes.

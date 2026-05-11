@@ -32,11 +32,14 @@ table-definition files, persist frm-backed table definitions in the primary
 catalog generation when the latest append-only catalog payload is corrupted.
 It can store simple non-BLOB rows, enforce supported primary and unique keys,
 serve basic ordered index access, and persist table-local autoincrement state
-in the `.mylite` payload.
+in the `.mylite` payload. A grouped compatibility harness now runs the
+embedded lifecycle, `libmylite` lifecycle, storage/recovery smokes, a
+MariaDB-reference comparison for the supported subset, and a MyLite runtime
+sidecar scan.
 
-The active implementation step is `compatibility-test-harness`, which should
-turn the accumulated smoke coverage into clearer repeatable groups and add
-MariaDB comparison coverage for the supported embedded subset.
+The next implementation step is `pager-page-store`, which should start turning
+the raw append-only catalog payload into a reusable page-store layer for future
+row and index pages.
 
 ## Implementation plan
 
@@ -55,7 +58,8 @@ MariaDB comparison coverage for the supported embedded subset.
 | 10 | `file-format-recovery` | Done | Define and implement the first durable file header, page layout, catalog update protocol, and initial catalog recovery guarantees. |
 | 11 | `row-index-storage` | Done | Implement the first durable heap row storage and core table-scan read/write/update/delete handler methods. |
 | 12 | `index-autoincrement-storage` | Done | Add enforced key metadata, basic index access, and durable autoincrement state. |
-| 13 | `compatibility-test-harness` | In progress | Run embedded lifecycle, unexpected-sidecar detection, crash/reopen, and MariaDB comparison tests in repeatable groups. |
+| 13 | `compatibility-test-harness` | Done | Run embedded lifecycle, unexpected-sidecar detection, crash/reopen, and MariaDB comparison tests in repeatable groups. |
+| 14 | `pager-page-store` | Planned | Add the first reusable MyLite page-store layer for catalog payloads, row pages, future index pages, and free-space tracking. |
 
 ## Size and profile direction
 

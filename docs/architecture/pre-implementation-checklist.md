@@ -107,6 +107,12 @@ and known risks.
 - Add a MariaDB reference runtime for compatibility-sensitive SQL behavior.
 - Keep unit, embedded smoke, MariaDB-comparison, and crash tests separately
   labeled.
+- Grouped compatibility harness added:
+  `tools/run-compatibility-test-harness.sh`.
+- The harness runs embedded lifecycle, `libmylite` lifecycle,
+  storage/recovery, MariaDB-reference comparison, and MyLite sidecar scan
+  groups, and records known inherited Aria startup logs separately from
+  unexpected sidecars.
 
 ## File format and storage decisions
 

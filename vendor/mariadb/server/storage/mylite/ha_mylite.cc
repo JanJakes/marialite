@@ -421,6 +421,7 @@ int ha_mylite::delete_table(const char *name)
 int ha_mylite::write_row(const uchar *buf)
 {
   DBUG_ENTER("ha_mylite::write_row");
+  lookup_errkey= static_cast<uint>(-1);
   if (table->next_number_field && buf == table->record[0])
   {
     const int error= update_auto_increment();
@@ -434,7 +435,10 @@ int ha_mylite::write_row(const uchar *buf)
                                     opened_table_name.length(), table, buf,
                                     &duplicate_key);
   if (error == HA_ERR_FOUND_DUPP_KEY)
+  {
     errkey= duplicate_key;
+    lookup_errkey= duplicate_key;
+  }
   index_cursor_rowids.clear();
   DBUG_RETURN(error);
 }
@@ -442,6 +446,7 @@ int ha_mylite::write_row(const uchar *buf)
 int ha_mylite::update_row(const uchar *, const uchar *new_data)
 {
   DBUG_ENTER("ha_mylite::update_row");
+  lookup_errkey= static_cast<uint>(-1);
   uint duplicate_key= static_cast<uint>(-1);
   const int error= mylite_update_row(db_name.c_str(), db_name.length(),
                                      opened_table_name.c_str(),
@@ -449,7 +454,10 @@ int ha_mylite::update_row(const uchar *, const uchar *new_data)
                                      current_rowid, new_data,
                                      &duplicate_key);
   if (error == HA_ERR_FOUND_DUPP_KEY)
+  {
     errkey= duplicate_key;
+    lookup_errkey= duplicate_key;
+  }
   index_cursor_rowids.clear();
   DBUG_RETURN(error);
 }
