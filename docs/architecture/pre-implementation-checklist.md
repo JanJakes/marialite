@@ -17,14 +17,22 @@ or changes MariaDB source in earnest.
 
 ## Build environment
 
-- Create a reproducible build environment, preferably a Linux container first
-  and macOS as a secondary supported development platform.
-- Pin required tools such as CMake, Bison, compiler family, OpenSSL, and PCRE2.
-- Produce a baseline embedded build of `libmariadbd.a`.
-- Record the size of the embedded artifact and the list of linked static
-  engines/plugins.
-- Add a repeatable command for a minimal embedded profile before optimizing for
-  size.
+- Reproducible Linux container build added:
+  `tools/build-mariadb-minsize.sh`.
+- Baseline environment recorded on 2026-05-11: Docker `ubuntu:24.04` on
+  Linux/aarch64, CMake 3.28.3, Ninja 1.11.1, Bison 3.8.2, Flex 2.6.4, and
+  GCC/G++ 13.3.0.
+- Baseline embedded artifact produced:
+  `build/mariadb-minsize/libmysqld/libmariadbd.a`.
+- Baseline size recorded: 44,134,820 bytes, 570 archive objects.
+- Dynamic plugin artifacts recorded: none.
+- Embedded builtin plugins recorded in
+  `build/mariadb-minsize/mylite-build-report.txt`: Aria, binlog, CSV, HEAP,
+  MyISAM, MyISAMMRG, MHNSW, MySQL password, Online Alter Log, Sequence, SQL
+  Sequence, Thread Pool Info, Type Geom, Type Inet, Type UUID, User Variables,
+  and Userstat.
+- macOS native build support remains future work; the current baseline is the
+  Linux-container build.
 
 ## Source layout and patch stack
 

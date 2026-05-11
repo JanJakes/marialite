@@ -194,6 +194,59 @@ baseline.
   in the build report.
 - Run `git diff --check` for first-party script and docs changes.
 
+## Implementation Result
+
+The mandatory Connector/C submodule was imported under
+`vendor/mariadb/server/libmariadb/` from commit
+`7bb4e6cdf787b32907429287a636857e3b31e6a1`. The imported tree was compared
+against a fresh checkout with `git diff --no-index --quiet`.
+
+The minimal embedded profile is available through:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+```
+
+The successful baseline build was produced on 2026-05-11 in Docker
+`ubuntu:24.04` on Linux/aarch64 with:
+
+- CMake 3.28.3,
+- Ninja 1.11.1,
+- Bison 3.8.2,
+- Flex 2.6.4,
+- GCC/G++ 13.3.0.
+
+The build generated `build/mariadb-minsize/libmysqld/libmariadbd.a`:
+
+- size: 44,134,820 bytes,
+- archive objects: 570,
+- dynamic plugin artifacts: none.
+
+The generated embedded builtin plugin list was:
+
+- `builtin_maria_aria_plugin`
+- `builtin_maria_binlog_plugin`
+- `builtin_maria_csv_plugin`
+- `builtin_maria_heap_plugin`
+- `builtin_maria_mhnsw_plugin`
+- `builtin_maria_myisam_plugin`
+- `builtin_maria_myisammrg_plugin`
+- `builtin_maria_mysql_password_plugin`
+- `builtin_maria_online_alter_log_plugin`
+- `builtin_maria_sequence_plugin`
+- `builtin_maria_sql_sequence_plugin`
+- `builtin_maria_thread_pool_info_plugin`
+- `builtin_maria_type_geom_plugin`
+- `builtin_maria_type_inet_plugin`
+- `builtin_maria_type_uuid_plugin`
+- `builtin_maria_user_variables_plugin`
+- `builtin_maria_userstat_plugin`
+
+Aria, MyISAM, MyISAMMRG, HEAP, CSV, Sequence, SQL Sequence, Online Alter Log,
+and type/user plugins are still part of upstream's embedded baseline. Removing
+or replacing those belongs to later bootstrap and storage-engine slices, not to
+this build-profile slice.
+
 ## Acceptance Criteria
 
 - `vendor/mariadb/server/libmariadb/` contains the exact upstream Connector/C

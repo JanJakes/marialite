@@ -139,9 +139,18 @@ while replacing the server filesystem and bootstrap model.
 ## Development
 
 MyLite contains project documentation, workflow guidance, and a mechanical
-MariaDB Server 11.8.6 source import under `vendor/mariadb/server/`.
-Implementation work should keep MyLite changes narrow and separate from
-upstream source imports.
+MariaDB Server 11.8.6 source import under `vendor/mariadb/server/`. It also
+has a reproducible Linux-container build entry point for the current minimal
+embedded MariaDB baseline:
+
+```sh
+tools/build-mariadb-minsize.sh
+```
+
+That command builds `build/mariadb-minsize/libmysqld/libmariadbd.a` and writes
+`build/mariadb-minsize/mylite-build-report.txt` with toolchain, size, and
+static plugin evidence. Implementation work should keep MyLite changes narrow
+and separate from upstream source imports.
 
 Current design documents:
 
