@@ -25,6 +25,7 @@
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
+#include "mylite_schema.h"
 #include "discover.h"
 #include <my_dir.h>
 
@@ -130,7 +131,11 @@ int writefile(const char *path, const char *db, const char *table,
 
   if (unlikely((error= file < 0)))
   {
-    if (my_errno == ENOENT)
+    if (my_errno == ENOENT &&
+        mylite_schema_namespace_active() &&
+        mylite_schema_exists(db, strlen(db)))
+      error= 0;
+    else if (my_errno == ENOENT)
       my_error(ER_BAD_DB_ERROR, MYF(0), db);
     else
       my_error(ER_CANT_CREATE_TABLE, MYF(0), db, table, my_errno);
@@ -271,4 +276,3 @@ int ext_table_discovery_simple(MY_DIR *dirp,
   }
   return 0;
 }
-

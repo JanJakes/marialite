@@ -488,7 +488,7 @@ run_smoke_phase() {
   local tmpdir="${runtime_dir}/tmp"
 
   rm -rf "${runtime_dir}"
-  mkdir -p "${datadir}/mylite" "${tmpdir}"
+  mkdir -p "${datadir}" "${tmpdir}"
   rm -f "${smoke_log}" "${report}"
 
   local args=(
@@ -512,6 +512,9 @@ run_smoke_phase() {
     status=1
   fi
   if has_frm_artifacts "${runtime_dir}"; then
+    status=1
+  fi
+  if has_schema_directory_artifacts "${runtime_dir}"; then
     status=1
   fi
   return "${status}"
@@ -1564,6 +1567,14 @@ append_observed_files() {
     else
       printf "none\n"
     fi
+
+    printf "\n## Schema Directory Artifacts\n\n"
+    if has_schema_directory_artifacts "${runtime_dir}"; then
+      find "${runtime_dir}/datadir" -mindepth 1 -maxdepth 1 -type d \
+        \( -name "mylite" -o -name "mylite_schema" \) -printf "%P\n" | sort
+    else
+      printf "none\n"
+    fi
   } >> "${report}"
 }
 
@@ -1595,6 +1606,12 @@ append_catalog_files() {
 has_frm_artifacts() {
   local runtime_dir="$1"
   find "${runtime_dir}" -type f -name "*.frm" | grep -q .
+}
+
+has_schema_directory_artifacts() {
+  local runtime_dir="$1"
+  find "${runtime_dir}/datadir" -mindepth 1 -maxdepth 1 -type d \
+    \( -name "mylite" -o -name "mylite_schema" \) | grep -q .
 }
 
 main "$@"

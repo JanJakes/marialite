@@ -102,6 +102,13 @@ struct SmokeResult
   std::string truncate_key_lookup_id;
   std::string truncate_key_order_ids;
   std::string truncate_transaction_rows;
+  std::string schema_database;
+  std::string schema_current_database;
+  std::string schema_table;
+  std::string schema_table_count;
+  std::string schema_schemata_count;
+  std::string schema_information_table_count;
+  std::string schema_drop_error;
   std::string duplicate_key;
   std::string update_duplicate_key;
   std::string unsupported_reverse_key;
@@ -167,6 +174,13 @@ static int run_smoke(const SmokeOptions &options,
 static bool fetch_mylite_engine(MYSQL *mysql, SmokeResult *result);
 static bool fetch_discovered_table(MYSQL *mysql, SmokeResult *result);
 static bool fetch_probe_count(MYSQL *mysql, SmokeResult *result);
+static bool exercise_schema_namespace(MYSQL *mysql, SmokeResult *result);
+static bool exercise_schema_namespace_lifecycle(MYSQL *mysql,
+                                                SmokeResult *result,
+                                                bool drop_schema);
+static bool exercise_schema_namespace_reopen(MYSQL *mysql,
+                                             SmokeResult *result,
+                                             bool drop_schema);
 static bool exercise_ddl(MYSQL *mysql, SmokeResult *result);
 static bool exercise_dml(MYSQL *mysql, SmokeResult *result);
 static bool exercise_index_dml(MYSQL *mysql, SmokeResult *result);
@@ -361,6 +375,14 @@ static int run_smoke(const SmokeOptions &options,
   {
     result->phase= "table_scan";
     if (!fetch_probe_count(mysql, result))
+      goto done;
+  }
+
+  if (!lock_conflict_phase &&
+      options.persistence_phase == "none")
+  {
+    result->phase= "schema_namespace";
+    if (!exercise_schema_namespace(mysql, result))
       goto done;
   }
 
@@ -570,6 +592,206 @@ static bool fetch_probe_count(MYSQL *mysql, SmokeResult *result)
 
   mysql_free_result(res);
   return ok;
+}
+
+static bool exercise_schema_namespace(MYSQL *mysql, SmokeResult *result)
+{
+  return exercise_schema_namespace_lifecycle(mysql, result, true);
+}
+
+static bool exercise_schema_namespace_lifecycle(MYSQL *mysql,
+                                                SmokeResult *result,
+                                                bool drop_schema)
+{
+  if (!execute_statement(mysql, "DROP DATABASE IF EXISTS mylite_schema",
+                         "DROP stale schema namespace", result))
+    return false;
+  if (!execute_statement(mysql, "CREATE DATABASE mylite_schema",
+                         "CREATE schema namespace", result))
+    return false;
+  if (!fetch_single_value(mysql, "SHOW DATABASES LIKE 'mylite_schema'",
+                          "schema namespace database",
+                          &result->schema_database, result))
+    return false;
+  if (result->schema_database != "mylite_schema")
+  {
+    result->message= "schema namespace was not listed by SHOW DATABASES";
+    return false;
+  }
+
+  if (!execute_statement(mysql, "USE mylite_schema",
+                         "USE schema namespace", result))
+    return false;
+  if (!fetch_single_value(mysql, "SELECT DATABASE()",
+                          "current schema namespace",
+                          &result->schema_current_database, result))
+    return false;
+  if (result->schema_current_database != "mylite_schema")
+  {
+    result->message= "schema namespace was not selected by USE";
+    return false;
+  }
+
+  if (!execute_statement(mysql,
+                         "CREATE TABLE schema_table "
+                         "(id INT NOT NULL, note VARCHAR(12), "
+                         "PRIMARY KEY(id), KEY note_key(note)) "
+                         "ENGINE=MYLITE",
+                         "CREATE schema namespace table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO schema_table VALUES "
+                         "(1, 'one'), (2, 'two')",
+                         "INSERT schema namespace rows", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SHOW TABLES FROM mylite_schema "
+                          "LIKE 'schema_table'",
+                          "schema namespace table",
+                          &result->schema_table, result))
+    return false;
+  if (result->schema_table != "schema_table")
+  {
+    result->message= "schema namespace table was not listed by SHOW TABLES";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT COUNT(*) "
+                          "FROM mylite_schema.schema_table",
+                          "schema namespace table count",
+                          &result->schema_table_count, result))
+    return false;
+  if (result->schema_table_count != "2")
+  {
+    result->message= "schema namespace table count returned an unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT COUNT(*) "
+                          "FROM information_schema.SCHEMATA "
+                          "WHERE SCHEMA_NAME = 'mylite_schema'",
+                          "schema namespace information schema schemata",
+                          &result->schema_schemata_count, result))
+    return false;
+  if (result->schema_schemata_count != "1")
+  {
+    result->message= "schema namespace was not listed by I_S.SCHEMATA";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT COUNT(*) "
+                          "FROM information_schema.TABLES "
+                          "WHERE TABLE_SCHEMA = 'mylite_schema' "
+                          "AND TABLE_NAME = 'schema_table'",
+                          "schema namespace information schema tables",
+                          &result->schema_information_table_count, result))
+    return false;
+  if (result->schema_information_table_count != "1")
+  {
+    result->message= "schema namespace table was not listed by I_S.TABLES";
+    return false;
+  }
+
+  if (drop_schema)
+  {
+    if (!execute_statement(mysql, "DROP DATABASE mylite_schema",
+                           "DROP schema namespace", result))
+      return false;
+    if (!execute_statement_expect_error(mysql, "USE mylite_schema",
+                                        "USE dropped schema namespace",
+                                        &result->schema_drop_error, result))
+      return false;
+    return true;
+  }
+
+  return execute_statement(mysql, "USE mylite", "USE seed schema", result);
+}
+
+static bool exercise_schema_namespace_reopen(MYSQL *mysql,
+                                             SmokeResult *result,
+                                             bool drop_schema)
+{
+  if (!fetch_single_value(mysql, "SHOW DATABASES LIKE 'mylite_schema'",
+                          "reopened schema namespace database",
+                          &result->schema_database, result))
+    return false;
+  if (result->schema_database != "mylite_schema")
+  {
+    result->message= "reopened schema namespace was not listed";
+    return false;
+  }
+  if (!execute_statement(mysql, "USE mylite_schema",
+                         "USE reopened schema namespace", result))
+    return false;
+  if (!fetch_single_value(mysql, "SELECT DATABASE()",
+                          "reopened current schema namespace",
+                          &result->schema_current_database, result))
+    return false;
+  if (result->schema_current_database != "mylite_schema")
+  {
+    result->message= "reopened schema namespace was not selected";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SHOW TABLES FROM mylite_schema "
+                          "LIKE 'schema_table'",
+                          "reopened schema namespace table",
+                          &result->schema_table, result))
+    return false;
+  if (result->schema_table != "schema_table")
+  {
+    result->message= "reopened schema namespace table was not listed";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT COUNT(*) "
+                          "FROM mylite_schema.schema_table",
+                          "reopened schema namespace table count",
+                          &result->schema_table_count, result))
+    return false;
+  if (result->schema_table_count != "2")
+  {
+    result->message= "reopened schema namespace row count changed";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT COUNT(*) "
+                          "FROM information_schema.SCHEMATA "
+                          "WHERE SCHEMA_NAME = 'mylite_schema'",
+                          "reopened schema namespace schemata",
+                          &result->schema_schemata_count, result))
+    return false;
+  if (result->schema_schemata_count != "1")
+  {
+    result->message= "reopened schema namespace was not listed by I_S";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT COUNT(*) "
+                          "FROM information_schema.TABLES "
+                          "WHERE TABLE_SCHEMA = 'mylite_schema' "
+                          "AND TABLE_NAME = 'schema_table'",
+                          "reopened schema namespace tables",
+                          &result->schema_information_table_count, result))
+    return false;
+  if (result->schema_information_table_count != "1")
+  {
+    result->message= "reopened schema namespace table was not listed by I_S";
+    return false;
+  }
+  if (drop_schema)
+  {
+    if (!execute_statement(mysql, "DROP DATABASE mylite_schema",
+                           "DROP reopened schema namespace", result))
+      return false;
+    if (!execute_statement_expect_error(mysql, "USE mylite_schema",
+                                        "USE dropped reopened schema namespace",
+                                        &result->schema_drop_error, result))
+      return false;
+    return true;
+  }
+
+  return execute_statement(mysql, "USE mylite", "USE seed schema", result);
 }
 
 static bool exercise_ddl(MYSQL *mysql, SmokeResult *result)
@@ -2609,7 +2831,7 @@ static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result)
     return false;
   }
 
-  return true;
+  return exercise_schema_namespace_lifecycle(mysql, result, false);
 }
 
 static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result)
@@ -3104,7 +3326,8 @@ static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result)
         result))
     return false;
 
-  return true;
+  return exercise_schema_namespace_reopen(mysql, result,
+                                         result->phase == "persistence_read");
 }
 
 static bool exercise_recovery_latest(MYSQL *mysql, SmokeResult *result)
@@ -3946,6 +4169,23 @@ static void write_report(const SmokeOptions &options,
   if (!result.truncate_transaction_rows.empty())
     report << "truncate_transaction_rows="
            << result.truncate_transaction_rows << "\n";
+  if (!result.schema_database.empty())
+    report << "schema_database=" << result.schema_database << "\n";
+  if (!result.schema_current_database.empty())
+    report << "schema_current_database="
+           << result.schema_current_database << "\n";
+  if (!result.schema_table.empty())
+    report << "schema_table=" << result.schema_table << "\n";
+  if (!result.schema_table_count.empty())
+    report << "schema_table_count=" << result.schema_table_count << "\n";
+  if (!result.schema_schemata_count.empty())
+    report << "schema_schemata_count="
+           << result.schema_schemata_count << "\n";
+  if (!result.schema_information_table_count.empty())
+    report << "schema_information_table_count="
+           << result.schema_information_table_count << "\n";
+  if (!result.schema_drop_error.empty())
+    report << "schema_drop_error=" << result.schema_drop_error << "\n";
   if (!result.duplicate_key.empty())
     report << "duplicate_key=" << result.duplicate_key << "\n";
   if (!result.update_duplicate_key.empty())

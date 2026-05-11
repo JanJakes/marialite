@@ -24,6 +24,7 @@
 #include "unireg.h"
 #include "debug_sync.h"
 #include "sql_table.h"
+#include "mylite_schema.h"
 #include "sql_parse.h"                        // test_if_data_home_dir
 #include "sql_cache.h"                          // query_cache_*
 #include "sql_base.h"   // lock_table_names
@@ -5553,6 +5554,7 @@ mysql_rename_table(handlerton *base, const LEX_CSTRING *old_db,
   ulonglong save_bits= thd->variables.option_bits;
   int length;
   bool log_query= 0;
+  LEX_CSTRING *base_name= hton_name(base);
   DBUG_ENTER("mysql_rename_table");
   DBUG_ASSERT(base);
   DBUG_ASSERT(flags & (QRMT_FRM | QRMT_PAR | QRMT_HANDLER));
@@ -5587,6 +5589,12 @@ mysql_rename_table(handlerton *base, const LEX_CSTRING *old_db,
     to_base=   lc_to;
   }
 
+  const bool mylite_catalog_table=
+    mylite_schema_namespace_active() &&
+    strcasecmp(base_name->str, "MYLITE") == 0 &&
+    mylite_schema_exists(old_db->str, old_db->length) &&
+    mylite_schema_exists(new_db->str, new_db->length);
+
   if (!(flags & QRMT_HANDLER))
   {
     /*
@@ -5602,7 +5610,8 @@ mysql_rename_table(handlerton *base, const LEX_CSTRING *old_db,
   }
   else if (!file || likely(!(error=file->ha_rename_table(from_base, to_base))))
   {
-    if ((flags & QRMT_FRM) && unlikely(rename_file_ext(from, to, reg_ext)))
+    if ((flags & QRMT_FRM) && !mylite_catalog_table &&
+        unlikely(rename_file_ext(from, to, reg_ext)))
     {
       error=my_errno;
       if (file)
@@ -5640,7 +5649,8 @@ mysql_rename_table(handlerton *base, const LEX_CSTRING *old_db,
               file->ha_rename_table(idx_to, idx_from);
             }
             file->ha_rename_table(to_base, from_base);
-            rename_file_ext(to, from, reg_ext);
+            if (!mylite_catalog_table)
+              rename_file_ext(to, from, reg_ext);
             break;
           }
         }
@@ -5648,7 +5658,8 @@ mysql_rename_table(handlerton *base, const LEX_CSTRING *old_db,
       else
       {
         file->ha_rename_table(to_base, from_base);
-        rename_file_ext(to, from, reg_ext);
+        if (!mylite_catalog_table)
+          rename_file_ext(to, from, reg_ext);
         error= 1;
       }
     }

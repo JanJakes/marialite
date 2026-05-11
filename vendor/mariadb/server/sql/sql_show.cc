@@ -28,6 +28,7 @@
 #include "sql_table.h"                        // filename_to_tablename,
                                               // primary_key_name,
                                               // build_table_filename
+#include "mylite_schema.h"
 #include "sql_view.h"
 #include "repl_failsafe.h"
 #include "sql_parse.h"             // check_access, check_table_access
@@ -84,6 +85,26 @@ extern SYMBOL sql_functions[];
 extern size_t sql_functions_length;
 
 extern Native_func_registry_array native_func_registry_array;
+
+struct st_mylite_name_list
+{
+  THD *thd;
+  Dynamic_array<LEX_CSTRING*> *files;
+  const LEX_CSTRING *wild;
+  CHARSET_INFO *wild_charset;
+};
+
+static int mylite_append_schema_names(THD *thd,
+                                      Dynamic_array<LEX_CSTRING*> *files,
+                                      const LEX_CSTRING *wild);
+static int mylite_append_schema_table_names(
+    THD *thd, Dynamic_array<LEX_CSTRING*> *files,
+    const LEX_CSTRING *db_name, const LEX_CSTRING *wild);
+static bool mylite_append_name(const char *name, size_t length, void *ctx);
+static bool mylite_name_matches_wild(const char *name,
+                                     const LEX_CSTRING *wild,
+                                     CHARSET_INFO *wild_charset);
+static int mylite_report_name_list_error(int error);
 
 enum enum_i_s_events_fields
 {
@@ -4531,6 +4552,9 @@ static int make_db_list(THD *thd, Dynamic_array<LEX_CSTRING*> *files,
       if (files->append_val(&INFORMATION_SCHEMA_NAME))
         return 1;
     }
+    if (mylite_schema_namespace_active())
+      return mylite_append_schema_names(thd, files,
+                                        &lookup_field_vals->db_value);
     return find_files(thd, files, 0, mysql_data_home,
                       &lookup_field_vals->db_value);
   }
@@ -4570,6 +4594,8 @@ static int make_db_list(THD *thd, Dynamic_array<LEX_CSTRING*> *files,
   */
   if (files->append_val(&INFORMATION_SCHEMA_NAME))
     return 1;
+  if (mylite_schema_namespace_active())
+    return mylite_append_schema_names(thd, files, &null_clex_str);
   return find_files(thd, files, 0, mysql_data_home, &null_clex_str);
 }
 
@@ -4678,6 +4704,20 @@ make_table_name_list(THD *thd, Dynamic_array<LEX_CSTRING*> *table_names,
 {
   char path[FN_REFLEN + 1];
   build_table_filename(path, sizeof(path) - 1, db_name->str, "", "", 0);
+  const bool mylite_namespace= db_name != &INFORMATION_SCHEMA_NAME &&
+                               mylite_schema_namespace_active();
+  if (mylite_namespace &&
+      !mylite_schema_exists(db_name->str, db_name->length))
+  {
+    if (is_show_command(thd))
+    {
+      my_error(ER_BAD_DB_ERROR, MYF(0), db_name->str);
+      return 1;
+    }
+    thd->clear_error();
+    return 2;
+  }
+
   if (!lookup_field_vals->wild_table_value &&
       lookup_field_vals->table_value.str)
   {
@@ -4722,6 +4762,10 @@ make_table_name_list(THD *thd, Dynamic_array<LEX_CSTRING*> *table_names,
   if (!dbnorm.str)
     return 0; // Impossible TABLE_SCHEMA name
 
+  if (mylite_namespace)
+    return mylite_append_schema_table_names(
+      thd, table_names, db_name, &lookup_field_vals->table_value);
+
   find_files_result res= find_files(thd, table_names, &dbnorm, path,
                                     &lookup_field_vals->table_value);
   if (res != FIND_FILES_OK)
@@ -4742,6 +4786,59 @@ make_table_name_list(THD *thd, Dynamic_array<LEX_CSTRING*> *table_names,
     return 1;
   }
   return 0;
+}
+
+static int mylite_append_schema_names(THD *thd,
+                                      Dynamic_array<LEX_CSTRING*> *files,
+                                      const LEX_CSTRING *wild)
+{
+  st_mylite_name_list list= { thd, files, wild, system_charset_info };
+  return mylite_report_name_list_error(
+    mylite_for_each_schema(mylite_append_name, &list));
+}
+
+static int mylite_append_schema_table_names(
+    THD *thd, Dynamic_array<LEX_CSTRING*> *files,
+    const LEX_CSTRING *db_name, const LEX_CSTRING *wild)
+{
+  st_mylite_name_list list= { thd, files, wild, files_charset_info };
+  return mylite_report_name_list_error(
+    mylite_for_each_schema_table(db_name->str, db_name->length,
+                                 mylite_append_name, &list));
+}
+
+static bool mylite_append_name(const char *name, size_t length, void *ctx)
+{
+  st_mylite_name_list *list= static_cast<st_mylite_name_list *>(ctx);
+  if (!mylite_name_matches_wild(name, list->wild, list->wild_charset))
+    return false;
+
+  LEX_CSTRING *lex_name= list->thd->make_clex_string(name, length);
+  return !lex_name || list->files->append(lex_name);
+}
+
+static bool mylite_name_matches_wild(const char *name,
+                                     const LEX_CSTRING *wild,
+                                     CHARSET_INFO *wild_charset)
+{
+  if (!wild || !wild->str || !wild->str[0])
+    return true;
+  if (lower_case_table_names)
+    return !wild_case_compare(wild_charset, name, wild->str);
+  return !wild_compare(name, wild->str, 0);
+}
+
+static int mylite_report_name_list_error(int error)
+{
+  if (!error)
+    return 0;
+  if (error == HA_ERR_OUT_OF_MEM)
+    my_error(ER_OUT_OF_RESOURCES, MYF(0));
+  else if (error == HA_ERR_NO_SUCH_TABLE)
+    my_error(ER_BAD_DB_ERROR, MYF(0), "");
+  else
+    my_error(ER_GET_ERRNO, MYF(0), error, "MYLITE");
+  return 1;
 }
 
 
@@ -5715,6 +5812,8 @@ static bool verify_database_directory_exists(const LEX_CSTRING &dbname)
   MY_STAT stat_info;
   if (!dbname.str[0])
     DBUG_RETURN(true); // Empty database name: does not exist.
+  if (mylite_schema_namespace_active())
+    DBUG_RETURN(!mylite_schema_exists(dbname.str, dbname.length));
   path_len= build_table_filename(path, sizeof(path) - 1, dbname.str, "", "", 0);
   path[path_len - 1]= 0;
   if (!mysql_file_stat(key_file_misc, path, &stat_info, MYF(0)))

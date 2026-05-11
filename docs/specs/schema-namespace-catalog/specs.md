@@ -78,6 +78,14 @@ namespaces inside the `.mylite` file, not persistent directories next to it.
   database name parsed from MariaDB's handler path or `TABLE_SHARE`, so the
   table catalog can already address multiple schema names once schema
   existence is represented.
+- `sql/sql_table.cc:mysql_rename_table()` still renames `.frm` files during
+  MariaDB copy-ALTER and standalone index DDL swaps, so MyLite catalog schemas
+  need a narrow skip for those transient table-definition file renames when no
+  schema directory exists.
+- `sql/discover.cc:writefile()` writes discovered table definitions to `.frm`
+  files for inherited rediscovery paths. MyLite catalog schemas need a narrow
+  ENOENT success path so transient writes do not require a durable schema
+  directory.
 - `tools/run-storage-engine-smoke.sh:run_smoke_phase()` still creates
   `${datadir}/mylite`; this is the temporary compatibility artifact this slice
   should remove.
@@ -166,9 +174,19 @@ No public `libmylite` API changes.
 
 ## Binary-Size Impact
 
-Expected code-size impact is small: schema-vector bookkeeping, SQL-layer
-branching for active MyLite namespace, and additional smoke assertions. Record
-artifact sizes after implementation.
+Measured artifact sizes after implementation:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,439,936 bytes.
+- `build/mariadb-minsize/mylite/libmylite.a`: 87,206 bytes.
+- `build/mariadb-minsize/storage/mylite/libmylite_embedded.a`: 305,932 bytes.
+- `build/mariadb-minsize/mylite/mylite-storage-engine-smoke`: 22,842,408
+  bytes.
+- `build/mariadb-minsize/mylite/mylite-compatibility-smoke`: 22,776,248 bytes.
+
+The code-size impact is limited to schema-vector bookkeeping, SQL-layer
+branching for the active MyLite namespace, and additional smoke assertions. A
+deeper production-size investigation belongs in a later dedicated size/profile
+analysis, not this implementation slice.
 
 ## License, Trademark, And Dependency Impact
 
@@ -186,6 +204,55 @@ No new dependency. New code remains GPL-2.0-only.
   `datadir/mylite_schema`, or `.frm` artifacts.
 - Verify catalog write/read phases see the user schema and table before drop,
   and no longer see them after drop.
+
+## Implementation Result
+
+The implementation adds catalog-backed `SCHEMA` records and MyLite-owned schema
+helpers in `storage/mylite/ha_mylite.cc`, with declarations in
+`include/mylite_schema.h`. New catalog writes serialize explicit schema names,
+while loads still accept older pre-release catalog payloads without `SCHEMA`
+records by seeding `mylite` and deriving schema names from table definitions.
+
+`sql/sql_db.cc` routes MyLite `CREATE DATABASE`, `DROP DATABASE`, and `USE`
+checks through the catalog namespace when the MyLite storage engine is active.
+`sql/sql_show.cc` routes `SHOW DATABASES`, `SHOW TABLES`, and the relevant
+information-schema list builders through catalog enumeration for MyLite
+schemas. Table creation and rename paths require the owning MyLite catalog
+schema to exist.
+
+The inherited table-definition bridge still has narrow `.frm` compatibility
+touchpoints. `sql/sql_table.cc` skips transient `.frm` renames for MyLite
+catalog schemas during copy ALTER and standalone index DDL swaps, and
+`sql/discover.cc` treats `.frm` write ENOENT as success only for MyLite catalog
+schemas. Directory-backed engine behavior remains unchanged.
+
+The storage smoke now creates `mylite_schema`, uses it, creates
+`schema_table`, verifies `SHOW` and information-schema visibility, reopens the
+catalog in fresh processes, and drops the schema for the normal read phase. The
+wrapper no longer pre-creates `datadir/mylite` and fails if `datadir/mylite`,
+`datadir/mylite_schema`, or `.frm` artifacts appear.
+
+Verification completed:
+
+- `git diff --check`.
+- `bash -n tools/run-storage-engine-smoke.sh
+  tools/run-compatibility-test-harness.sh`.
+- `MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh`.
+- `MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh`.
+
+Report evidence:
+
+- `mylite-storage-engine-report.txt`: `status=0`,
+  `schema_database=mylite_schema`, `schema_table=schema_table`,
+  `schema_table_count=2`, `schema_schemata_count=1`,
+  `schema_information_table_count=1`, `schema_drop_error=rejected`,
+  `FRM Artifacts=none`, and `Schema Directory Artifacts=none`.
+- `mylite-catalog-write-report.txt` and `mylite-catalog-read-report.txt`:
+  schema namespace fields survive fresh-process persistence checks with no
+  schema directory artifacts.
+- `mylite-catalog-recovery-read-report.txt`: recovery fallback still exposes
+  the persisted schema namespace and reports `Schema Directory Artifacts=none`.
+- `mylite-compatibility-harness-report.txt`: all groups report `status=0`.
 
 ## Acceptance Criteria
 

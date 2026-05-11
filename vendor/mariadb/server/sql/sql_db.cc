@@ -27,6 +27,7 @@
 #include "sql_table.h"                   // build_table_filename,
                                          // filename_to_tablename
                                          // validate_comment_length
+#include "mylite_schema.h"
 #include "sql_rename.h"                  // mysql_rename_tables
 #include "sql_acl.h"                     // SELECT_ACL, DB_ACLS,
                                          // acl_get, check_grant_db
@@ -66,6 +67,8 @@ static void mysql_change_db_impl(THD *thd,
                                  CHARSET_INFO *new_db_charset);
 static bool mysql_rm_db_internal(THD *thd, const Lex_ident_db &db,
                                  bool if_exists, bool silent);
+static void mylite_report_schema_error(const char *operation,
+                                       const Lex_ident_db &db, int error);
 
 
 /* Database options hash */
@@ -768,11 +771,50 @@ mysql_create_db_internal(THD *thd, const Lex_ident_db &db,
   if (lock_schema_name(thd, dbnorm))
     DBUG_RETURN(-1);
 
+  long affected_rows= 1;
+  if (mylite_schema_namespace_active())
+  {
+    if (mylite_schema_exists(db.str, db.length))
+    {
+      if (options.or_replace())
+      {
+        int error= mylite_drop_schema(db.str, db.length, NULL);
+        if (error)
+        {
+          mylite_report_schema_error("drop", db, error);
+          DBUG_RETURN(-1);
+        }
+        thd->get_stmt_da()->reset_diagnostics_area();
+        affected_rows= 2;
+      }
+      else if (options.if_not_exists())
+      {
+        push_warning_printf(thd, Sql_condition::WARN_LEVEL_NOTE,
+                            ER_DB_CREATE_EXISTS,
+                            ER_THD(thd, ER_DB_CREATE_EXISTS), db.str);
+        affected_rows= 0;
+        goto not_silent;
+      }
+      else
+      {
+        my_error(ER_DB_CREATE_EXISTS, MYF(0), db.str);
+        DBUG_RETURN(-1);
+      }
+    }
+
+    int error= mylite_create_schema(db.str, db.length);
+    if (error)
+    {
+      mylite_report_schema_error("create", db, error);
+      DBUG_RETURN(-1);
+    }
+    goto log_command;
+  }
+
   /* Check directory */
   path_len= build_table_filename(path, sizeof(path) - 1, db.str, "", "", 0);
   path[path_len-1]= 0;                    // Remove last '/' from path
 
-  long affected_rows= 1;
   if (!mysql_file_stat(key_file_misc, path, &stat_info, MYF(0)))
   {
     // The database directory does not exist, or my_file_stat() failed
@@ -832,6 +874,7 @@ mysql_create_db_internal(THD *thd, const Lex_ident_db &db,
     thd->clear_error();
   }
 
+log_command:
   /* Log command to ddl log */
   backup_log_info ddl_log;
   bzero(&ddl_log, sizeof(ddl_log));
@@ -1062,7 +1105,7 @@ mysql_rm_db_internal(THD *thd, const Lex_ident_db &db, bool if_exists,
   ulong deleted_tables= 0;
   bool error= true, rm_mysql_schema;
   char	path[FN_REFLEN + 16];
-  MY_DIR *dirp;
+  MY_DIR *dirp= NULL;
   uint path_length;
   TABLE_LIST *tables= NULL;
   TABLE_LIST *table;
@@ -1076,6 +1119,35 @@ mysql_rm_db_internal(THD *thd, const Lex_ident_db &db, bool if_exists,
 
   if (lock_schema_name(thd, dbnorm))
     DBUG_RETURN(true);
+
+  if (mylite_schema_namespace_active())
+  {
+    if (!mylite_schema_exists(db.str, db.length))
+    {
+      if (!if_exists)
+      {
+        my_error(ER_DB_DROP_EXISTS, MYF(0), db.str);
+        DBUG_RETURN(true);
+      }
+      push_warning_printf(thd, Sql_condition::WARN_LEVEL_NOTE,
+                          ER_DB_DROP_EXISTS, ER_THD(thd, ER_DB_DROP_EXISTS),
+                          db.str);
+      error= false;
+      goto update_binlog;
+    }
+
+    unsigned long dropped_tables= 0;
+    const int schema_error=
+      mylite_drop_schema(db.str, db.length, &dropped_tables);
+    if (schema_error)
+    {
+      mylite_report_schema_error("drop", db, schema_error);
+      goto exit;
+    }
+    deleted_tables= dropped_tables;
+    error= false;
+    goto update_binlog;
+  }
 
   path_length= build_table_filename(path, sizeof(path) - 1, db.str, "", "", 0);
 
@@ -1314,8 +1386,39 @@ exit:
     thd->session_tracker.current_schema.mark_as_changed(thd);
   }
 end:
-  my_dirend(dirp);
+  if (dirp)
+    my_dirend(dirp);
   DBUG_RETURN(error);
+}
+
+static void mylite_report_schema_error(const char *operation,
+                                       const Lex_ident_db &db, int error)
+{
+  switch (error)
+  {
+  case HA_ERR_OUT_OF_MEM:
+    my_error(ER_OUT_OF_RESOURCES, MYF(0));
+    return;
+  case HA_ERR_TABLE_READONLY:
+    my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "--mylite-read-only");
+    return;
+  case HA_ERR_UNSUPPORTED:
+    my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0),
+             "built-in MyLite schema");
+    return;
+  case HA_ERR_TABLE_EXIST:
+    my_error(ER_DB_CREATE_EXISTS, MYF(0), db.str);
+    return;
+  case HA_ERR_NO_SUCH_TABLE:
+    my_error(ER_DB_DROP_EXISTS, MYF(0), db.str);
+    return;
+  default:
+    if (!strcmp(operation, "create"))
+      my_error(ER_CANT_CREATE_DB, MYF(0), db.str, error);
+    else
+      my_error(ER_GET_ERRNO, MYF(0), error, "MYLITE");
+    return;
+  }
 }
 
 
@@ -2138,6 +2241,9 @@ bool check_db_dir_existence(const char *db_name)
 {
   char db_dir_path[FN_REFLEN + 1];
   uint db_dir_path_len;
+
+  if (mylite_schema_namespace_active())
+    return !mylite_schema_exists(db_name, strlen(db_name));
 
   if (dbname_cache->contains(db_name))
     return 0;

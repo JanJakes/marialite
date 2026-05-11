@@ -313,7 +313,8 @@ generations recoverable after a later generation is rejected or corrupted.
 
 ## Schemas
 
-MariaDB's `database.table` model should map to namespaces inside the catalog:
+MariaDB's `database.table` model now maps MyLite schemas to namespaces inside
+the catalog:
 
 ```text
 schema_id -> schema name
@@ -321,8 +322,24 @@ table_id -> schema_id + table name
 index_id -> table_id + index name
 ```
 
-No persistent directory should be created for a schema. `CREATE DATABASE`,
-`DROP DATABASE`, `USE`, and table-name resolution become catalog operations.
+No persistent directory is created for a MyLite schema. The current catalog
+payload stores explicit `SCHEMA` records, while the loader still accepts older
+pre-release catalog generations by seeding `mylite` and deriving schema names
+from table definitions.
+
+In the embedded MyLite namespace, `CREATE DATABASE`, `DROP DATABASE`, `USE`,
+`SHOW DATABASES`, `SHOW TABLES`, and the relevant `information_schema.SCHEMATA`
+and `information_schema.TABLES` list paths use catalog helpers instead of
+datadir directory scans. Empty schemas persist because their names are catalog
+records, not inferred from table directories.
+
+The built-in `mylite` schema and `mylite.probe` table remain bootstrap
+artifacts for current smoke coverage, and dropping the seed schema is still
+unsupported. The inherited table-definition bridge still has narrow transient
+`.frm` compatibility paths for copy ALTER, standalone index DDL, and table
+discovery. MyLite skips those transient `.frm` writes or renames only for
+catalog schemas that do not have directories; the final normalized metadata
+catalog remains a later design.
 
 ## System schema
 

@@ -117,7 +117,10 @@ now start the process-scoped runtime in read-only mode, take a shared advisory
 lock on the primary file, allow reads of existing MyLite rows, and reject
 MyLite DDL/DML mutations with public `MYLITE_READONLY` diagnostics.
 `MYLITE_OPEN_EXCLUSIVE` now supports create-or-fail primary-file opens for the
-documented read-write create combination.
+documented read-write create combination. MyLite schema names now persist as
+catalog records, and embedded `CREATE DATABASE`, `DROP DATABASE`, `USE`,
+`SHOW DATABASES`, `SHOW TABLES`, and relevant information-schema list paths
+operate on the catalog namespace without requiring durable schema directories.
 
 ## Implementation plan
 
@@ -171,7 +174,7 @@ documented read-write create combination.
 | 45 | `temporary-table-rejection` | Done | Prove `CREATE TEMPORARY TABLE ... ENGINE=MYLITE` fails without creating durable MyLite catalog entries. |
 | 46 | `standalone-index-ddl-lifecycle` | Done | Prove standalone `CREATE INDEX` and `DROP INDEX` preserve MyLite rows, catalog metadata, and durable index roots. |
 | 47 | `truncate-table-lifecycle` | Done | Implement handler-based `TRUNCATE TABLE` for supported MyLite tables, clearing rows and indexes while resetting autoincrement state. |
-| 48 | `schema-namespace-catalog` | In progress | Persist MyLite schema names in the catalog and route schema namespace operations without datadir directories. |
+| 48 | `schema-namespace-catalog` | Done | Persist MyLite schema names in the catalog and route schema namespace operations without datadir directories. |
 
 ## Size and profile direction
 

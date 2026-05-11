@@ -10,6 +10,7 @@
 #include "field.h"
 #include "ha_mylite.h"
 #include "key.h"
+#include "mylite_schema.h"
 #include "sql_class.h"
 #include "table.h"
 
@@ -67,6 +68,11 @@ struct Mylite_free_page_range
   uint64_t page_count;
 };
 
+struct Mylite_schema_definition
+{
+  std::string name;
+};
+
 struct Mylite_table_definition
 {
   std::string db;
@@ -87,6 +93,7 @@ struct Mylite_table_definition
 struct Mylite_transaction_snapshot
 {
   bool active;
+  std::vector<Mylite_schema_definition> schemas;
   std::vector<Mylite_table_definition> catalog;
   std::vector<Mylite_free_page_range> pending_free_page_ranges;
 };
@@ -265,6 +272,15 @@ static bool mylite_table_definition_exists(const char *db, size_t db_length,
 static Mylite_table_definition *mylite_find_table_definition_locked(
     const char *db, size_t db_length, const char *table_name,
     size_t table_name_length);
+static bool mylite_schema_exists_locked(const char *name, size_t length);
+static bool mylite_schema_name_is_seed(const char *name, size_t length);
+static bool mylite_add_schema_locked(
+    std::vector<Mylite_schema_definition> *schemas, const std::string &name);
+static bool mylite_derive_schema_names_locked(
+    std::vector<Mylite_schema_definition> *schemas,
+    const std::vector<Mylite_table_definition> &catalog);
+static Mylite_schema_definition *mylite_find_schema_definition_locked(
+    const char *name, size_t length);
 static bool mylite_parse_table_path(const char *path, std::string *db,
                                     std::string *table_name);
 static bool mylite_ensure_catalog_loaded_locked();
@@ -296,11 +312,13 @@ static void mylite_set_catalog_errno_error();
 static int mylite_catalog_error_code();
 static bool mylite_catalog_read_only();
 static void mylite_clear_frm_definitions_locked();
+static void mylite_reset_schema_catalog_locked();
 static bool mylite_load_catalog_locked();
 static bool mylite_ensure_catalog_file_locked();
 static void mylite_release_catalog_file_locked();
 static bool mylite_load_catalog_generation_locked(
     int fd, const Mylite_catalog_header &header,
+    std::vector<Mylite_schema_definition> *schemas,
     std::vector<Mylite_table_definition> *loaded,
     std::vector<Mylite_free_page_range> *free_ranges);
 static bool mylite_load_row_payloads_locked(
@@ -357,13 +375,18 @@ static std::string mylite_serialize_catalog_locked();
 static std::string mylite_serialize_free_page_payload_locked(
     const std::vector<Mylite_free_page_range> &free_ranges);
 static bool mylite_parse_catalog_payload_locked(
-    const std::string &content, std::vector<Mylite_table_definition> *loaded,
+    const std::string &content,
+    std::vector<Mylite_schema_definition> *schemas,
+    std::vector<Mylite_table_definition> *loaded,
     std::vector<Mylite_free_page_range> *free_ranges);
 static bool mylite_parse_free_page_payload_locked(
     const std::string &content,
     std::vector<Mylite_free_page_range> *free_ranges);
 static bool mylite_parse_freepage_payload_record_locked(
     const std::string &line, std::vector<Mylite_free_page_range> *free_ranges);
+static bool mylite_parse_schema_payload_record_locked(
+    const std::string &line,
+    std::vector<Mylite_schema_definition> *schemas);
 static bool mylite_parse_table_payload_record_locked(
     const std::string &line, std::vector<Mylite_table_definition> *loaded);
 static bool mylite_parse_next_rowid_payload_record_locked(
@@ -379,6 +402,9 @@ static bool mylite_parse_row_payload_record_locked(
 static bool mylite_catalog_contains_definition(
     const std::vector<Mylite_table_definition> &catalog,
     const std::string &db, const std::string &table_name);
+static bool mylite_catalog_contains_schema(
+    const std::vector<Mylite_schema_definition> &schemas,
+    const std::string &name);
 static Mylite_table_definition *mylite_find_table_definition_in_catalog(
     std::vector<Mylite_table_definition> *catalog, const std::string &db,
     const std::string &table_name);
@@ -558,6 +584,9 @@ static Mylite_catalog_header mylite_loaded_catalog_header=
   { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static std::vector<Mylite_free_page_range> mylite_free_page_ranges;
 static std::vector<Mylite_free_page_range> mylite_pending_free_page_ranges;
+static std::vector<Mylite_schema_definition> mylite_schema_catalog= {
+  { mylite_seed_db }
+};
 static std::vector<Mylite_table_definition> mylite_catalog= {
   { mylite_seed_db, mylite_seed_table, mylite_seed_sql, std::vector<uchar>(),
     1, 0, 0, 0, 0, 0, false, std::vector<Mylite_row>(),
@@ -837,6 +866,186 @@ static bool mylite_table_definition_exists(const char *db, size_t db_length,
 
   return mylite_find_table_definition_locked(db, db_length, table_name,
                                              table_name_length) != nullptr;
+}
+
+bool mylite_schema_namespace_active()
+{
+  return mylite_hton != nullptr;
+}
+
+bool mylite_schema_exists(const char *name, size_t length)
+{
+  if (!name || length == 0)
+    return false;
+
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return false;
+
+  return mylite_schema_exists_locked(name, length);
+}
+
+int mylite_create_schema(const char *name, size_t length)
+{
+  if (!name || length == 0)
+    return HA_ERR_WRONG_COMMAND;
+
+  std::string schema_name;
+  try
+  {
+    schema_name.assign(name, length);
+  }
+  catch (const std::bad_alloc &)
+  {
+    return HA_ERR_OUT_OF_MEM;
+  }
+
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return mylite_catalog_error_code();
+  if (mylite_catalog_read_only())
+    return HA_ERR_TABLE_READONLY;
+  if (mylite_schema_exists_locked(schema_name.c_str(), schema_name.length()))
+    return HA_ERR_TABLE_EXIST;
+
+  std::vector<Mylite_schema_definition> before;
+  try
+  {
+    before= mylite_schema_catalog;
+  }
+  catch (const std::bad_alloc &)
+  {
+    return HA_ERR_OUT_OF_MEM;
+  }
+
+  if (!mylite_add_schema_locked(&mylite_schema_catalog, schema_name))
+    return HA_ERR_OUT_OF_MEM;
+
+  const int error= mylite_flush_catalog_locked();
+  if (error)
+    mylite_schema_catalog= before;
+  return error;
+}
+
+int mylite_drop_schema(const char *name, size_t length,
+                       unsigned long *dropped_tables)
+{
+  if (dropped_tables)
+    *dropped_tables= 0;
+  if (!name || length == 0)
+    return HA_ERR_NO_SUCH_TABLE;
+  if (mylite_schema_name_is_seed(name, length))
+    return HA_ERR_UNSUPPORTED;
+
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return mylite_catalog_error_code();
+  if (mylite_catalog_read_only())
+    return HA_ERR_TABLE_READONLY;
+
+  Mylite_schema_definition *schema=
+    mylite_find_schema_definition_locked(name, length);
+  if (!schema)
+    return HA_ERR_NO_SUCH_TABLE;
+
+  std::string schema_name;
+  std::vector<Mylite_schema_definition> schemas_before;
+  std::vector<Mylite_table_definition> catalog_before;
+  std::vector<Mylite_free_page_range> pending_before;
+  try
+  {
+    schema_name.assign(name, length);
+    schemas_before= mylite_schema_catalog;
+    catalog_before= mylite_catalog;
+    pending_before= mylite_pending_free_page_ranges;
+  }
+  catch (const std::bad_alloc &)
+  {
+    return HA_ERR_OUT_OF_MEM;
+  }
+
+  unsigned long removed= 0;
+
+  for (const Mylite_table_definition &definition : mylite_catalog)
+  {
+    if (definition.db == schema_name)
+    {
+      if (!mylite_collect_definition_payload_ranges_locked(
+            definition, &mylite_pending_free_page_ranges))
+      {
+        mylite_pending_free_page_ranges= pending_before;
+        return HA_ERR_CRASHED;
+      }
+      ++removed;
+    }
+  }
+
+  mylite_catalog.erase(
+    std::remove_if(mylite_catalog.begin(), mylite_catalog.end(),
+                   [&schema_name](const Mylite_table_definition &definition) {
+                     return definition.db == schema_name;
+                   }),
+    mylite_catalog.end());
+  mylite_schema_catalog.erase(
+    std::remove_if(mylite_schema_catalog.begin(), mylite_schema_catalog.end(),
+                   [&schema_name](const Mylite_schema_definition &definition) {
+                     return definition.name == schema_name;
+                   }),
+    mylite_schema_catalog.end());
+
+  const int error= mylite_flush_catalog_locked();
+  if (error)
+  {
+    mylite_schema_catalog= schemas_before;
+    mylite_catalog= catalog_before;
+    mylite_pending_free_page_ranges= pending_before;
+    return error;
+  }
+
+  if (dropped_tables)
+    *dropped_tables= removed;
+  return 0;
+}
+
+int mylite_for_each_schema(mylite_name_callback callback, void *ctx)
+{
+  if (!callback)
+    return HA_ERR_WRONG_COMMAND;
+
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return mylite_catalog_error_code();
+
+  for (const Mylite_schema_definition &definition : mylite_schema_catalog)
+  {
+    if (callback(definition.name.c_str(), definition.name.length(), ctx))
+      return HA_ERR_OUT_OF_MEM;
+  }
+  return 0;
+}
+
+int mylite_for_each_schema_table(const char *schema_name,
+                                 size_t schema_length,
+                                 mylite_name_callback callback, void *ctx)
+{
+  if (!schema_name || schema_length == 0 || !callback)
+    return HA_ERR_WRONG_COMMAND;
+
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return mylite_catalog_error_code();
+  if (!mylite_schema_exists_locked(schema_name, schema_length))
+    return HA_ERR_NO_SUCH_TABLE;
+
+  for (const Mylite_table_definition &definition : mylite_catalog)
+  {
+    if (definition.db.length() == schema_length &&
+        std::strncmp(definition.db.c_str(), schema_name, schema_length) == 0 &&
+        callback(definition.table_name.c_str(),
+                 definition.table_name.length(), ctx))
+      return HA_ERR_OUT_OF_MEM;
+  }
+  return 0;
 }
 
 ha_mylite::ha_mylite(handlerton *hton, TABLE_SHARE *table_arg)
@@ -1275,6 +1484,9 @@ static int mylite_store_table_definition(const char *path, const TABLE *table,
   if (!mylite_ensure_catalog_loaded_locked())
     return mylite_catalog_error_code();
 
+  if (!mylite_schema_exists_locked(db.c_str(), db.length()))
+    return HA_ERR_NO_SUCH_TABLE;
+
   if (mylite_find_table_definition_locked(db.c_str(), db.length(),
                                           table_name.c_str(),
                                           table_name.length()))
@@ -1352,6 +1564,9 @@ static int mylite_rename_table_definition(const char *from, const char *to)
   std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
   if (!mylite_ensure_catalog_loaded_locked())
     return mylite_catalog_error_code();
+
+  if (!mylite_schema_exists_locked(to_db.c_str(), to_db.length()))
+    return HA_ERR_NO_SUCH_TABLE;
 
   if (mylite_find_table_definition_locked(to_db.c_str(), to_db.length(),
                                           to_table.c_str(), to_table.length()))
@@ -2512,6 +2727,67 @@ static Mylite_table_definition *mylite_find_table_definition_locked(
   return nullptr;
 }
 
+static bool mylite_schema_exists_locked(const char *name, size_t length)
+{
+  return mylite_find_schema_definition_locked(name, length) != nullptr;
+}
+
+static bool mylite_schema_name_is_seed(const char *name, size_t length)
+{
+  return name && length == sizeof(mylite_seed_db) - 1 &&
+         std::strncmp(name, mylite_seed_db, length) == 0;
+}
+
+static bool mylite_add_schema_locked(
+    std::vector<Mylite_schema_definition> *schemas, const std::string &name)
+{
+  if (name.empty() || mylite_catalog_contains_schema(*schemas, name))
+    return false;
+
+  try
+  {
+    Mylite_schema_definition schema;
+    schema.name= name;
+    schemas->push_back(schema);
+  }
+  catch (const std::bad_alloc &)
+  {
+    return false;
+  }
+
+  return true;
+}
+
+static bool mylite_derive_schema_names_locked(
+    std::vector<Mylite_schema_definition> *schemas,
+    const std::vector<Mylite_table_definition> &catalog)
+{
+  for (const Mylite_table_definition &definition : catalog)
+  {
+    if (!definition.db.empty() &&
+        !mylite_catalog_contains_schema(*schemas, definition.db) &&
+        !mylite_add_schema_locked(schemas, definition.db))
+      return false;
+  }
+  return true;
+}
+
+static Mylite_schema_definition *mylite_find_schema_definition_locked(
+    const char *name, size_t length)
+{
+  if (!name)
+    return nullptr;
+
+  for (Mylite_schema_definition &definition : mylite_schema_catalog)
+  {
+    if (definition.name.length() == length &&
+        std::strncmp(definition.name.c_str(), name, length) == 0)
+      return &definition;
+  }
+
+  return nullptr;
+}
+
 static bool mylite_parse_table_path(const char *path, std::string *db,
                                     std::string *table_name)
 {
@@ -2669,6 +2945,7 @@ static bool mylite_capture_snapshot_locked(
 {
   try
   {
+    snapshot->schemas= mylite_schema_catalog;
     snapshot->catalog= mylite_catalog;
     snapshot->pending_free_page_ranges= mylite_pending_free_page_ranges;
     snapshot->active= true;
@@ -2686,6 +2963,7 @@ static void mylite_restore_snapshot_locked(
 {
   if (!snapshot.active)
     return;
+  mylite_schema_catalog= snapshot.schemas;
   mylite_catalog= snapshot.catalog;
   mylite_pending_free_page_ranges= snapshot.pending_free_page_ranges;
 }
@@ -2693,6 +2971,7 @@ static void mylite_restore_snapshot_locked(
 static void mylite_clear_snapshot(Mylite_transaction_snapshot *snapshot)
 {
   snapshot->active= false;
+  snapshot->schemas.clear();
   snapshot->catalog.clear();
   snapshot->pending_free_page_ranges.clear();
 }
@@ -2773,6 +3052,7 @@ static bool mylite_catalog_read_only()
 
 static void mylite_clear_frm_definitions_locked()
 {
+  mylite_reset_schema_catalog_locked();
   for (std::vector<Mylite_table_definition>::iterator it=
          mylite_catalog.begin(); it != mylite_catalog.end();)
   {
@@ -2781,6 +3061,14 @@ static void mylite_clear_frm_definitions_locked()
     else
       ++it;
   }
+}
+
+static void mylite_reset_schema_catalog_locked()
+{
+  mylite_schema_catalog.clear();
+  Mylite_schema_definition schema;
+  schema.name= mylite_seed_db;
+  mylite_schema_catalog.push_back(schema);
 }
 
 static bool mylite_ensure_catalog_file_locked()
@@ -2876,12 +3164,14 @@ static bool mylite_load_catalog_locked()
     bool found= false;
     for (const Mylite_catalog_header &header : headers)
     {
+      std::vector<Mylite_schema_definition> loaded_schemas;
       std::vector<Mylite_table_definition> loaded;
       std::vector<Mylite_free_page_range> free_ranges;
-      if (!mylite_load_catalog_generation_locked(fd, header, &loaded,
-                                                 &free_ranges))
+      if (!mylite_load_catalog_generation_locked(fd, header, &loaded_schemas,
+                                                 &loaded, &free_ranges))
         continue;
 
+      mylite_schema_catalog.swap(loaded_schemas);
       mylite_catalog.swap(loaded);
       mylite_free_page_ranges.swap(free_ranges);
       mylite_pending_free_page_ranges.clear();
@@ -2905,12 +3195,14 @@ done:
 
 static bool mylite_load_catalog_generation_locked(
     int fd, const Mylite_catalog_header &header,
+    std::vector<Mylite_schema_definition> *schemas,
     std::vector<Mylite_table_definition> *loaded,
     std::vector<Mylite_free_page_range> *free_ranges)
 {
   std::string content;
   if (!mylite_read_catalog_payload(fd, header, &content) ||
-      !mylite_parse_catalog_payload_locked(content, loaded, free_ranges))
+      !mylite_parse_catalog_payload_locked(content, schemas, loaded,
+                                           free_ranges))
     return false;
 
   if (header.format_version >= mylite_catalog_format_version)
@@ -3881,6 +4173,15 @@ static std::string mylite_serialize_catalog_with_free_ranges_locked(
     content.push_back('\n');
   }
 
+  for (const Mylite_schema_definition &schema : mylite_schema_catalog)
+  {
+    content.append("SCHEMA\t");
+    content.append(mylite_hex_encode(
+      reinterpret_cast<const uchar *>(schema.name.data()),
+      schema.name.length()));
+    content.push_back('\n');
+  }
+
   for (const Mylite_table_definition &definition : mylite_catalog)
   {
     if (definition.frm_image.empty())
@@ -4033,7 +4334,9 @@ static bool mylite_parse_free_page_payload_locked(
 }
 
 static bool mylite_parse_catalog_payload_locked(
-    const std::string &content, std::vector<Mylite_table_definition> *loaded,
+    const std::string &content,
+    std::vector<Mylite_schema_definition> *schemas,
+    std::vector<Mylite_table_definition> *loaded,
     std::vector<Mylite_free_page_range> *free_ranges)
 {
   std::istringstream input(content);
@@ -4045,6 +4348,7 @@ static bool mylite_parse_catalog_payload_locked(
     return false;
   }
 
+  schemas->clear();
   loaded->clear();
   free_ranges->clear();
   for (const Mylite_table_definition &definition : mylite_catalog)
@@ -4061,6 +4365,12 @@ static bool mylite_parse_catalog_payload_locked(
     if (line.compare(0, 9, "FREEPAGE\t") == 0)
     {
       if (!mylite_parse_freepage_payload_record_locked(line, free_ranges))
+        return false;
+      continue;
+    }
+    if (line.compare(0, 7, "SCHEMA\t") == 0)
+    {
+      if (!mylite_parse_schema_payload_record_locked(line, schemas))
         return false;
       continue;
     }
@@ -4106,7 +4416,11 @@ static bool mylite_parse_catalog_payload_locked(
     return false;
   }
 
-  return true;
+  if (!mylite_catalog_contains_schema(*schemas, mylite_seed_db) &&
+      !mylite_add_schema_locked(schemas, mylite_seed_db))
+    return false;
+
+  return mylite_derive_schema_names_locked(schemas, *loaded);
 }
 
 static bool mylite_parse_freepage_payload_record_locked(
@@ -4134,6 +4448,41 @@ static bool mylite_parse_freepage_payload_record_locked(
       !mylite_add_free_page_range_locked(page_id, page_count, free_ranges))
   {
     sql_print_error("MyLite: invalid free page encoding in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  return true;
+}
+
+static bool mylite_parse_schema_payload_record_locked(
+    const std::string &line,
+    std::vector<Mylite_schema_definition> *schemas)
+{
+  const std::string::size_type first= line.find('\t');
+
+  if (first == std::string::npos || line.substr(0, first) != "SCHEMA")
+  {
+    sql_print_error("MyLite: invalid catalog schema record in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  std::vector<uchar> schema_bytes;
+  if (!mylite_hex_decode(line.substr(first + 1), &schema_bytes) ||
+      schema_bytes.empty())
+  {
+    sql_print_error("MyLite: invalid catalog schema encoding in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  const std::string schema_name(
+    reinterpret_cast<const char *>(schema_bytes.data()), schema_bytes.size());
+  if (mylite_catalog_contains_schema(*schemas, schema_name) ||
+      !mylite_add_schema_locked(schemas, schema_name))
+  {
+    sql_print_error("MyLite: duplicate catalog schema in %s",
                     mylite_catalog_file);
     return false;
   }
@@ -4551,6 +4900,18 @@ static bool mylite_catalog_contains_definition(
   for (const Mylite_table_definition &definition : catalog)
   {
     if (definition.db == db && definition.table_name == table_name)
+      return true;
+  }
+  return false;
+}
+
+static bool mylite_catalog_contains_schema(
+    const std::vector<Mylite_schema_definition> &schemas,
+    const std::string &name)
+{
+  for (const Mylite_schema_definition &definition : schemas)
+  {
+    if (definition.name == name)
       return true;
   }
   return false;
