@@ -40,9 +40,10 @@ page chains under a v2 two-header publication format instead of raw
 arbitrary-length blobs, and simple row images now live in typed per-table row
 payload page chains addressed through catalog `ROWPAGE` roots.
 
-The next implementation step should keep reducing the raw-record bridge,
-starting with a real row-page layout, slot directory, and page-local free-space
-model before durable index pages are added.
+The active implementation step is `row-slot-storage`, which should keep
+reducing the raw-record bridge by replacing table-sized row payload streams
+with page-local row records, slot directories, and first free-space accounting
+before durable index pages are added.
 
 ## Implementation plan
 
@@ -64,7 +65,7 @@ model before durable index pages are added.
 | 13 | `compatibility-test-harness` | Done | Run embedded lifecycle, unexpected-sidecar detection, crash/reopen, and MariaDB comparison tests in repeatable groups. |
 | 14 | `pager-page-store` | Done | Add the first reusable MyLite page-store layer for catalog payloads, row pages, future index pages, and free-space tracking. |
 | 15 | `row-page-storage` | Done | Move simple row images from the logical catalog payload into typed row pages addressed through table catalog roots. |
-| 16 | `row-slot-storage` | Planned | Replace table-sized row payload streams with page-local row records, slot directories, and first free-space accounting. |
+| 16 | `row-slot-storage` | In progress | Replace table-sized row payload streams with page-local row records, slot directories, and first free-space accounting. |
 
 ## Size and profile direction
 
