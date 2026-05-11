@@ -120,6 +120,7 @@ MyLite DDL/DML mutations with public `MYLITE_READONLY` diagnostics.
 | 32 | `libmylite-parameter-binding` | Done | Add the first public prepared-statement parameter binding API for NULL, numeric, text, and BLOB values. |
 | 33 | `libmylite-warning-enumeration` | Done | Add structured warning, note, and error-condition retrieval through the public `libmylite` handle. |
 | 34 | `libmylite-readonly-open` | Done | Enforce `MYLITE_OPEN_READONLY` through runtime startup, storage-engine locking, and public read-only diagnostics. |
+| 35 | `libmylite-exclusive-open` | In progress | Support `MYLITE_OPEN_EXCLUSIVE` for create-or-fail primary-file opens. |
 
 ## Size and profile direction
 
