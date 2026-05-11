@@ -188,4 +188,44 @@ MariaDB-derived source files.
 
 ## Implementation Result
 
-Pending.
+Implemented.
+
+The existing MyLite handler paths already supported MariaDB's copy-ALTER
+sequence for the current row/key subset. The implementation added release-gate
+smoke coverage rather than a storage code change:
+
+- same-process populated copy ALTER with fixed fields, nullable secondary key,
+  BLOB/TEXT payloads, BLOB/TEXT prefix key, added-column defaults, rebuilt
+  index reads, and post-ALTER autoincrement insert;
+- persisted populated copy ALTER with fresh-process reopen checks for copied
+  rows, rebuilt indexes, nullable index lookup, BLOB/TEXT prefix lookup, and
+  autoincrement state.
+
+Verification on 2026-05-11:
+
+- `MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh`
+- `MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh`
+- `MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh`
+- `MYLITE_BUILD_JOBS=8 tools/run-embedded-bootstrap-smoke.sh`
+- `bash -n tools/run-compatibility-test-harness.sh tools/run-storage-engine-smoke.sh tools/run-libmylite-open-close-smoke.sh tools/run-embedded-bootstrap-smoke.sh tools/build-mariadb-minsize.sh`
+- `git diff --check`
+
+Observed report evidence:
+
+- `copy_alter_rows=1:beta:12:2:active,2:NULL:12:2:active,3:alpha:13:2:active`
+- `copy_alter_note_order_ids=2,3,1`
+- `copy_alter_null_note_ids=2`
+- `copy_alter_payload_lookup_id=3`
+- `copy_alter_autoincrement_id=4`
+- `persisted_copy_alter_rows=1:beta:12:2:active,2:NULL:12:2:active,3:alpha:13:2:active,4:gamma:13:2:active`
+- `persisted_copy_alter_note_order_ids=2,3,1,4`
+- `persisted_copy_alter_null_note_ids=2`
+- `persisted_copy_alter_payload_lookup_id=3`
+- `persisted_copy_alter_autoincrement_id=4`
+
+Measured `MinSizeRel` artifacts after the storage-smoke build:
+
+- `build/mariadb-minsize/mylite/libmylite.a`: 87,206 bytes.
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,417,706 bytes.
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 571 archive objects.
+- Dynamic plugin artifacts: none.

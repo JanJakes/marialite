@@ -34,8 +34,10 @@ binding for NULL, numeric, text, and BLOB values. The first static
 The engine can discover the seed table `mylite.probe`, run a bounded `CREATE`,
 copy `ALTER`, `RENAME`, and `DROP` lifecycle without leaving durable `.frm`
 table-definition files, persist frm-backed table definitions in the primary
-`.mylite` file across fresh embedded processes, and recover the previous valid
-catalog generation when the latest append-only catalog payload is corrupted.
+`.mylite` file across fresh embedded processes, prove populated copy `ALTER`
+preserves supported rows, BLOB/TEXT payloads, rebuilt indexes, nullable keys,
+and autoincrement state, and recover the previous valid catalog generation
+when the latest append-only catalog payload is corrupted.
 It can store simple non-BLOB rows, enforce supported primary and unique keys,
 serve basic ordered index access, and persist table-local autoincrement state
 in the `.mylite` payload. A grouped compatibility harness now runs the embedded
@@ -132,7 +134,7 @@ documented read-write create combination.
 | 35 | `libmylite-exclusive-open` | Done | Support `MYLITE_OPEN_EXCLUSIVE` for create-or-fail primary-file opens. |
 | 36 | `blob-text-key-storage` | Done | Support non-null BLOB/TEXT prefix key parts in the current row and index storage bridge. |
 | 37 | `nullable-key-storage` | Done | Support nullable key parts, including MariaDB-style unique-key NULL semantics, in the current row and index storage bridge. |
-| 38 | `copy-alter-row-preservation` | In progress | Prove populated copy ALTER preserves supported MyLite rows, indexes, BLOB/TEXT payloads, nullable keys, and autoincrement state. |
+| 38 | `copy-alter-row-preservation` | Done | Prove populated copy ALTER preserves supported MyLite rows, indexes, BLOB/TEXT payloads, nullable keys, and autoincrement state. |
 
 ## Size and profile direction
 

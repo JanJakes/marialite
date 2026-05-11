@@ -35,6 +35,11 @@ struct SmokeResult
   std::string count;
   std::string created_count;
   std::string altered_column;
+  std::string copy_alter_rows;
+  std::string copy_alter_note_order_ids;
+  std::string copy_alter_null_note_ids;
+  std::string copy_alter_payload_lookup_id;
+  std::string copy_alter_autoincrement_id;
   std::string renamed_count;
   std::string dropped_table;
   std::string row_count;
@@ -91,6 +96,11 @@ struct SmokeResult
   std::string persisted_blob_text_key_order_ids;
   std::string persisted_nullable_key_null_ids;
   std::string persisted_nullable_key_lookup_id;
+  std::string persisted_copy_alter_rows;
+  std::string persisted_copy_alter_note_order_ids;
+  std::string persisted_copy_alter_null_note_ids;
+  std::string persisted_copy_alter_payload_lookup_id;
+  std::string persisted_copy_alter_autoincrement_id;
   std::string recovery_marker;
   std::string recovery_reclaim;
   std::string transaction_rollback_rows;
@@ -560,6 +570,105 @@ static bool exercise_ddl(MYSQL *mysql, SmokeResult *result)
     result->message= "altered table did not expose the added column";
     return false;
   }
+
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.copy_alter_rows "
+                         "(id INT NOT NULL AUTO_INCREMENT, "
+                         "note VARCHAR(12), payload TEXT NOT NULL, "
+                         "marker BLOB NOT NULL, PRIMARY KEY(id), "
+                         "KEY note_key(note), "
+                         "KEY payload_prefix(payload(8))) ENGINE=MYLITE",
+                         "CREATE populated copy ALTER table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.copy_alter_rows "
+                         "(note, payload, marker) VALUES "
+                         "('beta', 'payload-beta', 'm1'), "
+                         "(NULL, 'payload-null', 'm2'), "
+                         "('alpha', 'payload-alpha', 'm3')",
+                         "INSERT populated copy ALTER rows", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "ALTER TABLE mylite.copy_alter_rows "
+                         "ADD COLUMN status VARCHAR(12) NOT NULL "
+                         "DEFAULT 'active', ALGORITHM=COPY",
+                         "ALTER populated table", result))
+    return false;
+  if (!execute_statement(mysql, "FLUSH TABLES",
+                         "FLUSH TABLES after populated ALTER", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT("
+                          "id, ':', COALESCE(note, 'NULL'), ':', "
+                          "CHAR_LENGTH(payload), ':', LENGTH(marker), ':', "
+                          "status) ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.copy_alter_rows",
+                          "copy ALTER rows",
+                          &result->copy_alter_rows, result))
+    return false;
+  if (result->copy_alter_rows !=
+      "1:beta:12:2:active,2:NULL:12:2:active,3:alpha:13:2:active")
+  {
+    result->message= "copy ALTER rows returned an unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(id ORDER BY note "
+                          "SEPARATOR ',') FROM mylite.copy_alter_rows "
+                          "FORCE INDEX(note_key)",
+                          "copy ALTER note key order",
+                          &result->copy_alter_note_order_ids, result))
+    return false;
+  if (result->copy_alter_note_order_ids != "2,3,1")
+  {
+    result->message= "copy ALTER note key order returned an unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(id ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.copy_alter_rows FORCE INDEX(note_key) "
+                          "WHERE note IS NULL",
+                          "copy ALTER nullable key lookup",
+                          &result->copy_alter_null_note_ids, result))
+    return false;
+  if (result->copy_alter_null_note_ids != "2")
+  {
+    result->message= "copy ALTER nullable key lookup returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT id FROM mylite.copy_alter_rows "
+                          "FORCE INDEX(payload_prefix) "
+                          "WHERE payload = 'payload-alpha'",
+                          "copy ALTER payload prefix lookup",
+                          &result->copy_alter_payload_lookup_id, result))
+    return false;
+  if (result->copy_alter_payload_lookup_id != "3")
+  {
+    result->message= "copy ALTER payload prefix lookup returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.copy_alter_rows "
+                         "(note, payload, marker) VALUES "
+                         "('gamma', 'payload-gamma', 'm4')",
+                         "INSERT after copy ALTER", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT MAX(id) FROM mylite.copy_alter_rows",
+                          "copy ALTER autoincrement id",
+                          &result->copy_alter_autoincrement_id, result))
+    return false;
+  if (result->copy_alter_autoincrement_id != "4")
+  {
+    result->message= "copy ALTER autoincrement returned an unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql, "DROP TABLE mylite.copy_alter_rows",
+                         "DROP populated copy ALTER table", result))
+    return false;
 
   if (!execute_statement(mysql,
                          "RENAME TABLE mylite.created TO mylite.renamed",
@@ -1605,6 +1714,109 @@ static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result)
     return false;
   }
 
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.persisted_copy_alter "
+                         "(id INT NOT NULL AUTO_INCREMENT, "
+                         "note VARCHAR(12), payload TEXT NOT NULL, "
+                         "marker BLOB NOT NULL, PRIMARY KEY(id), "
+                         "KEY note_key(note), "
+                         "KEY payload_prefix(payload(8))) ENGINE=MYLITE",
+                         "CREATE persisted copy ALTER table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.persisted_copy_alter "
+                         "(note, payload, marker) VALUES "
+                         "('beta', 'payload-beta', 'm1'), "
+                         "(NULL, 'payload-null', 'm2'), "
+                         "('alpha', 'payload-alpha', 'm3')",
+                         "INSERT persisted copy ALTER rows", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "ALTER TABLE mylite.persisted_copy_alter "
+                         "ADD COLUMN status VARCHAR(12) NOT NULL "
+                         "DEFAULT 'active', ALGORITHM=COPY",
+                         "ALTER persisted populated table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.persisted_copy_alter "
+                         "(note, payload, marker) VALUES "
+                         "('gamma', 'payload-gamma', 'm4')",
+                         "INSERT persisted row after copy ALTER", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT("
+                          "id, ':', COALESCE(note, 'NULL'), ':', "
+                          "CHAR_LENGTH(payload), ':', LENGTH(marker), ':', "
+                          "status) ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_copy_alter",
+                          "persisted write copy ALTER rows",
+                          &result->persisted_copy_alter_rows, result))
+    return false;
+  if (result->persisted_copy_alter_rows !=
+      "1:beta:12:2:active,2:NULL:12:2:active,3:alpha:13:2:active,"
+      "4:gamma:13:2:active")
+  {
+    result->message= "persisted write copy ALTER rows returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(id ORDER BY note "
+                          "SEPARATOR ',') "
+                          "FROM mylite.persisted_copy_alter "
+                          "FORCE INDEX(note_key)",
+                          "persisted write copy ALTER note key order",
+                          &result->persisted_copy_alter_note_order_ids,
+                          result))
+    return false;
+  if (result->persisted_copy_alter_note_order_ids != "2,3,1,4")
+  {
+    result->message= "persisted write copy ALTER note key order returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(id ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_copy_alter "
+                          "FORCE INDEX(note_key) WHERE note IS NULL",
+                          "persisted write copy ALTER nullable key lookup",
+                          &result->persisted_copy_alter_null_note_ids,
+                          result))
+    return false;
+  if (result->persisted_copy_alter_null_note_ids != "2")
+  {
+    result->message= "persisted write copy ALTER nullable key lookup "
+                     "returned an unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT id FROM mylite.persisted_copy_alter "
+                          "FORCE INDEX(payload_prefix) "
+                          "WHERE payload = 'payload-alpha'",
+                          "persisted write copy ALTER payload lookup",
+                          &result->persisted_copy_alter_payload_lookup_id,
+                          result))
+    return false;
+  if (result->persisted_copy_alter_payload_lookup_id != "3")
+  {
+    result->message= "persisted write copy ALTER payload lookup returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT MAX(id) "
+                          "FROM mylite.persisted_copy_alter",
+                          "persisted write copy ALTER autoincrement id",
+                          &result->persisted_copy_alter_autoincrement_id,
+                          result))
+    return false;
+  if (result->persisted_copy_alter_autoincrement_id != "4")
+  {
+    result->message= "persisted write copy ALTER autoincrement returned an "
+                     "unexpected value";
+    return false;
+  }
+
   return true;
 }
 
@@ -1868,6 +2080,85 @@ static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result)
   if (result->persisted_nullable_key_lookup_id != "4")
   {
     result->message= "persisted read nullable key lookup returned an "
+                     "unexpected value";
+    return false;
+  }
+
+  if (!verify_table_present(mysql,
+                            "SHOW TABLES FROM mylite "
+                            "LIKE 'persisted_copy_alter'",
+                            "persisted copy ALTER table", result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT("
+                          "id, ':', COALESCE(note, 'NULL'), ':', "
+                          "CHAR_LENGTH(payload), ':', LENGTH(marker), ':', "
+                          "status) ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_copy_alter",
+                          "persisted read copy ALTER rows",
+                          &result->persisted_copy_alter_rows, result))
+    return false;
+  if (result->persisted_copy_alter_rows !=
+      "1:beta:12:2:active,2:NULL:12:2:active,3:alpha:13:2:active,"
+      "4:gamma:13:2:active")
+  {
+    result->message= "persisted read copy ALTER rows returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(id ORDER BY note "
+                          "SEPARATOR ',') "
+                          "FROM mylite.persisted_copy_alter "
+                          "FORCE INDEX(note_key)",
+                          "persisted read copy ALTER note key order",
+                          &result->persisted_copy_alter_note_order_ids,
+                          result))
+    return false;
+  if (result->persisted_copy_alter_note_order_ids != "2,3,1,4")
+  {
+    result->message= "persisted read copy ALTER note key order returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(id ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.persisted_copy_alter "
+                          "FORCE INDEX(note_key) WHERE note IS NULL",
+                          "persisted read copy ALTER nullable key lookup",
+                          &result->persisted_copy_alter_null_note_ids,
+                          result))
+    return false;
+  if (result->persisted_copy_alter_null_note_ids != "2")
+  {
+    result->message= "persisted read copy ALTER nullable key lookup returned "
+                     "an unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT id FROM mylite.persisted_copy_alter "
+                          "FORCE INDEX(payload_prefix) "
+                          "WHERE payload = 'payload-alpha'",
+                          "persisted read copy ALTER payload lookup",
+                          &result->persisted_copy_alter_payload_lookup_id,
+                          result))
+    return false;
+  if (result->persisted_copy_alter_payload_lookup_id != "3")
+  {
+    result->message= "persisted read copy ALTER payload lookup returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT MAX(id) "
+                          "FROM mylite.persisted_copy_alter",
+                          "persisted read copy ALTER autoincrement id",
+                          &result->persisted_copy_alter_autoincrement_id,
+                          result))
+    return false;
+  if (result->persisted_copy_alter_autoincrement_id != "4")
+  {
+    result->message= "persisted read copy ALTER autoincrement returned an "
                      "unexpected value";
     return false;
   }
@@ -2531,6 +2822,20 @@ static void write_report(const SmokeOptions &options,
     report << "created_count=" << result.created_count << "\n";
   if (!result.altered_column.empty())
     report << "altered_column=" << result.altered_column << "\n";
+  if (!result.copy_alter_rows.empty())
+    report << "copy_alter_rows=" << result.copy_alter_rows << "\n";
+  if (!result.copy_alter_note_order_ids.empty())
+    report << "copy_alter_note_order_ids="
+           << result.copy_alter_note_order_ids << "\n";
+  if (!result.copy_alter_null_note_ids.empty())
+    report << "copy_alter_null_note_ids="
+           << result.copy_alter_null_note_ids << "\n";
+  if (!result.copy_alter_payload_lookup_id.empty())
+    report << "copy_alter_payload_lookup_id="
+           << result.copy_alter_payload_lookup_id << "\n";
+  if (!result.copy_alter_autoincrement_id.empty())
+    report << "copy_alter_autoincrement_id="
+           << result.copy_alter_autoincrement_id << "\n";
   if (!result.renamed_count.empty())
     report << "renamed_count=" << result.renamed_count << "\n";
   if (!result.dropped_table.empty())
@@ -2679,6 +2984,21 @@ static void write_report(const SmokeOptions &options,
   if (!result.persisted_nullable_key_lookup_id.empty())
     report << "persisted_nullable_key_lookup_id="
            << result.persisted_nullable_key_lookup_id << "\n";
+  if (!result.persisted_copy_alter_rows.empty())
+    report << "persisted_copy_alter_rows="
+           << result.persisted_copy_alter_rows << "\n";
+  if (!result.persisted_copy_alter_note_order_ids.empty())
+    report << "persisted_copy_alter_note_order_ids="
+           << result.persisted_copy_alter_note_order_ids << "\n";
+  if (!result.persisted_copy_alter_null_note_ids.empty())
+    report << "persisted_copy_alter_null_note_ids="
+           << result.persisted_copy_alter_null_note_ids << "\n";
+  if (!result.persisted_copy_alter_payload_lookup_id.empty())
+    report << "persisted_copy_alter_payload_lookup_id="
+           << result.persisted_copy_alter_payload_lookup_id << "\n";
+  if (!result.persisted_copy_alter_autoincrement_id.empty())
+    report << "persisted_copy_alter_autoincrement_id="
+           << result.persisted_copy_alter_autoincrement_id << "\n";
   if (!result.recovery_marker.empty())
     report << "recovery_marker=" << result.recovery_marker << "\n";
   if (!result.recovery_reclaim.empty())

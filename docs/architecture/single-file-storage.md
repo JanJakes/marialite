@@ -152,6 +152,14 @@ or carries a narrow SQL-layer fork that suppresses durable `.frm` writes. This
 needs a focused `ddl-metadata-routing` slice before single-file DDL is treated
 as solved.
 
+The current bridge now proves more than empty DDL routing for copy ALTER:
+MariaDB-driven `ALTER TABLE ... ALGORITHM=COPY` can copy supported MyLite rows
+into the altered table, materialize added-column defaults, rebuild supported
+primary and secondary indexes, preserve nullable index entries and BLOB/TEXT
+payloads, continue autoincrement from copied rows, and survive fresh-process
+reopen. It still does not provide crash recovery for a process exit during the
+DDL swap.
+
 The catalog must also store or derive the table definition version used to
 detect stale cached definitions. MariaDB's discovery documentation describes
 `HA_ERR_TABLE_DEF_CHANGED` and `tabledef_version` as the mechanism for telling
@@ -399,7 +407,8 @@ file. Migration should be logical:
 - Should rollback journal or WAL state live inside the `.mylite` file or in
   documented companion files?
 - What write concurrency should v1 preserve in one process?
-- How much ALTER TABLE should be native before relying on table rebuilds?
+- Which ALTER TABLE operations need native or in-place implementations beyond
+  MariaDB's copy-rebuild path?
 - Which MariaDB tests can be made storage-engine-agnostic and run first?
 - Can all persistent system tables move to the MyLite engine without hidden
   Aria dependencies?
