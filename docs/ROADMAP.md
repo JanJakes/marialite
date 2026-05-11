@@ -175,6 +175,7 @@ operate on the catalog namespace without requiring durable schema directories.
 | 46 | `standalone-index-ddl-lifecycle` | Done | Prove standalone `CREATE INDEX` and `DROP INDEX` preserve MyLite rows, catalog metadata, and durable index roots. |
 | 47 | `truncate-table-lifecycle` | Done | Implement handler-based `TRUNCATE TABLE` for supported MyLite tables, clearing rows and indexes while resetting autoincrement state. |
 | 48 | `schema-namespace-catalog` | Done | Persist MyLite schema names in the catalog and route schema namespace operations without datadir directories. |
+| 49 | `system-schema-namespace-policy` | In progress | Keep server-owned schema names from becoming ordinary MyLite catalog schemas before replacement system surfaces are designed. |
 
 ## Size and profile direction
 
