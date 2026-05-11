@@ -60,8 +60,10 @@ now backed by the same THD-owned in-memory catalog and allocator snapshots for
 the supported row-DML subset, including rollback to a savepoint set after a
 MyLite read but before the first MyLite write. XA, transactional DDL,
 page-level undo/redo, MVCC, and useful concurrent writer behavior remain
-deferred. Configured primary files are now single-process owned with an
-exclusive advisory lock held on the `.mylite` file for the MyLite
+deferred. The next active slice is proving statement-level rollback on
+multi-row DML errors so partial statement changes cannot leak through the
+transaction bridge. Configured primary files are now single-process owned with
+an exclusive advisory lock held on the `.mylite` file for the MyLite
 storage-engine lifetime; another process or external advisory-lock holder
 causes an explicit catalog operation failure until that lock is released, and
 the SQL-facing handler diagnostic now reports a lock timeout instead of
@@ -98,6 +100,7 @@ misleading index corruption.
 | 24 | `catalog-error-diagnostics` | Done | Return accurate MariaDB handler diagnostics for MyLite catalog lock, open, load, and write failures instead of misleading generic corruption errors. |
 | 25 | `deferred-transaction-publication` | Done | Register MyLite as a MariaDB transaction participant for supported DML and defer `.mylite` generation publication until commit, restoring in-memory snapshots on rollback. |
 | 26 | `transaction-savepoint-snapshots` | Done | Add MyLite savepoint hooks backed by transaction-context snapshots for the supported row-DML subset. |
+| 27 | `statement-error-rollback` | In progress | Prove failed multi-row DML statements restore MyLite's pre-statement snapshot in autocommit and explicit transaction modes. |
 
 ## Size and profile direction
 
