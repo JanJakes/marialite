@@ -46,6 +46,9 @@ designed. Supported primary and secondary key indexes now publish durable
 loaded roots when they match open MariaDB key metadata.
 Large non-BLOB fixed MariaDB record images now split across row overflow segment
 pages inside the primary file while BLOB/TEXT payloads remain deferred.
+The next storage slice is adding persistent free-page ranges so later page-chain
+rewrites can reuse obsolete catalog, row, and index chains instead of always
+allocating at EOF.
 
 ## Implementation plan
 
@@ -70,6 +73,7 @@ pages inside the primary file while BLOB/TEXT payloads remain deferred.
 | 16 | `row-slot-storage` | Done | Replace table-sized row payload streams with page-local row records and slot directories. |
 | 17 | `index-page-storage` | Done | Add durable primary/secondary index page roots for supported keys instead of rebuilding all index cursors from rows. |
 | 18 | `row-overflow-storage` | Done | Add overflow row payload segments so large non-BLOB fixed row images can span row pages. |
+| 19 | `free-list-page-reuse` | In progress | Persist and validate free page ranges, then reuse complete obsolete page chains from accepted prior generations. |
 
 ## Size and profile direction
 
