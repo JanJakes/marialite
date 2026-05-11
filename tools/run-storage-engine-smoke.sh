@@ -45,29 +45,84 @@ run_inside_container() {
   abs_build_dir="$(cd "${build_dir}" && pwd)"
 
   local runtime_dir="${abs_build_dir}/mylite-storage-engine"
+  local report="${abs_build_dir}/mylite-storage-engine-report.txt"
+
+  local smoke="${abs_build_dir}/mylite/mylite-storage-engine-smoke"
+  local status=0
+
+  run_smoke_phase \
+    "${smoke}" \
+    "${abs_build_dir}/sql/share" \
+    "${runtime_dir}" \
+    "${report}" \
+    "${abs_build_dir}/mylite-storage-engine-output.log" \
+    "" \
+    "none" || status=1
+
+  local catalog_root="${abs_build_dir}/mylite-catalog-persistence"
+  local catalog_file="${catalog_root}/catalog.mylite"
+  rm -rf "${catalog_root}"
+  mkdir -p "${catalog_root}"
+
+  run_smoke_phase \
+    "${smoke}" \
+    "${abs_build_dir}/sql/share" \
+    "${catalog_root}/write" \
+    "${abs_build_dir}/mylite-catalog-write-report.txt" \
+    "${abs_build_dir}/mylite-catalog-write-output.log" \
+    "${catalog_file}" \
+    "write" || status=1
+
+  run_smoke_phase \
+    "${smoke}" \
+    "${abs_build_dir}/sql/share" \
+    "${catalog_root}/read" \
+    "${abs_build_dir}/mylite-catalog-read-report.txt" \
+    "${abs_build_dir}/mylite-catalog-read-output.log" \
+    "${catalog_file}" \
+    "read" || status=1
+
+  printf "Storage engine smoke report: %s\n" "${report}"
+  printf "Catalog write smoke report: %s\n" "${abs_build_dir}/mylite-catalog-write-report.txt"
+  printf "Catalog read smoke report: %s\n" "${abs_build_dir}/mylite-catalog-read-report.txt"
+  return "${status}"
+}
+
+run_smoke_phase() {
+  local smoke="$1"
+  local lc_messages_dir="$2"
+  local runtime_dir="$3"
+  local report="$4"
+  local smoke_log="$5"
+  local catalog_file="$6"
+  local persistence_phase="$7"
+
   local datadir="${runtime_dir}/datadir"
   local tmpdir="${runtime_dir}/tmp"
-  local report="${abs_build_dir}/mylite-storage-engine-report.txt"
 
   rm -rf "${runtime_dir}"
   mkdir -p "${datadir}/mylite" "${tmpdir}"
+  rm -f "${smoke_log}" "${report}"
 
-  local smoke="${abs_build_dir}/mylite/mylite-storage-engine-smoke"
-  local smoke_log="${abs_build_dir}/mylite-storage-engine-output.log"
-  rm -f "${smoke_log}"
+  local args=(
+    "--datadir=${datadir}"
+    "--tmpdir=${tmpdir}"
+    "--lc-messages-dir=${lc_messages_dir}"
+    "--runtime-dir=${runtime_dir}"
+    "--persistence-phase=${persistence_phase}"
+    "--report=${report}"
+  )
+  if [[ -n "${catalog_file}" ]]; then
+    args+=("--catalog-file=${catalog_file}")
+  fi
+
   local status=0
-  "${smoke}" \
-    "--datadir=${datadir}" \
-    "--tmpdir=${tmpdir}" \
-    "--lc-messages-dir=${abs_build_dir}/sql/share" \
-    "--runtime-dir=${runtime_dir}" \
-    "--report=${report}" > "${smoke_log}" 2>&1 || status=$?
+  "${smoke}" "${args[@]}" > "${smoke_log}" 2>&1 || status=$?
 
   append_observed_files "${runtime_dir}" "${report}" "${smoke_log}"
   if has_frm_artifacts "${runtime_dir}"; then
     status=1
   fi
-  printf "Storage engine smoke report: %s\n" "${report}"
   return "${status}"
 }
 

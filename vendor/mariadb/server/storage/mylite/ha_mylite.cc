@@ -7,12 +7,22 @@
 #include <my_global.h>
 #include <mysql/plugin.h>
 #include "ha_mylite.h"
+#include "sql_class.h"
 #include "table.h"
 
+#include <cerrno>
 #include <cstring>
+#include <fcntl.h>
+#include <fstream>
 #include <mutex>
 #include <string>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
+
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0
+#endif
 
 struct Mylite_table_definition
 {
@@ -48,15 +58,47 @@ static Mylite_table_definition *mylite_find_table_definition_locked(
     size_t table_name_length);
 static bool mylite_parse_table_path(const char *path, std::string *db,
                                     std::string *table_name);
+static bool mylite_ensure_catalog_loaded_locked();
+static void mylite_clear_frm_definitions_locked();
+static bool mylite_load_catalog_locked();
+static int mylite_flush_catalog_locked();
+static bool mylite_write_catalog_locked();
+static std::string mylite_serialize_catalog_locked();
+static std::string mylite_hex_encode(const uchar *data, size_t length);
+static bool mylite_hex_decode(const std::string &hex,
+                              std::vector<uchar> *result);
+static int mylite_hex_value(char c);
+static bool mylite_write_all(int fd, const std::string &content);
+static void mylite_log_catalog_error(const char *operation,
+                                     const std::string &path);
+static int mylite_deinit_func(void *p);
 
 static handlerton *mylite_hton;
+static char *mylite_catalog_file;
 static const char mylite_seed_db[]= "mylite";
 static const char mylite_seed_table[]= "probe";
 static const char mylite_seed_sql[]=
   "CREATE TABLE probe (id INT) ENGINE=MYLITE";
+static const char mylite_catalog_magic[]= "MYLITE CATALOG 1";
 static std::mutex mylite_catalog_mutex;
+static bool mylite_catalog_loaded= false;
+static bool mylite_catalog_load_failed= false;
 static std::vector<Mylite_table_definition> mylite_catalog= {
   { mylite_seed_db, mylite_seed_table, mylite_seed_sql, std::vector<uchar>() }
+};
+
+static MYSQL_SYSVAR_STR(
+  catalog_file,
+  mylite_catalog_file,
+  PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
+  "Path to the primary MyLite catalog file.",
+  nullptr,
+  nullptr,
+  nullptr);
+
+static struct st_mysql_sys_var *mylite_system_variables[]= {
+  MYSQL_SYSVAR(catalog_file),
+  nullptr
 };
 
 static const char *ha_mylite_exts[]= {
@@ -117,6 +159,9 @@ static int mylite_discover_table_names(handlerton *, const LEX_CSTRING *db,
     DBUG_RETURN(0);
 
   std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    DBUG_RETURN(1);
+
   for (const Mylite_table_definition &definition : mylite_catalog)
   {
     if (definition.db.length() == db->length &&
@@ -146,6 +191,9 @@ static bool mylite_read_table_definition(const char *db, size_t db_length,
                                          std::vector<uchar> *frm_image)
 {
   std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return false;
+
   const Mylite_table_definition *definition=
     mylite_find_table_definition_locked(db, db_length, table_name,
                                         table_name_length);
@@ -162,6 +210,9 @@ static bool mylite_table_definition_exists(const char *db, size_t db_length,
                                            size_t table_name_length)
 {
   std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return false;
+
   return mylite_find_table_definition_locked(db, db_length, table_name,
                                              table_name_length) != nullptr;
 }
@@ -291,11 +342,15 @@ static int mylite_store_table_definition(const char *path,
   }
 
   std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return HA_ERR_CRASHED;
+
   if (mylite_find_table_definition_locked(db.c_str(), db.length(),
                                           table_name.c_str(),
                                           table_name.length()))
     return HA_ERR_TABLE_EXIST;
 
+  const std::vector<Mylite_table_definition> before= mylite_catalog;
   Mylite_table_definition definition;
   definition.db= db;
   definition.table_name= table_name;
@@ -303,7 +358,10 @@ static int mylite_store_table_definition(const char *path,
                               share->frm_image->str +
                                 share->frm_image->length);
   mylite_catalog.push_back(definition);
-  return 0;
+  const int error= mylite_flush_catalog_locked();
+  if (error)
+    mylite_catalog= before;
+  return error;
 }
 
 static int mylite_remove_table_definition(const char *path)
@@ -314,13 +372,20 @@ static int mylite_remove_table_definition(const char *path)
     return HA_ERR_NO_SUCH_TABLE;
 
   std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return HA_ERR_CRASHED;
+
   for (std::vector<Mylite_table_definition>::iterator it=
          mylite_catalog.begin(); it != mylite_catalog.end(); ++it)
   {
     if (it->db == db && it->table_name == table_name)
     {
+      const std::vector<Mylite_table_definition> before= mylite_catalog;
       mylite_catalog.erase(it);
-      return 0;
+      const int error= mylite_flush_catalog_locked();
+      if (error)
+        mylite_catalog= before;
+      return error;
     }
   }
 
@@ -339,6 +404,9 @@ static int mylite_rename_table_definition(const char *from, const char *to)
     return HA_ERR_NO_SUCH_TABLE;
 
   std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  if (!mylite_ensure_catalog_loaded_locked())
+    return HA_ERR_CRASHED;
+
   if (mylite_find_table_definition_locked(to_db.c_str(), to_db.length(),
                                           to_table.c_str(), to_table.length()))
     return HA_ERR_TABLE_EXIST;
@@ -350,9 +418,13 @@ static int mylite_rename_table_definition(const char *from, const char *to)
   if (!definition)
     return HA_ERR_NO_SUCH_TABLE;
 
+  const std::vector<Mylite_table_definition> before= mylite_catalog;
   definition->db= to_db;
   definition->table_name= to_table;
-  return 0;
+  const int error= mylite_flush_catalog_locked();
+  if (error)
+    mylite_catalog= before;
+  return error;
 }
 
 static Mylite_table_definition *mylite_find_table_definition_locked(
@@ -403,6 +475,276 @@ static bool mylite_parse_table_path(const char *path, std::string *db,
   return !db->empty() && !table_name->empty();
 }
 
+static bool mylite_ensure_catalog_loaded_locked()
+{
+  if (mylite_catalog_loaded)
+    return !mylite_catalog_load_failed;
+
+  mylite_catalog_loaded= true;
+  if (!mylite_catalog_file || !mylite_catalog_file[0])
+    return true;
+
+  mylite_catalog_load_failed= !mylite_load_catalog_locked();
+  return !mylite_catalog_load_failed;
+}
+
+static void mylite_clear_frm_definitions_locked()
+{
+  for (std::vector<Mylite_table_definition>::iterator it=
+         mylite_catalog.begin(); it != mylite_catalog.end();)
+  {
+    if (it->seed_sql.empty())
+      it= mylite_catalog.erase(it);
+    else
+      ++it;
+  }
+}
+
+static bool mylite_load_catalog_locked()
+{
+  mylite_clear_frm_definitions_locked();
+
+  struct stat st;
+  if (stat(mylite_catalog_file, &st) != 0)
+  {
+    if (errno == ENOENT)
+      return true;
+    mylite_log_catalog_error("stat", mylite_catalog_file);
+    return false;
+  }
+  if (st.st_size == 0)
+    return true;
+
+  std::ifstream input(mylite_catalog_file, std::ios::binary);
+  if (!input)
+  {
+    mylite_log_catalog_error("open", mylite_catalog_file);
+    return false;
+  }
+
+  std::string line;
+  if (!std::getline(input, line) || line != mylite_catalog_magic)
+  {
+    sql_print_error("MyLite: invalid catalog header in %s",
+                    mylite_catalog_file);
+    return false;
+  }
+
+  while (std::getline(input, line))
+  {
+    if (line.empty())
+      continue;
+
+    const std::string::size_type first= line.find('\t');
+    const std::string::size_type second= first == std::string::npos
+      ? std::string::npos
+      : line.find('\t', first + 1);
+    const std::string::size_type third= second == std::string::npos
+      ? std::string::npos
+      : line.find('\t', second + 1);
+
+    if (first == std::string::npos || second == std::string::npos ||
+        third == std::string::npos || line.substr(0, first) != "TABLE")
+    {
+      sql_print_error("MyLite: invalid catalog record in %s",
+                      mylite_catalog_file);
+      return false;
+    }
+
+    std::vector<uchar> db_bytes;
+    std::vector<uchar> table_bytes;
+    Mylite_table_definition definition;
+    if (!mylite_hex_decode(line.substr(first + 1, second - first - 1),
+                           &db_bytes) ||
+        !mylite_hex_decode(line.substr(second + 1, third - second - 1),
+                           &table_bytes) ||
+        !mylite_hex_decode(line.substr(third + 1), &definition.frm_image) ||
+        db_bytes.empty() || table_bytes.empty() ||
+        definition.frm_image.empty())
+    {
+      sql_print_error("MyLite: invalid catalog encoding in %s",
+                      mylite_catalog_file);
+      return false;
+    }
+
+    definition.db.assign(reinterpret_cast<const char *>(db_bytes.data()),
+                         db_bytes.size());
+    definition.table_name.assign(
+      reinterpret_cast<const char *>(table_bytes.data()), table_bytes.size());
+    if (mylite_find_table_definition_locked(definition.db.c_str(),
+                                            definition.db.length(),
+                                            definition.table_name.c_str(),
+                                            definition.table_name.length()))
+    {
+      sql_print_error("MyLite: duplicate catalog table in %s",
+                      mylite_catalog_file);
+      return false;
+    }
+
+    mylite_catalog.push_back(definition);
+  }
+
+  return true;
+}
+
+static int mylite_flush_catalog_locked()
+{
+  if (!mylite_catalog_file || !mylite_catalog_file[0])
+    return 0;
+
+  return mylite_write_catalog_locked() ? 0 : HA_ERR_CRASHED;
+}
+
+static bool mylite_write_catalog_locked()
+{
+  const std::string catalog_path(mylite_catalog_file);
+  const std::string tmp_path= catalog_path + ".tmp";
+  const std::string content= mylite_serialize_catalog_locked();
+
+  const int fd= open(tmp_path.c_str(),
+                     O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
+  if (fd < 0)
+  {
+    mylite_log_catalog_error("open", tmp_path);
+    return false;
+  }
+
+  bool ok= mylite_write_all(fd, content);
+  if (ok && fsync(fd) != 0)
+  {
+    mylite_log_catalog_error("fsync", tmp_path);
+    ok= false;
+  }
+  if (close(fd) != 0)
+  {
+    mylite_log_catalog_error("close", tmp_path);
+    ok= false;
+  }
+
+  if (!ok)
+  {
+    unlink(tmp_path.c_str());
+    return false;
+  }
+
+  if (rename(tmp_path.c_str(), catalog_path.c_str()) != 0)
+  {
+    mylite_log_catalog_error("rename", catalog_path);
+    unlink(tmp_path.c_str());
+    return false;
+  }
+
+  return true;
+}
+
+static std::string mylite_serialize_catalog_locked()
+{
+  std::string content;
+  content.append(mylite_catalog_magic);
+  content.push_back('\n');
+
+  for (const Mylite_table_definition &definition : mylite_catalog)
+  {
+    if (definition.frm_image.empty())
+      continue;
+
+    content.append("TABLE\t");
+    content.append(mylite_hex_encode(
+      reinterpret_cast<const uchar *>(definition.db.data()),
+      definition.db.length()));
+    content.push_back('\t');
+    content.append(mylite_hex_encode(
+      reinterpret_cast<const uchar *>(definition.table_name.data()),
+      definition.table_name.length()));
+    content.push_back('\t');
+    content.append(mylite_hex_encode(definition.frm_image.data(),
+                                     definition.frm_image.size()));
+    content.push_back('\n');
+  }
+
+  return content;
+}
+
+static std::string mylite_hex_encode(const uchar *data, size_t length)
+{
+  static const char digits[]= "0123456789abcdef";
+  std::string result;
+  result.reserve(length * 2);
+  for (size_t i= 0; i < length; ++i)
+  {
+    result.push_back(digits[data[i] >> 4]);
+    result.push_back(digits[data[i] & 0x0f]);
+  }
+  return result;
+}
+
+static bool mylite_hex_decode(const std::string &hex,
+                              std::vector<uchar> *result)
+{
+  if (hex.length() % 2 != 0)
+    return false;
+
+  result->clear();
+  result->reserve(hex.length() / 2);
+  for (size_t i= 0; i < hex.length(); i += 2)
+  {
+    const int high= mylite_hex_value(hex[i]);
+    const int low= mylite_hex_value(hex[i + 1]);
+    if (high < 0 || low < 0)
+      return false;
+    result->push_back(static_cast<uchar>((high << 4) | low));
+  }
+  return true;
+}
+
+static int mylite_hex_value(char c)
+{
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  if (c >= 'a' && c <= 'f')
+    return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F')
+    return c - 'A' + 10;
+  return -1;
+}
+
+static bool mylite_write_all(int fd, const std::string &content)
+{
+  const char *ptr= content.data();
+  size_t remaining= content.length();
+  while (remaining > 0)
+  {
+    const ssize_t written= write(fd, ptr, remaining);
+    if (written < 0)
+    {
+      if (errno == EINTR)
+        continue;
+      return false;
+    }
+    if (written == 0)
+      return false;
+    ptr+= written;
+    remaining-= static_cast<size_t>(written);
+  }
+  return true;
+}
+
+static void mylite_log_catalog_error(const char *operation,
+                                     const std::string &path)
+{
+  sql_print_error("MyLite: catalog %s failed for %s: %s", operation,
+                  path.c_str(), strerror(errno));
+}
+
+static int mylite_deinit_func(void *)
+{
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  mylite_clear_frm_definitions_locked();
+  mylite_catalog_loaded= false;
+  mylite_catalog_load_failed= false;
+  return 0;
+}
+
 struct st_mysql_storage_engine mylite_storage_engine=
 { MYSQL_HANDLERTON_INTERFACE_VERSION };
 
@@ -415,10 +757,10 @@ maria_declare_plugin(mylite)
   "MyLite storage engine skeleton",
   PLUGIN_LICENSE_GPL,
   mylite_init_func,
-  nullptr,
+  mylite_deinit_func,
   0x0001,
   nullptr,
-  nullptr,
+  mylite_system_variables,
   "0.1",
   MariaDB_PLUGIN_MATURITY_EXPERIMENTAL
 }

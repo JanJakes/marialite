@@ -360,6 +360,7 @@ std::vector<std::string> build_server_args(const std::string &runtime_dir)
     "--no-defaults",
     "--datadir=" + runtime_dir + "/datadir",
     "--tmpdir=" + runtime_dir + "/tmp",
+    "--mylite-catalog-file=" + runtime.filename,
     std::string("--lc-messages-dir=") + default_lc_messages_dir(),
     "--skip-grant-tables",
     "--skip-networking",

@@ -18,6 +18,8 @@ struct SmokeOptions
   std::string tmpdir;
   std::string lc_messages_dir;
   std::string runtime_dir;
+  std::string catalog_file;
+  std::string persistence_phase= "none";
   std::string report;
 };
 
@@ -34,6 +36,8 @@ struct SmokeResult
   std::string altered_column;
   std::string renamed_count;
   std::string dropped_table;
+  std::string persisted_count;
+  std::string persisted_column;
 };
 
 static bool parse_options(int argc, char **argv, SmokeOptions *options,
@@ -46,11 +50,15 @@ static bool fetch_mylite_engine(MYSQL *mysql, SmokeResult *result);
 static bool fetch_discovered_table(MYSQL *mysql, SmokeResult *result);
 static bool fetch_probe_count(MYSQL *mysql, SmokeResult *result);
 static bool exercise_ddl(MYSQL *mysql, SmokeResult *result);
+static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result);
+static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result);
 static bool execute_statement(MYSQL *mysql, const char *statement,
                               const char *label, SmokeResult *result);
 static bool fetch_single_value(MYSQL *mysql, const char *query,
                                const char *label, std::string *value,
                                SmokeResult *result);
+static bool verify_table_present(MYSQL *mysql, const char *query,
+                                 const char *label, SmokeResult *result);
 static bool verify_table_absent(MYSQL *mysql, const char *query,
                                 const char *label, SmokeResult *result);
 static void write_report(const SmokeOptions &options,
@@ -91,6 +99,10 @@ static bool parse_options(int argc, char **argv, SmokeOptions *options,
       options->lc_messages_dir= value;
     else if (option_value(argv[i], "--runtime-dir=", &value))
       options->runtime_dir= value;
+    else if (option_value(argv[i], "--catalog-file=", &value))
+      options->catalog_file= value;
+    else if (option_value(argv[i], "--persistence-phase=", &value))
+      options->persistence_phase= value;
     else if (option_value(argv[i], "--report=", &value))
       options->report= value;
     else
@@ -98,6 +110,20 @@ static bool parse_options(int argc, char **argv, SmokeOptions *options,
       *error= std::string("unknown argument: ") + argv[i];
       return false;
     }
+  }
+
+  if (options->persistence_phase != "none" &&
+      options->persistence_phase != "write" &&
+      options->persistence_phase != "read")
+  {
+    *error= "unsupported persistence phase";
+    return false;
+  }
+
+  if (options->persistence_phase != "none" && options->catalog_file.empty())
+  {
+    *error= "catalog file is required for persistence phases";
+    return false;
   }
 
   return require_option(options->datadir, "--datadir", error) &&
@@ -109,7 +135,7 @@ static bool parse_options(int argc, char **argv, SmokeOptions *options,
 
 static std::vector<std::string> build_server_args(const SmokeOptions &options)
 {
-  return {
+  std::vector<std::string> args= {
     "mylite-storage-engine-smoke",
     "--no-defaults",
     "--datadir=" + options.datadir,
@@ -124,9 +150,12 @@ static std::vector<std::string> build_server_args(const SmokeOptions &options)
     "--pid-file=" + options.runtime_dir + "/mariadb.pid",
     "--socket=" + options.runtime_dir + "/mariadb.sock"
   };
+  if (!options.catalog_file.empty())
+    args.push_back("--mylite-catalog-file=" + options.catalog_file);
+  return args;
 }
 
-static int run_smoke(const SmokeOptions &,
+static int run_smoke(const SmokeOptions &options,
                      const std::vector<std::string> &server_args,
                      SmokeResult *result)
 {
@@ -172,17 +201,35 @@ static int run_smoke(const SmokeOptions &,
   if (!fetch_mylite_engine(mysql, result))
     goto done;
 
-  result->phase= "table_names";
-  if (!fetch_discovered_table(mysql, result))
-    goto done;
+  if (options.persistence_phase != "read")
+  {
+    result->phase= "table_names";
+    if (!fetch_discovered_table(mysql, result))
+      goto done;
+  }
 
   result->phase= "table_scan";
   if (!fetch_probe_count(mysql, result))
     goto done;
 
-  result->phase= "ddl_lifecycle";
-  if (!exercise_ddl(mysql, result))
-    goto done;
+  if (options.persistence_phase == "write")
+  {
+    result->phase= "persistence_write";
+    if (!exercise_persistence_write(mysql, result))
+      goto done;
+  }
+  else if (options.persistence_phase == "read")
+  {
+    result->phase= "persistence_read";
+    if (!exercise_persistence_read(mysql, result))
+      goto done;
+  }
+  else
+  {
+    result->phase= "ddl_lifecycle";
+    if (!exercise_ddl(mysql, result))
+      goto done;
+  }
 
   result->phase= "complete";
   result->status= 0;
@@ -392,6 +439,76 @@ static bool exercise_ddl(MYSQL *mysql, SmokeResult *result)
   return fetch_discovered_table(mysql, result);
 }
 
+static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result)
+{
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.persisted "
+                         "(id INT, note VARCHAR(12)) ENGINE=MYLITE",
+                         "CREATE persisted table", result))
+    return false;
+  if (!execute_statement(mysql, "FLUSH TABLES",
+                         "FLUSH TABLES after persisted CREATE", result))
+    return false;
+
+  if (!fetch_single_value(mysql, "SELECT COUNT(*) FROM mylite.persisted",
+                          "persisted write count",
+                          &result->persisted_count, result))
+    return false;
+  if (result->persisted_count != "0")
+  {
+    result->message= "persisted write count returned an unexpected value";
+    return false;
+  }
+
+  if (!fetch_single_value(mysql,
+                          "SHOW COLUMNS FROM mylite.persisted LIKE 'note'",
+                          "persisted write column",
+                          &result->persisted_column, result))
+    return false;
+  if (result->persisted_column != "note")
+  {
+    result->message= "persisted write table did not expose the note column";
+    return false;
+  }
+
+  return true;
+}
+
+static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result)
+{
+  if (!execute_statement(mysql, "FLUSH TABLES",
+                         "FLUSH TABLES before persisted read", result))
+    return false;
+
+  if (!verify_table_present(mysql,
+                            "SHOW TABLES FROM mylite LIKE 'persisted'",
+                            "persisted table", result))
+    return false;
+
+  if (!fetch_single_value(mysql, "SELECT COUNT(*) FROM mylite.persisted",
+                          "persisted read count",
+                          &result->persisted_count, result))
+    return false;
+  if (result->persisted_count != "0")
+  {
+    result->message= "persisted read count returned an unexpected value";
+    return false;
+  }
+
+  if (!fetch_single_value(mysql,
+                          "SHOW COLUMNS FROM mylite.persisted LIKE 'note'",
+                          "persisted read column",
+                          &result->persisted_column, result))
+    return false;
+  if (result->persisted_column != "note")
+  {
+    result->message= "persisted read table did not expose the note column";
+    return false;
+  }
+
+  return true;
+}
+
 static bool execute_statement(MYSQL *mysql, const char *statement,
                               const char *label, SmokeResult *result)
 {
@@ -440,6 +557,37 @@ static bool fetch_single_value(MYSQL *mysql, const char *query,
   return ok;
 }
 
+static bool verify_table_present(MYSQL *mysql, const char *query,
+                                 const char *label, SmokeResult *result)
+{
+  if (mysql_query(mysql, query))
+  {
+    result->message= std::string(label) + " presence query failed: " +
+                     mysql_error(mysql);
+    return false;
+  }
+
+  MYSQL_RES *res= mysql_store_result(mysql);
+  if (!res)
+  {
+    result->message= std::string(label) + " presence result failed: " +
+                     mysql_error(mysql);
+    return false;
+  }
+
+  bool ok= false;
+  MYSQL_ROW row= mysql_fetch_row(res);
+  if (!row || !row[0])
+    result->message= std::string(label) + " was not discovered";
+  else if (mysql_fetch_row(res) != nullptr)
+    result->message= std::string(label) + " query returned more than one row";
+  else
+    ok= true;
+
+  mysql_free_result(res);
+  return ok;
+}
+
 static bool verify_table_absent(MYSQL *mysql, const char *query,
                                 const char *label, SmokeResult *result)
 {
@@ -483,6 +631,9 @@ static void write_report(const SmokeOptions &options,
   report << "tmpdir=" << options.tmpdir << "\n";
   report << "lc_messages_dir=" << options.lc_messages_dir << "\n";
   report << "runtime_dir=" << options.runtime_dir << "\n\n";
+  if (!options.catalog_file.empty())
+    report << "catalog_file=" << options.catalog_file << "\n";
+  report << "persistence_phase=" << options.persistence_phase << "\n\n";
 
   report << "## Server Arguments\n\n";
   for (const std::string &arg : server_args)
@@ -509,6 +660,10 @@ static void write_report(const SmokeOptions &options,
     report << "renamed_count=" << result.renamed_count << "\n";
   if (!result.dropped_table.empty())
     report << "dropped_table=" << result.dropped_table << "\n";
+  if (!result.persisted_count.empty())
+    report << "persisted_count=" << result.persisted_count << "\n";
+  if (!result.persisted_column.empty())
+    report << "persisted_column=" << result.persisted_column << "\n";
 }
 
 static bool option_value(const char *arg, const char *name, std::string *value)

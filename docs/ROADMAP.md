@@ -25,13 +25,14 @@ for dynamic plugin, UDF creation, and foreign-server metadata commands. The
 first static `libmylite` wrapper now exposes open/close and handle-owned
 diagnostics for one initialized database path per process, and the first
 static `MYLITE` storage-engine skeleton is registered in the embedded profile.
-The engine can discover the seed table `mylite.probe` and run a bounded
-`CREATE`, copy `ALTER`, `RENAME`, and `DROP` lifecycle without leaving durable
-`.frm` table-definition files.
+The engine can discover the seed table `mylite.probe`, run a bounded `CREATE`,
+copy `ALTER`, `RENAME`, and `DROP` lifecycle without leaving durable `.frm`
+table-definition files, and persist frm-backed table definitions in the primary
+`.mylite` file across fresh embedded processes.
 
-The active implementation step is `single-file-catalog`, which should move
-table definitions, schema metadata, catalog versioning, and DDL durability from
-the process-local proof catalog into the primary `.mylite` file.
+The next implementation step is `file-format-recovery`, which should replace
+the v0 text/hex catalog rewrite with a real durable file header, catalog
+layout, update protocol, and crash recovery story.
 
 ## Implementation plan
 
@@ -46,7 +47,7 @@ the process-local proof catalog into the primary `.mylite` file.
 | 6 | `storage-engine-skeleton` | Done | Add a static MyLite storage engine with enough handler shape for controlled smoke tests. |
 | 7 | `mylite-engine-discovery` | Done | Reopen table definitions from the MyLite catalog through MariaDB table-discovery APIs. |
 | 8 | `ddl-metadata-routing` | Done | Prove `CREATE`, `ALTER`, `DROP`, and `RENAME` do not leave durable `.frm` table-definition sidecars. |
-| 9 | `single-file-catalog` | In progress | Store schema, table definitions, engine metadata, and catalog versioning inside the `.mylite` file. |
+| 9 | `single-file-catalog` | Done | Store initial frm-backed table definitions inside the `.mylite` file. |
 | 10 | `file-format-recovery` | Planned | Define and implement the first durable file header, page layout, journal or WAL lifecycle, transaction metadata, and crash recovery guarantees. |
 | 11 | `row-index-storage` | Planned | Implement row storage, index access, autoincrement state, and core read/write handler methods. |
 | 12 | `compatibility-test-harness` | Planned | Run embedded lifecycle, unexpected-sidecar detection, crash/reopen, and MariaDB comparison tests in repeatable groups. |
