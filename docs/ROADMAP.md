@@ -37,9 +37,9 @@ embedded lifecycle, `libmylite` lifecycle, storage/recovery smokes, a
 MariaDB-reference comparison for the supported subset, and a MyLite runtime
 sidecar scan.
 
-The next implementation step is `pager-page-store`, which should start turning
-the raw append-only catalog payload into a reusable page-store layer for future
-row and index pages.
+The active implementation step is `pager-page-store`, which should start
+turning the raw append-only catalog payload into a reusable page-store layer for
+future row and index pages.
 
 ## Implementation plan
 
@@ -59,7 +59,7 @@ row and index pages.
 | 11 | `row-index-storage` | Done | Implement the first durable heap row storage and core table-scan read/write/update/delete handler methods. |
 | 12 | `index-autoincrement-storage` | Done | Add enforced key metadata, basic index access, and durable autoincrement state. |
 | 13 | `compatibility-test-harness` | Done | Run embedded lifecycle, unexpected-sidecar detection, crash/reopen, and MariaDB comparison tests in repeatable groups. |
-| 14 | `pager-page-store` | Planned | Add the first reusable MyLite page-store layer for catalog payloads, row pages, future index pages, and free-space tracking. |
+| 14 | `pager-page-store` | In progress | Add the first reusable MyLite page-store layer for catalog payloads, row pages, future index pages, and free-space tracking. |
 
 ## Size and profile direction
 
