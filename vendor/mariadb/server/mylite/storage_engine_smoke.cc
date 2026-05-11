@@ -67,6 +67,9 @@ struct SmokeResult
   std::string recovery_marker;
   std::string recovery_reclaim;
   std::string transaction_rollback_rows;
+  std::string transaction_clean_savepoint_rows;
+  std::string transaction_savepoint_rows;
+  std::string transaction_release_rows;
   std::string transaction_rows;
   std::string transaction_rollback_warnings;
 };
@@ -1329,25 +1332,113 @@ static bool exercise_transaction_boundary_write(MYSQL *mysql,
   }
 
   if (!execute_statement(mysql, "START TRANSACTION",
-                         "START transaction boundary commit", result))
+                         "START transaction savepoint transaction", result))
+    return false;
+  std::string clean_savepoint_count;
+  if (!fetch_single_value(mysql,
+                          "SELECT COUNT(*) "
+                          "FROM mylite.transaction_boundary",
+                          "transaction clean savepoint participant count",
+                          &clean_savepoint_count, result))
+    return false;
+  if (clean_savepoint_count != "2")
+  {
+    result->message= "transaction clean savepoint count returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql, "SAVEPOINT clean_sp",
+                         "SAVEPOINT before transaction boundary DML", result))
     return false;
   if (!execute_statement(mysql,
-                         "INSERT INTO mylite.transaction_boundary VALUES "
-                         "(3, 'three')",
-                         "INSERT transaction boundary commit row", result))
+                         "UPDATE mylite.transaction_boundary "
+                         "SET note = 'uno' WHERE id = 1",
+                         "UPDATE after clean savepoint", result))
+    return false;
+  if (!execute_statement(mysql, "ROLLBACK TO SAVEPOINT clean_sp",
+                         "ROLLBACK TO clean savepoint", result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT GROUP_CONCAT(CONCAT(id, ':', note) "
+        "ORDER BY id SEPARATOR ',') "
+        "FROM mylite.transaction_boundary",
+        "transaction clean savepoint rows",
+        &result->transaction_clean_savepoint_rows, result))
+    return false;
+  if (result->transaction_clean_savepoint_rows != "1:one,2:two")
+  {
+    result->message= "clean savepoint rows were not restored";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "UPDATE mylite.transaction_boundary "
+                         "SET note = 'uno' WHERE id = 1",
+                         "UPDATE transaction boundary savepoint row", result))
+    return false;
+  if (!execute_statement(mysql, "SAVEPOINT sp1",
+                         "SAVEPOINT transaction boundary sp1", result))
     return false;
   if (!execute_statement(mysql,
                          "UPDATE mylite.transaction_boundary "
                          "SET note = 'dos' WHERE id = 2",
-                         "UPDATE transaction boundary commit row", result))
+                         "UPDATE transaction boundary savepoint row", result))
+    return false;
+  if (!execute_statement(mysql, "SAVEPOINT sp2",
+                         "SAVEPOINT transaction boundary sp2", result))
     return false;
   if (!execute_statement(mysql,
-                         "DELETE FROM mylite.transaction_boundary "
-                         "WHERE id = 1",
-                         "DELETE transaction boundary commit row", result))
+                         "INSERT INTO mylite.transaction_boundary VALUES "
+                         "(4, 'four')",
+                         "INSERT transaction boundary savepoint row", result))
     return false;
+  if (!execute_statement(mysql, "ROLLBACK TO SAVEPOINT sp1",
+                         "ROLLBACK TO transaction boundary sp1", result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT GROUP_CONCAT(CONCAT(id, ':', note) "
+        "ORDER BY id SEPARATOR ',') "
+        "FROM mylite.transaction_boundary",
+        "transaction savepoint rows", &result->transaction_savepoint_rows,
+        result))
+    return false;
+  if (result->transaction_savepoint_rows != "1:uno,2:two")
+  {
+    result->message= "transaction savepoint rows were not restored";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "UPDATE mylite.transaction_boundary "
+                         "SET note = 'dos' WHERE id = 2",
+                         "UPDATE transaction boundary release row", result))
+    return false;
+  if (!execute_statement(mysql, "SAVEPOINT sp3",
+                         "SAVEPOINT transaction boundary sp3", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.transaction_boundary VALUES "
+                         "(4, 'four')",
+                         "INSERT transaction boundary release row", result))
+    return false;
+  if (!execute_statement(mysql, "RELEASE SAVEPOINT sp3",
+                         "RELEASE transaction boundary sp3", result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT GROUP_CONCAT(CONCAT(id, ':', note) "
+        "ORDER BY id SEPARATOR ',') "
+        "FROM mylite.transaction_boundary",
+        "transaction release rows", &result->transaction_release_rows,
+        result))
+    return false;
+  if (result->transaction_release_rows != "1:uno,2:dos,4:four")
+  {
+    result->message= "transaction release rows returned an unexpected value";
+    return false;
+  }
   if (!execute_statement(mysql, "COMMIT",
-                         "COMMIT transaction boundary transaction", result))
+                         "COMMIT transaction savepoint transaction", result))
     return false;
   if (!fetch_single_value(
         mysql,
@@ -1357,7 +1448,7 @@ static bool exercise_transaction_boundary_write(MYSQL *mysql,
         "transaction boundary commit rows", &result->transaction_rows,
         result))
     return false;
-  if (result->transaction_rows != "2:dos,3:three")
+  if (result->transaction_rows != "1:uno,2:dos,4:four")
   {
     result->message= "transaction boundary rows did not commit";
     return false;
@@ -1388,7 +1479,7 @@ static bool exercise_transaction_boundary_read(MYSQL *mysql,
         "transaction boundary persisted rows", &result->transaction_rows,
         result))
     return false;
-  if (result->transaction_rows != "2:dos,3:three")
+  if (result->transaction_rows != "1:uno,2:dos,4:four")
   {
     result->message= "transaction boundary rows did not persist";
     return false;
@@ -1732,6 +1823,15 @@ static void write_report(const SmokeOptions &options,
   if (!result.transaction_rollback_rows.empty())
     report << "transaction_rollback_rows="
            << result.transaction_rollback_rows << "\n";
+  if (!result.transaction_clean_savepoint_rows.empty())
+    report << "transaction_clean_savepoint_rows="
+           << result.transaction_clean_savepoint_rows << "\n";
+  if (!result.transaction_savepoint_rows.empty())
+    report << "transaction_savepoint_rows="
+           << result.transaction_savepoint_rows << "\n";
+  if (!result.transaction_release_rows.empty())
+    report << "transaction_release_rows="
+           << result.transaction_release_rows << "\n";
   if (!result.transaction_rows.empty())
     report << "transaction_rows=" << result.transaction_rows << "\n";
   if (!result.transaction_rollback_warnings.empty())

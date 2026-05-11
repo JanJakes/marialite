@@ -62,6 +62,9 @@ This slice will:
 - keep actual savepoint snapshots inside `Mylite_transaction_context`,
 - capture `mylite_catalog` and `mylite_pending_free_page_ranges` when MyLite
   receives `savepoint_set()`,
+- capture savepoints even when MyLite's current transaction participation is
+  still clean, so a savepoint after a MyLite read can roll back later MyLite
+  DML,
 - restore the matching snapshot when MyLite receives `savepoint_rollback()`,
 - discard newer savepoint snapshots after rollback to a savepoint,
 - discard the named and newer savepoint snapshots when MyLite receives
@@ -100,11 +103,17 @@ when the context is cleared at commit, full rollback, or connection cleanup.
 `mylite_savepoint_set(thd, sv)` should:
 
 1. get the current MyLite transaction context,
-2. if no dirty context exists, store ID `0` and return success,
+2. create a clean context if MyLite is a read-only participant so far,
 3. increment the context's next savepoint ID,
 4. capture the current catalog and pending free-range snapshot,
-5. store the ID in `sv`,
-6. append the snapshot to the context.
+5. append the snapshot to the context,
+6. store the ID in `sv`.
+
+Capturing clean MyLite participation is required because MariaDB records MyLite
+in the savepoint participant list after reads too. If a later write occurs and
+the savepoint rollback path receives an ID `0` no-op, MariaDB will not roll the
+engine back through the "engines added after the savepoint" path because MyLite
+was already present in `sv->ha_list`.
 
 If snapshot allocation fails, return `HA_ERR_OUT_OF_MEM` so MariaDB can fail
 the `SAVEPOINT` statement.
@@ -165,13 +174,58 @@ transaction.
 
 ## Binary-Size Impact
 
-Expected impact is small: one savepoint snapshot vector, three handlerton
-callbacks, and smoke coverage. No dependency or new compiled MariaDB subsystem
-should be added. Measured sizes should be recorded after implementation.
+The implementation adds one savepoint snapshot vector, three handlerton
+callbacks, and smoke coverage. It adds no dependency or new compiled MariaDB
+subsystem. Measured after implementation with `MYLITE_BUILD_JOBS=8` and the
+Docker-based `mariadb-minsize` profile:
+
+| Artifact | Size |
+| --- | ---: |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 44,408,362 bytes |
+| `build/mariadb-minsize/mylite/libmylite.a` | 29,698 bytes |
+| `build/mariadb-minsize/mylite/mylite-storage-engine-smoke` | 22,772,056 bytes |
+| `build/mariadb-minsize/mylite/mylite-compatibility-smoke` | 22,772,400 bytes |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 22,773,128 bytes |
+| `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke` | 22,771,440 bytes |
 
 ## License, Trademark, And Dependency Impact
 
 No new dependencies, license changes, or trademark changes.
+
+## Implementation Result
+
+Implemented in `vendor/mariadb/server/storage/mylite/ha_mylite.cc`,
+`vendor/mariadb/server/mylite/storage_engine_smoke.cc`, and architecture and
+roadmap docs.
+
+- MyLite installs `savepoint_offset`, `savepoint_set`,
+  `savepoint_rollback`, and `savepoint_release` handlerton fields.
+- MariaDB savepoint storage contains only a MyLite `uint64_t` ID written with
+  `memcpy`; snapshot vectors stay in `Mylite_transaction_context`.
+- Savepoint set creates a clean transaction context when MyLite has only read
+  participation so far, then captures catalog and allocator state.
+- Statement-end commit inside an explicit transaction preserves a clean context
+  that still owns savepoint snapshots, and normal commit or rollback clears it.
+- Savepoint rollback restores the matching snapshot, keeps the target
+  savepoint active, discards newer snapshots, and keeps the transaction dirty
+  so commit/rollback still resolves through MariaDB.
+- Savepoint release discards the named snapshot and any newer MyLite snapshots.
+- Metadata-lock release remains conservative because MyLite does not set
+  `savepoint_rollback_can_release_mdl()`.
+
+Observed storage-smoke transaction report:
+
+- engine metadata: `transactions=YES`,
+- full rollback state: `transaction_rollback_rows=1:one,2:two`,
+- clean read-before-write savepoint rollback:
+  `transaction_clean_savepoint_rows=1:one,2:two`,
+- rollback to earlier savepoint:
+  `transaction_savepoint_rows=1:uno,2:two`,
+- release savepoint state:
+  `transaction_release_rows=1:uno,2:dos,4:four`,
+- commit state: `transaction_rows=1:uno,2:dos,4:four`,
+- rollback warnings: `transaction_rollback_warnings=none`,
+- fresh-process reopen state: `transaction_rows=1:uno,2:dos,4:four`.
 
 ## Test And Verification Plan
 
@@ -189,6 +243,8 @@ git diff --check
 Storage smoke should verify:
 
 - MyLite transaction metadata remains `transactions=YES`,
+- a savepoint set after a MyLite read but before the first MyLite write can
+  roll back later DML,
 - DML after `SAVEPOINT sp1` can be undone by `ROLLBACK TO SAVEPOINT sp1`,
 - DML after a later savepoint is discarded when rolling back to an earlier
   savepoint,
@@ -202,6 +258,8 @@ Storage smoke should verify:
 
 - MyLite installs savepoint hooks and a savepoint storage offset.
 - `SAVEPOINT` succeeds after a MyLite row-DML transaction has started.
+- `SAVEPOINT` after a MyLite read but before the first MyLite write captures a
+  rollback point for later DML.
 - `ROLLBACK TO SAVEPOINT` restores the expected in-memory row state.
 - `RELEASE SAVEPOINT` does not roll back changes but removes the savepoint.
 - Later savepoint snapshots are discarded after rollback/release truncation.

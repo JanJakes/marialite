@@ -214,18 +214,20 @@ The storage smoke verifies that rolled-back DML returns to the baseline row
 state with no warning `1196`, and that committed DML survives fresh-process
 reopen.
 
-This is still a bridge over the current whole-generation, in-memory row/index
-storage model. It gives atomic commit and rollback for the supported DML subset
-without adding a journal companion file yet. It is not the final pager design:
-page-level undo/redo, savepoints, XA, transactional DDL, MVCC, and useful
-concurrent writer behavior still need dedicated formats and tests before the
-bridge can be retired.
+MyLite savepoints reuse the same in-memory transaction context. MariaDB
+savepoint storage holds a small MyLite savepoint ID, while the actual catalog
+and allocator snapshots stay in the THD-owned MyLite transaction context.
+Savepoints are captured even when MyLite is only a clean read participant so
+far, so a later MyLite write can roll back to a savepoint established after a
+read. The storage smoke verifies rollback to savepoint, release savepoint, and
+fresh-process reopen after committing post-savepoint state.
 
-The first savepoint design should reuse the same in-memory transaction context:
-MariaDB savepoint storage holds a small MyLite savepoint ID, while the actual
-catalog and allocator snapshots stay in the THD-owned MyLite transaction
-context. This keeps savepoints file-format neutral for the current bridge and
-defers page-level savepoint undo until the pager design exists.
+This is still a bridge over the current whole-generation, in-memory row/index
+storage model. It gives atomic commit, rollback, and savepoint rollback for the
+supported DML subset without adding a journal companion file yet. It is not the
+final pager design: page-level undo/redo, XA, transactional DDL, MVCC, and
+useful concurrent writer behavior still need dedicated formats and tests before
+the bridge can be retired.
 
 Configured primary files are currently single-process owned. MyLite opens the
 primary `.mylite` file with a retained descriptor, takes a nonblocking

@@ -89,11 +89,19 @@ struct Mylite_transaction_snapshot
   std::vector<Mylite_free_page_range> pending_free_page_ranges;
 };
 
+struct Mylite_savepoint_snapshot
+{
+  uint64_t id;
+  Mylite_transaction_snapshot snapshot;
+};
+
 struct Mylite_transaction_context
 {
   bool dirty;
+  uint64_t next_savepoint_id;
   Mylite_transaction_snapshot statement;
   Mylite_transaction_snapshot transaction;
+  std::vector<Mylite_savepoint_snapshot> savepoints;
 };
 
 struct Mylite_catalog_header
@@ -121,6 +129,9 @@ static handler *mylite_create_handler(handlerton *hton, TABLE_SHARE *table,
                                       MEM_ROOT *mem_root);
 static int mylite_commit(THD *thd, bool all);
 static int mylite_rollback(THD *thd, bool all);
+static int mylite_savepoint_set(THD *thd, void *sv);
+static int mylite_savepoint_rollback(THD *thd, void *sv);
+static int mylite_savepoint_release(THD *thd, void *sv);
 static int mylite_discover_table(handlerton *hton, THD *thd,
                                  TABLE_SHARE *share);
 static int mylite_discover_table_names(handlerton *hton,
@@ -248,6 +259,14 @@ static bool mylite_capture_snapshot_locked(
 static void mylite_restore_snapshot_locked(
     const Mylite_transaction_snapshot &snapshot);
 static void mylite_clear_snapshot(Mylite_transaction_snapshot *snapshot);
+static void mylite_store_savepoint_id(void *sv, uint64_t id);
+static uint64_t mylite_load_savepoint_id(const void *sv);
+static Mylite_savepoint_snapshot *mylite_find_savepoint_snapshot(
+    Mylite_transaction_context *context, uint64_t id);
+static void mylite_discard_savepoints_newer_than(
+    Mylite_transaction_context *context, uint64_t id);
+static void mylite_discard_savepoints_from(Mylite_transaction_context *context,
+                                           uint64_t id);
 static bool mylite_thd_in_explicit_transaction(THD *thd);
 static void mylite_clear_catalog_error();
 static void mylite_set_catalog_error(int error);
@@ -543,6 +562,10 @@ static int mylite_init_func(void *p)
   mylite_hton->create= mylite_create_handler;
   mylite_hton->commit= mylite_commit;
   mylite_hton->rollback= mylite_rollback;
+  mylite_hton->savepoint_offset= sizeof(uint64_t);
+  mylite_hton->savepoint_set= mylite_savepoint_set;
+  mylite_hton->savepoint_rollback= mylite_savepoint_rollback;
+  mylite_hton->savepoint_release= mylite_savepoint_release;
   mylite_hton->flags= HTON_NO_PARTITION | HTON_TEMPORARY_NOT_SUPPORTED;
   mylite_hton->tablefile_extensions= ha_mylite_exts;
   mylite_hton->discover_table= mylite_discover_table;
@@ -569,6 +592,9 @@ static int mylite_commit(THD *thd, bool all)
 
   if (!context->dirty)
   {
+    if (!all && mylite_thd_in_explicit_transaction(thd) &&
+        !context->savepoints.empty())
+      DBUG_RETURN(0);
     mylite_clear_transaction_context_locked(thd, context);
     DBUG_RETURN(0);
   }
@@ -611,6 +637,76 @@ static int mylite_rollback(THD *thd, bool all)
   mylite_clear_snapshot(&context->statement);
   if (!mylite_thd_in_explicit_transaction(thd))
     mylite_clear_transaction_context_locked(thd, context);
+  DBUG_RETURN(0);
+}
+
+static int mylite_savepoint_set(THD *thd, void *sv)
+{
+  DBUG_ENTER("mylite_savepoint_set");
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  Mylite_transaction_context *context=
+    mylite_get_transaction_context(thd, true);
+  if (!context)
+    DBUG_RETURN(HA_ERR_OUT_OF_MEM);
+
+  Mylite_savepoint_snapshot savepoint;
+  savepoint.id= ++context->next_savepoint_id;
+  if (!mylite_capture_snapshot_locked(&savepoint.snapshot))
+    DBUG_RETURN(HA_ERR_OUT_OF_MEM);
+
+  try
+  {
+    context->savepoints.push_back(savepoint);
+  }
+  catch (const std::bad_alloc &)
+  {
+    mylite_clear_snapshot(&savepoint.snapshot);
+    DBUG_RETURN(HA_ERR_OUT_OF_MEM);
+  }
+
+  mylite_store_savepoint_id(sv, savepoint.id);
+  DBUG_RETURN(0);
+}
+
+static int mylite_savepoint_rollback(THD *thd, void *sv)
+{
+  DBUG_ENTER("mylite_savepoint_rollback");
+  const uint64_t id= mylite_load_savepoint_id(sv);
+  if (id == 0)
+    DBUG_RETURN(0);
+
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  Mylite_transaction_context *context=
+    mylite_get_transaction_context(thd, false);
+  if (!context)
+    DBUG_RETURN(HA_ERR_NO_SAVEPOINT);
+
+  Mylite_savepoint_snapshot *savepoint=
+    mylite_find_savepoint_snapshot(context, id);
+  if (!savepoint)
+    DBUG_RETURN(HA_ERR_NO_SAVEPOINT);
+
+  mylite_restore_snapshot_locked(savepoint->snapshot);
+  mylite_discard_savepoints_newer_than(context, id);
+  context->dirty= true;
+  mylite_dirty_writer_thd= thd;
+  DBUG_RETURN(0);
+}
+
+static int mylite_savepoint_release(THD *thd, void *sv)
+{
+  DBUG_ENTER("mylite_savepoint_release");
+  const uint64_t id= mylite_load_savepoint_id(sv);
+  if (id == 0)
+    DBUG_RETURN(0);
+
+  std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
+  Mylite_transaction_context *context=
+    mylite_get_transaction_context(thd, false);
+  if (!context)
+    DBUG_RETURN(HA_ERR_NO_SAVEPOINT);
+
+  mylite_discard_savepoints_from(context, id);
   DBUG_RETURN(0);
 }
 
@@ -2211,6 +2307,49 @@ static void mylite_clear_snapshot(Mylite_transaction_snapshot *snapshot)
   snapshot->active= false;
   snapshot->catalog.clear();
   snapshot->pending_free_page_ranges.clear();
+}
+
+static void mylite_store_savepoint_id(void *sv, uint64_t id)
+{
+  std::memcpy(sv, &id, sizeof(id));
+}
+
+static uint64_t mylite_load_savepoint_id(const void *sv)
+{
+  uint64_t id= 0;
+  std::memcpy(&id, sv, sizeof(id));
+  return id;
+}
+
+static Mylite_savepoint_snapshot *mylite_find_savepoint_snapshot(
+    Mylite_transaction_context *context, uint64_t id)
+{
+  for (Mylite_savepoint_snapshot &savepoint : context->savepoints)
+    if (savepoint.id == id)
+      return &savepoint;
+  return nullptr;
+}
+
+static void mylite_discard_savepoints_newer_than(
+    Mylite_transaction_context *context, uint64_t id)
+{
+  std::vector<Mylite_savepoint_snapshot>::iterator first=
+    context->savepoints.begin();
+  for (; first != context->savepoints.end(); ++first)
+    if (first->id > id)
+      break;
+  context->savepoints.erase(first, context->savepoints.end());
+}
+
+static void mylite_discard_savepoints_from(Mylite_transaction_context *context,
+                                           uint64_t id)
+{
+  std::vector<Mylite_savepoint_snapshot>::iterator first=
+    context->savepoints.begin();
+  for (; first != context->savepoints.end(); ++first)
+    if (first->id >= id)
+      break;
+  context->savepoints.erase(first, context->savepoints.end());
 }
 
 static bool mylite_thd_in_explicit_transaction(THD *thd)
