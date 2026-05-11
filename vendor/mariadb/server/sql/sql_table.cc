@@ -11744,6 +11744,15 @@ do_continue:;
 
       goto end_inplace;
     }
+    else if (create_info->db_type && create_info->db_type->discover_table)
+    {
+      /*
+        Discovery-based engines do not use persistent frm files. If the
+        in-place probe wrote a temporary frm before falling back to copy,
+        remove it before the later handler rename can install a sidecar.
+      */
+      cleanup_table_after_inplace_alter(&altered_table);
+    }
     else
       cleanup_table_after_inplace_alter_keep_files(&altered_table);
   }

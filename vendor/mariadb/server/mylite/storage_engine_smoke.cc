@@ -92,6 +92,11 @@ struct SmokeResult
   std::string temporary_base_rows;
   std::string key_lookup_note;
   std::string key_order_ids;
+  std::string index_ddl_created_count;
+  std::string index_ddl_lookup_id;
+  std::string index_ddl_order_ids;
+  std::string index_ddl_dropped_count;
+  std::string index_ddl_rows;
   std::string duplicate_key;
   std::string update_duplicate_key;
   std::string unsupported_reverse_key;
@@ -105,6 +110,11 @@ struct SmokeResult
   std::string persisted_key_order_ids;
   std::string persisted_note_lookup_id;
   std::string persisted_note_order_ids;
+  std::string persisted_index_ddl_created_count;
+  std::string persisted_index_ddl_dropped_count;
+  std::string persisted_index_ddl_recreated_count;
+  std::string persisted_index_ddl_lookup_id;
+  std::string persisted_index_ddl_order_ids;
   std::string persisted_large_lengths;
   std::string persisted_large_edges;
   std::string persisted_wide_count;
@@ -1627,6 +1637,94 @@ static bool exercise_index_dml(MYSQL *mysql, SmokeResult *result)
     return false;
 
   if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.index_ddl_rows "
+                         "(id INT NOT NULL, note VARCHAR(12) NOT NULL, "
+                         "PRIMARY KEY(id)) ENGINE=MYLITE",
+                         "CREATE index DDL table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.index_ddl_rows VALUES "
+                         "(2, 'two'), (1, 'one'), (3, 'three')",
+                         "INSERT index DDL rows", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "CREATE INDEX note_created "
+                         "ON mylite.index_ddl_rows(note)",
+                         "CREATE standalone index", result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT COUNT(*) FROM information_schema.STATISTICS "
+        "WHERE TABLE_SCHEMA = 'mylite' "
+        "AND TABLE_NAME = 'index_ddl_rows' "
+        "AND INDEX_NAME = 'note_created'",
+        "standalone index metadata after CREATE",
+        &result->index_ddl_created_count, result))
+    return false;
+  if (result->index_ddl_created_count != "1")
+  {
+    result->message= "standalone index metadata was not created";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT id FROM mylite.index_ddl_rows "
+                          "FORCE INDEX(note_created) WHERE note = 'three'",
+                          "standalone index lookup",
+                          &result->index_ddl_lookup_id, result))
+    return false;
+  if (result->index_ddl_lookup_id != "3")
+  {
+    result->message= "standalone index lookup returned an unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(id ORDER BY note SEPARATOR ',') "
+                          "FROM mylite.index_ddl_rows "
+                          "FORCE INDEX(note_created)",
+                          "standalone index order",
+                          &result->index_ddl_order_ids, result))
+    return false;
+  if (result->index_ddl_order_ids != "1,3,2")
+  {
+    result->message= "standalone index order returned an unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "DROP INDEX note_created "
+                         "ON mylite.index_ddl_rows",
+                         "DROP standalone index", result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT COUNT(*) FROM information_schema.STATISTICS "
+        "WHERE TABLE_SCHEMA = 'mylite' "
+        "AND TABLE_NAME = 'index_ddl_rows' "
+        "AND INDEX_NAME = 'note_created'",
+        "standalone index metadata after DROP",
+        &result->index_ddl_dropped_count, result))
+    return false;
+  if (result->index_ddl_dropped_count != "0")
+  {
+    result->message= "standalone index metadata was not dropped";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(CONCAT(id, ':', note) "
+                          "ORDER BY id SEPARATOR ',') "
+                          "FROM mylite.index_ddl_rows",
+                          "standalone index DDL rows",
+                          &result->index_ddl_rows, result))
+    return false;
+  if (result->index_ddl_rows != "1:one,2:two,3:three")
+  {
+    result->message= "standalone index DDL rows changed";
+    return false;
+  }
+  if (!execute_statement(mysql, "DROP TABLE mylite.index_ddl_rows",
+                         "DROP index DDL table", result))
+    return false;
+
+  if (!execute_statement(mysql,
                          "CREATE TABLE mylite.auto_rows "
                          "(id INT NOT NULL AUTO_INCREMENT, "
                          "note VARCHAR(12) NOT NULL, PRIMARY KEY(id)) "
@@ -1845,6 +1943,103 @@ static bool exercise_persistence_write(MYSQL *mysql, SmokeResult *result)
   if (result->persisted_note_order_ids != "1,3,2")
   {
     result->message= "persisted write note order returned an unexpected value";
+    return false;
+  }
+
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.persisted_index_ddl "
+                         "(id INT NOT NULL, note VARCHAR(12) NOT NULL, "
+                         "PRIMARY KEY(id)) ENGINE=MYLITE",
+                         "CREATE persisted index DDL table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.persisted_index_ddl VALUES "
+                         "(2, 'two'), (1, 'one'), (3, 'three')",
+                         "INSERT persisted index DDL rows", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "CREATE INDEX note_created "
+                         "ON mylite.persisted_index_ddl(note)",
+                         "CREATE persisted standalone index", result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT COUNT(*) FROM information_schema.STATISTICS "
+        "WHERE TABLE_SCHEMA = 'mylite' "
+        "AND TABLE_NAME = 'persisted_index_ddl' "
+        "AND INDEX_NAME = 'note_created'",
+        "persisted write standalone index metadata after CREATE",
+        &result->persisted_index_ddl_created_count, result))
+    return false;
+  if (result->persisted_index_ddl_created_count != "1")
+  {
+    result->message= "persisted standalone index metadata was not created";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "DROP INDEX note_created "
+                         "ON mylite.persisted_index_ddl",
+                         "DROP persisted standalone index", result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT COUNT(*) FROM information_schema.STATISTICS "
+        "WHERE TABLE_SCHEMA = 'mylite' "
+        "AND TABLE_NAME = 'persisted_index_ddl' "
+        "AND INDEX_NAME = 'note_created'",
+        "persisted write standalone index metadata after DROP",
+        &result->persisted_index_ddl_dropped_count, result))
+    return false;
+  if (result->persisted_index_ddl_dropped_count != "0")
+  {
+    result->message= "persisted standalone index metadata was not dropped";
+    return false;
+  }
+  if (!execute_statement(mysql,
+                         "CREATE INDEX note_recreated "
+                         "ON mylite.persisted_index_ddl(note)",
+                         "CREATE persisted replacement standalone index",
+                         result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT COUNT(*) FROM information_schema.STATISTICS "
+        "WHERE TABLE_SCHEMA = 'mylite' "
+        "AND TABLE_NAME = 'persisted_index_ddl' "
+        "AND INDEX_NAME = 'note_recreated'",
+        "persisted write standalone index metadata after replacement CREATE",
+        &result->persisted_index_ddl_recreated_count, result))
+    return false;
+  if (result->persisted_index_ddl_recreated_count != "1")
+  {
+    result->message= "persisted replacement index metadata was not created";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT id FROM mylite.persisted_index_ddl "
+                          "FORCE INDEX(note_recreated) "
+                          "WHERE note = 'three'",
+                          "persisted write standalone index lookup",
+                          &result->persisted_index_ddl_lookup_id, result))
+    return false;
+  if (result->persisted_index_ddl_lookup_id != "3")
+  {
+    result->message= "persisted standalone index lookup returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(id ORDER BY note "
+                          "SEPARATOR ',') "
+                          "FROM mylite.persisted_index_ddl "
+                          "FORCE INDEX(note_recreated)",
+                          "persisted write standalone index order",
+                          &result->persisted_index_ddl_order_ids, result))
+    return false;
+  if (result->persisted_index_ddl_order_ids != "1,3,2")
+  {
+    result->message= "persisted standalone index order returned an "
+                     "unexpected value";
     return false;
   }
 
@@ -2329,6 +2524,68 @@ static bool exercise_persistence_read(MYSQL *mysql, SmokeResult *result)
   if (result->persisted_note_order_ids != "1,3,2")
   {
     result->message= "persisted read note order returned an unexpected value";
+    return false;
+  }
+
+  if (!verify_table_present(mysql,
+                            "SHOW TABLES FROM mylite "
+                            "LIKE 'persisted_index_ddl'",
+                            "persisted index DDL table", result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT COUNT(*) FROM information_schema.STATISTICS "
+        "WHERE TABLE_SCHEMA = 'mylite' "
+        "AND TABLE_NAME = 'persisted_index_ddl' "
+        "AND INDEX_NAME = 'note_created'",
+        "persisted read standalone index metadata after DROP",
+        &result->persisted_index_ddl_dropped_count, result))
+    return false;
+  if (result->persisted_index_ddl_dropped_count != "0")
+  {
+    result->message= "persisted dropped index metadata was rediscovered";
+    return false;
+  }
+  if (!fetch_single_value(
+        mysql,
+        "SELECT COUNT(*) FROM information_schema.STATISTICS "
+        "WHERE TABLE_SCHEMA = 'mylite' "
+        "AND TABLE_NAME = 'persisted_index_ddl' "
+        "AND INDEX_NAME = 'note_recreated'",
+        "persisted read standalone index metadata after replacement CREATE",
+        &result->persisted_index_ddl_recreated_count, result))
+    return false;
+  if (result->persisted_index_ddl_recreated_count != "1")
+  {
+    result->message= "persisted replacement index metadata was not "
+                     "rediscovered";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT id FROM mylite.persisted_index_ddl "
+                          "FORCE INDEX(note_recreated) "
+                          "WHERE note = 'three'",
+                          "persisted read standalone index lookup",
+                          &result->persisted_index_ddl_lookup_id, result))
+    return false;
+  if (result->persisted_index_ddl_lookup_id != "3")
+  {
+    result->message= "persisted read standalone index lookup returned an "
+                     "unexpected value";
+    return false;
+  }
+  if (!fetch_single_value(mysql,
+                          "SELECT GROUP_CONCAT(id ORDER BY note "
+                          "SEPARATOR ',') "
+                          "FROM mylite.persisted_index_ddl "
+                          "FORCE INDEX(note_recreated)",
+                          "persisted read standalone index order",
+                          &result->persisted_index_ddl_order_ids, result))
+    return false;
+  if (result->persisted_index_ddl_order_ids != "1,3,2")
+  {
+    result->message= "persisted read standalone index order returned an "
+                     "unexpected value";
     return false;
   }
 
@@ -3400,6 +3657,18 @@ static void write_report(const SmokeOptions &options,
     report << "key_lookup_note=" << result.key_lookup_note << "\n";
   if (!result.key_order_ids.empty())
     report << "key_order_ids=" << result.key_order_ids << "\n";
+  if (!result.index_ddl_created_count.empty())
+    report << "index_ddl_created_count="
+           << result.index_ddl_created_count << "\n";
+  if (!result.index_ddl_lookup_id.empty())
+    report << "index_ddl_lookup_id=" << result.index_ddl_lookup_id << "\n";
+  if (!result.index_ddl_order_ids.empty())
+    report << "index_ddl_order_ids=" << result.index_ddl_order_ids << "\n";
+  if (!result.index_ddl_dropped_count.empty())
+    report << "index_ddl_dropped_count="
+           << result.index_ddl_dropped_count << "\n";
+  if (!result.index_ddl_rows.empty())
+    report << "index_ddl_rows=" << result.index_ddl_rows << "\n";
   if (!result.duplicate_key.empty())
     report << "duplicate_key=" << result.duplicate_key << "\n";
   if (!result.update_duplicate_key.empty())
@@ -3433,6 +3702,21 @@ static void write_report(const SmokeOptions &options,
   if (!result.persisted_note_order_ids.empty())
     report << "persisted_note_order_ids="
            << result.persisted_note_order_ids << "\n";
+  if (!result.persisted_index_ddl_created_count.empty())
+    report << "persisted_index_ddl_created_count="
+           << result.persisted_index_ddl_created_count << "\n";
+  if (!result.persisted_index_ddl_dropped_count.empty())
+    report << "persisted_index_ddl_dropped_count="
+           << result.persisted_index_ddl_dropped_count << "\n";
+  if (!result.persisted_index_ddl_recreated_count.empty())
+    report << "persisted_index_ddl_recreated_count="
+           << result.persisted_index_ddl_recreated_count << "\n";
+  if (!result.persisted_index_ddl_lookup_id.empty())
+    report << "persisted_index_ddl_lookup_id="
+           << result.persisted_index_ddl_lookup_id << "\n";
+  if (!result.persisted_index_ddl_order_ids.empty())
+    report << "persisted_index_ddl_order_ids="
+           << result.persisted_index_ddl_order_ids << "\n";
   if (!result.persisted_large_lengths.empty())
     report << "persisted_large_lengths="
            << result.persisted_large_lengths << "\n";

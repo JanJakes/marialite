@@ -24,6 +24,9 @@ This slice adds that coverage and fixes any narrow routing issue it exposes.
   definition image for copy/in-place decision making.
 - `vendor/mariadb/server/sql/sql_table.cc:11805` creates the replacement
   storage-engine table for copy ALTER when in-place ALTER is not used.
+- `vendor/mariadb/server/sql/sql_table.cc:11747` now removes temporary frm
+  files created by an in-place ALTER probe before a discovery-based engine
+  falls back to copy ALTER.
 - `vendor/mariadb/server/sql/handler.cc:5818` makes handler operations outside
   the base in-place allowlist fall back to copy ALTER.
 - `vendor/mariadb/server/storage/mylite/ha_mylite.cc:871` validates supported
@@ -55,12 +58,18 @@ This slice will:
 
 ## Proposed Design
 
-No broad MariaDB source change is expected. MariaDB maps standalone
-`CREATE INDEX` and `DROP INDEX` to `mysql_alter_table()`. MyLite should let
-that copy-ALTER path create a replacement MyLite table definition, copy rows
-through the handler, rebuild durable `INDEXPAGE` roots from copied rows, and
-swap the replacement definition into the catalog through the existing
-rename/delete path.
+MariaDB maps standalone `CREATE INDEX` and `DROP INDEX` to
+`mysql_alter_table()`. MyLite should let that copy-ALTER path create a
+replacement MyLite table definition, copy rows through the handler, rebuild
+durable `INDEXPAGE` roots from copied rows, and swap the replacement
+definition into the catalog through the existing rename/delete path.
+
+The initial implementation exposed one SQL-layer routing defect: for default
+standalone index DDL, MariaDB may write a temporary frm image for an in-place
+ALTER probe before deciding to use copy ALTER. Discovery-based engines such as
+MyLite do not use persistent frm files, so the fallback cleanup must delete
+that probe frm before the later handler rename can install it as a durable
+sidecar.
 
 Add storage smoke coverage in two places:
 
@@ -80,6 +89,8 @@ than adding a SQL-layer special case.
 ## Affected Subsystems
 
 - Storage engine smoke DDL/DML and persistence coverage.
+- SQL-layer cleanup after an in-place ALTER probe falls back to copy ALTER for
+  discovery-based engines.
 - MyLite catalog table-definition and index-root rewrite behavior if the smoke
   exposes a defect.
 - Roadmap and single-file storage documentation.
@@ -160,4 +171,58 @@ No new dependency or licensing change.
 
 ## Implementation Result
 
-Pending.
+Implemented in `vendor/mariadb/server/mylite/storage_engine_smoke.cc` and
+`vendor/mariadb/server/sql/sql_table.cc`.
+
+The storage smoke now verifies:
+
+- same-process standalone `CREATE INDEX note_created` metadata, forced lookup,
+  ordered reads, standalone `DROP INDEX`, row preservation, and table cleanup;
+- persisted `mylite.persisted_index_ddl` with `note_created` created and
+  dropped, `note_recreated` created, and fresh-process reopen proving
+  `note_created` remains absent while `note_recreated` remains discoverable and
+  usable;
+- no `.frm` artifacts in the same-process, catalog write, or catalog read
+  storage smoke reports.
+
+The implementation also removes temporary frm files created by MariaDB's
+in-place ALTER probe when a discovery-based engine falls back to copy ALTER.
+Without that cleanup, standalone index DDL passed SQL behavior but left
+`datadir/mylite/persisted_index_ddl.frm` during the catalog write phase.
+
+Verification on 2026-05-11:
+
+- `git diff --check`
+- `bash -n tools/run-storage-engine-smoke.sh
+  tools/run-compatibility-test-harness.sh`
+- `MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh`
+- `MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh`
+
+Observed report fields:
+
+- `build/mariadb-minsize/mylite-storage-engine-report.txt`:
+  `status=0`, `index_ddl_created_count=1`, `index_ddl_lookup_id=3`,
+  `index_ddl_order_ids=1,3,2`, `index_ddl_dropped_count=0`,
+  `index_ddl_rows=1:one,2:two,3:three`, `FRM Artifacts=none`.
+- `build/mariadb-minsize/mylite-catalog-write-report.txt`:
+  `status=0`, `persisted_index_ddl_created_count=1`,
+  `persisted_index_ddl_dropped_count=0`,
+  `persisted_index_ddl_recreated_count=1`,
+  `persisted_index_ddl_lookup_id=3`,
+  `persisted_index_ddl_order_ids=1,3,2`, `FRM Artifacts=none`.
+- `build/mariadb-minsize/mylite-catalog-read-report.txt`:
+  `status=0`, `persisted_index_ddl_dropped_count=0`,
+  `persisted_index_ddl_recreated_count=1`,
+  `persisted_index_ddl_lookup_id=3`,
+  `persisted_index_ddl_order_ids=1,3,2`,
+  `index_payloads` includes `mylite.persisted_index_ddl:0` and
+  `mylite.persisted_index_ddl:1`, `FRM Artifacts=none`.
+- `build/mariadb-minsize/mylite-compatibility-harness-report.txt`:
+  all groups reported `status=0`.
+
+Post-implementation `MinSizeRel` artifact observations:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,413,714 bytes,
+  571 objects.
+- `build/mariadb-minsize/mylite/mylite-storage-engine-smoke`: 22,839,352
+  bytes.
