@@ -111,6 +111,7 @@ a lock timeout instead of misleading index corruption.
 | 28 | `blob-text-row-storage` | Done | Store non-key BLOB/TEXT row payloads inside existing row and overflow pages without persisting native row-buffer pointers. |
 | 29 | `libmylite-exec` | Done | Add the first public SQL execution convenience API over the opened embedded MyLite handle. |
 | 30 | `libmylite-statement-effects` | Done | Expose affected rows, generated insert ids, and warning counts through the public `libmylite` handle. |
+| 31 | `libmylite-prepared-statements` | In progress | Add the first public no-parameter prepared statement lifecycle and column accessors. |
 
 ## Size and profile direction
 
