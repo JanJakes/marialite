@@ -85,6 +85,7 @@ journal/WAL work.
 | 20 | `orphan-page-reclaim` | Done | Reclaim complete unreferenced pages left by rejected or unpublished generations after recovery accepts a safe catalog generation. |
 | 21 | `allocator-page-store` | Done | Store free-page ranges in a dedicated allocator page chain so catalog payload chains can reuse accepted free ranges. |
 | 22 | `transaction-boundary-semantics` | Done | Make MyLite's current non-transactional rollback boundary explicit in engine flags, tests, and docs before real journal/WAL work. |
+| 23 | `primary-file-locking` | In progress | Hold an exclusive advisory lock on the primary `.mylite` file so concurrent processes fail explicitly before cross-process concurrency exists. |
 
 ## Size and profile direction
 
