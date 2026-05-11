@@ -45,6 +45,13 @@ struct SmokeResult
   std::string exec_duplicate_key_message;
   std::string exec_reopen_rows;
   std::string statement_effects;
+  std::string prepared_param_message;
+  std::string prepared_columns;
+  std::string prepared_types;
+  std::string prepared_rows;
+  std::string prepared_reset_row;
+  std::string prepared_dml_rows;
+  std::string prepared_close_busy_message;
   std::vector<CaseResult> cases;
 };
 
@@ -84,6 +91,8 @@ static bool check_exec_dml_persistence(const SmokeOptions &options,
                                        SmokeResult *result);
 static bool check_statement_effects(const SmokeOptions &options,
                                     SmokeResult *result);
+static bool check_prepared_statement_api(const SmokeOptions &options,
+                                         SmokeResult *result);
 static bool exec_statement(mylite_db *db, const char *sql, const char *label,
                            SmokeResult *result);
 static bool exec_query_capture(mylite_db *db, const char *sql,
@@ -92,6 +101,9 @@ static bool exec_query_capture(mylite_db *db, const char *sql,
 static void append_statement_effect(SmokeResult *result, const char *label,
                                     const std::string &value);
 static std::string statement_effect_summary(mylite_db *db);
+static std::string prepared_row_summary(mylite_stmt *stmt);
+static std::string prepared_type_summary(mylite_stmt *stmt);
+static std::string hex_bytes(const void *data, size_t length);
 static int capture_exec_row(void *ctx, int column_count, char **values,
                             char **column_names);
 static bool record_result(SmokeResult *result, const char *label, int expected,
@@ -189,6 +201,9 @@ static int run_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "statement_effects";
   ok= check_statement_effects(options, result) && ok;
+
+  result->phase= "prepared_statements";
+  ok= check_prepared_statement_api(options, result) && ok;
 
   if (!ok)
   {
@@ -599,6 +614,151 @@ static bool check_statement_effects(const SmokeOptions &options,
   return ok;
 }
 
+static bool check_prepared_statement_api(const SmokeOptions &options,
+                                         SmokeResult *result)
+{
+  bool ok= true;
+  mylite_stmt *stmt= nullptr;
+  const char *tail= nullptr;
+  int rc= mylite_prepare(nullptr, "SELECT 1", 0, &stmt, &tail);
+  ok= record_result(result, "prepare_null_db", MYLITE_MISUSE, rc,
+                    nullptr) && ok;
+
+  rc= mylite_finalize(nullptr);
+  ok= record_result(result, "finalize_null", MYLITE_OK, rc, nullptr) && ok;
+
+  mylite_db *db= nullptr;
+  rc= mylite_open(options.database.c_str(), &db);
+  ok= record_result(result, "prepared_open", MYLITE_OK, rc, db) && ok;
+  if (!db)
+    return ok;
+
+  rc= mylite_prepare(db, nullptr, 0, &stmt, &tail);
+  ok= record_result(result, "prepare_null_sql", MYLITE_MISUSE, rc, db) &&
+      ok;
+
+  rc= mylite_prepare(db, "SELECT ?", 0, &stmt, &tail);
+  result->prepared_param_message= mylite_errmsg(db);
+  ok= record_result(result, "prepare_parameter_marker", MYLITE_MISUSE, rc,
+                    db) && ok;
+  if (result->prepared_param_message != "parameter binding is not implemented")
+    ok= false;
+
+  ok= exec_statement(db, "DROP TABLE IF EXISTS mylite.prepared_rows",
+                     "prepared_drop_existing", result) && ok;
+  ok= exec_statement(db,
+                     "CREATE TABLE mylite.prepared_rows "
+                     "(id INT NOT NULL, note VARCHAR(20), payload BLOB, "
+                     "PRIMARY KEY(id)) ENGINE=MYLITE",
+                     "prepared_create_table", result) && ok;
+  ok= exec_statement(db,
+                     "INSERT INTO mylite.prepared_rows VALUES "
+                     "(1, 'one', 0x610062), (2, NULL, NULL)",
+                     "prepared_insert_rows", result) && ok;
+
+  const char *select_sql=
+    "SELECT id, note, payload FROM mylite.prepared_rows ORDER BY id";
+  rc= mylite_prepare(db, select_sql, 0, &stmt, &tail);
+  ok= record_result(result, "prepare_select", MYLITE_OK, rc, db) && ok;
+  if (stmt)
+  {
+    if (tail != select_sql + std::strlen(select_sql))
+      ok= false;
+
+    std::vector<std::string> columns;
+    for (unsigned i= 0; i < mylite_column_count(stmt); ++i)
+      columns.push_back(mylite_column_name(stmt, i));
+    result->prepared_columns= join_strings(columns, ",");
+    result->prepared_types= prepared_type_summary(stmt);
+    if (result->prepared_columns != "id,note,payload" ||
+        result->prepared_types != "1,3,4")
+      ok= false;
+
+    std::vector<std::string> rows;
+    rc= mylite_step(stmt);
+    ok= record_result(result, "prepared_select_row_1", MYLITE_ROW, rc,
+                      db) && ok;
+    if (rc == MYLITE_ROW)
+      rows.push_back(prepared_row_summary(stmt));
+
+    rc= mylite_step(stmt);
+    ok= record_result(result, "prepared_select_row_2", MYLITE_ROW, rc,
+                      db) && ok;
+    if (rc == MYLITE_ROW)
+      rows.push_back(prepared_row_summary(stmt));
+
+    rc= mylite_step(stmt);
+    ok= record_result(result, "prepared_select_done", MYLITE_DONE, rc,
+                      db) && ok;
+    result->prepared_rows= join_strings(rows, ",");
+    if (result->prepared_rows != "1:one:610062,2:NULL:NULL")
+      ok= false;
+
+    rc= mylite_reset(stmt);
+    ok= record_result(result, "prepared_reset", MYLITE_OK, rc, db) && ok;
+    rc= mylite_step(stmt);
+    ok= record_result(result, "prepared_reset_row", MYLITE_ROW, rc, db) &&
+        ok;
+    if (rc == MYLITE_ROW)
+      result->prepared_reset_row= prepared_row_summary(stmt);
+    if (result->prepared_reset_row != "1:one:610062")
+      ok= false;
+
+    rc= mylite_finalize(stmt);
+    stmt= nullptr;
+    ok= record_result(result, "prepared_finalize_select", MYLITE_OK, rc,
+                      db) && ok;
+  }
+
+  rc= mylite_prepare(db,
+                     "INSERT INTO mylite.prepared_rows "
+                     "(id, note, payload) VALUES (3, 'three', 0x7a)",
+                     0, &stmt, &tail);
+  ok= record_result(result, "prepare_insert", MYLITE_OK, rc, db) && ok;
+  if (stmt)
+  {
+    rc= mylite_step(stmt);
+    ok= record_result(result, "prepared_insert_done", MYLITE_DONE, rc,
+                      db) && ok;
+    rc= mylite_finalize(stmt);
+    stmt= nullptr;
+    ok= record_result(result, "prepared_finalize_insert", MYLITE_OK, rc,
+                      db) && ok;
+  }
+
+  ExecCapture capture;
+  ok= exec_query_capture(db,
+                         "SELECT id, COALESCE(note, 'NULL') AS note "
+                         "FROM mylite.prepared_rows ORDER BY id",
+                         "prepared_dml_select", &capture, result) && ok;
+  result->prepared_dml_rows= join_strings(capture.rows, ",");
+  if (result->prepared_dml_rows != "1:one,2:NULL,3:three")
+    ok= false;
+
+  rc= mylite_prepare(db, "SELECT 1", 0, &stmt, &tail);
+  ok= record_result(result, "prepare_close_busy_select", MYLITE_OK, rc,
+                    db) && ok;
+  if (stmt)
+  {
+    rc= mylite_close(db);
+    result->prepared_close_busy_message= mylite_errmsg(db);
+    ok= record_result(result, "prepared_close_busy", MYLITE_BUSY, rc,
+                      db) && ok;
+    if (result->prepared_close_busy_message !=
+        "database handle has active statements")
+      ok= false;
+
+    rc= mylite_finalize(stmt);
+    stmt= nullptr;
+    ok= record_result(result, "prepared_finalize_busy", MYLITE_OK, rc,
+                      db) && ok;
+  }
+
+  rc= mylite_close(db);
+  ok= record_result(result, "prepared_close", MYLITE_OK, rc, nullptr) && ok;
+  return ok;
+}
+
 static bool exec_statement(mylite_db *db, const char *sql, const char *label,
                            SmokeResult *result)
 {
@@ -629,6 +789,38 @@ static std::string statement_effect_summary(mylite_db *db)
   return std::to_string(mylite_changes(db)) + ":" +
          std::to_string(mylite_last_insert_id(db)) + ":" +
          std::to_string(mylite_warning_count(db));
+}
+
+static std::string prepared_row_summary(mylite_stmt *stmt)
+{
+  const char *note= mylite_column_text(stmt, 1);
+  const void *payload= mylite_column_blob(stmt, 2);
+  return std::to_string(mylite_column_int64(stmt, 0)) + ":" +
+         (note ? note : "NULL") + ":" +
+         (payload ? hex_bytes(payload, mylite_column_bytes(stmt, 2)) :
+          "NULL");
+}
+
+static std::string prepared_type_summary(mylite_stmt *stmt)
+{
+  std::vector<std::string> types;
+  for (unsigned i= 0; i < mylite_column_count(stmt); ++i)
+    types.push_back(std::to_string(mylite_column_type(stmt, i)));
+  return join_strings(types, ",");
+}
+
+static std::string hex_bytes(const void *data, size_t length)
+{
+  static const char digits[]= "0123456789abcdef";
+  const unsigned char *bytes= static_cast<const unsigned char *>(data);
+  std::string result;
+  result.reserve(length * 2);
+  for (size_t i= 0; i < length; ++i)
+  {
+    result.push_back(digits[bytes[i] >> 4]);
+    result.push_back(digits[bytes[i] & 0x0f]);
+  }
+  return result;
 }
 
 static int capture_exec_row(void *ctx, int column_count, char **values,
@@ -736,6 +928,22 @@ static void write_report(const SmokeOptions &options,
     report << "exec_reopen_rows=" << result.exec_reopen_rows << "\n";
   if (!result.statement_effects.empty())
     report << "statement_effects=" << result.statement_effects << "\n";
+  if (!result.prepared_param_message.empty())
+    report << "prepared_param_message=" << result.prepared_param_message
+           << "\n";
+  if (!result.prepared_columns.empty())
+    report << "prepared_columns=" << result.prepared_columns << "\n";
+  if (!result.prepared_types.empty())
+    report << "prepared_types=" << result.prepared_types << "\n";
+  if (!result.prepared_rows.empty())
+    report << "prepared_rows=" << result.prepared_rows << "\n";
+  if (!result.prepared_reset_row.empty())
+    report << "prepared_reset_row=" << result.prepared_reset_row << "\n";
+  if (!result.prepared_dml_rows.empty())
+    report << "prepared_dml_rows=" << result.prepared_dml_rows << "\n";
+  if (!result.prepared_close_busy_message.empty())
+    report << "prepared_close_busy_message="
+           << result.prepared_close_busy_message << "\n";
   report << "\n";
 
   report << "## Cases\n\n";

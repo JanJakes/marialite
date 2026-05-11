@@ -78,9 +78,9 @@ Suggested flags:
 `profile` can select a build/runtime profile such as `default`, `strict`,
 `compat`, or `no-temp-files`.
 
-`mylite_close()` should return `MYLITE_BUSY` if statements or other
-resources still depend on the handle. A later `mylite_close_v2()` can offer
-deferred-close semantics if there is a real need.
+`mylite_close()` returns `MYLITE_BUSY` if statements or other resources still
+depend on the handle. A later `mylite_close_v2()` can offer deferred-close
+semantics if there is a real need.
 
 The first implementation is intentionally narrower than the final API shape:
 it supports one initialized database path per process because MariaDB's
@@ -137,6 +137,14 @@ Return values:
 - `MYLITE_DONE` when execution is complete,
 - another code on error.
 
+The first implementation supports no-parameter statements. `mylite_step()`
+executes lazily on the first call, buffers result sets, and keeps column values
+valid until the next `mylite_step()`, `mylite_reset()`, or
+`mylite_finalize()`. `sql_len == 0` uses `strlen(sql)` for C-string
+convenience, and `tail`, when supplied, points to the end of the prepared SQL
+on success. Statements containing parameter markers return `MYLITE_MISUSE`
+until binding APIs are implemented.
+
 Bind indexes are 1-based, matching SQLite's convention for parameter slots.
 
 ## Bindings
@@ -183,6 +191,14 @@ by the handle, owned by the statement, or caller-owned.
 ## Columns
 
 ```c
+typedef enum mylite_column_kind {
+  MYLITE_INTEGER = 1,
+  MYLITE_FLOAT = 2,
+  MYLITE_TEXT = 3,
+  MYLITE_BLOB = 4,
+  MYLITE_NULL = 5
+} mylite_column_kind;
+
 unsigned mylite_column_count(mylite_stmt *stmt);
 const char *mylite_column_name(mylite_stmt *stmt, unsigned column);
 int mylite_column_type(mylite_stmt *stmt, unsigned column);

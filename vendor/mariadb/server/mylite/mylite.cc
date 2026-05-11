@@ -39,6 +39,25 @@ struct mylite_db
   std::string sqlstate= "00000";
   std::string errmsg= "not an error";
   bool runtime_ref= false;
+  unsigned open_statements= 0;
+};
+
+struct mylite_stmt
+{
+  mylite_db *db= nullptr;
+  MYSQL_STMT *stmt= nullptr;
+  MYSQL_RES *metadata= nullptr;
+  std::vector<std::string> column_names;
+  std::vector<int> column_types;
+  std::vector<MYSQL_BIND> result_binds;
+  std::vector<std::vector<char>> column_buffers;
+  std::vector<unsigned long> column_lengths;
+  std::vector<my_bool> column_is_null;
+  std::vector<my_bool> column_errors;
+  bool executed= false;
+  bool result_bound= false;
+  bool has_current_row= false;
+  bool done= false;
 };
 
 namespace {
@@ -82,11 +101,22 @@ void stop_runtime_at_exit();
 int connect_handle(mylite_db *db);
 int execute_result_callback(mylite_db *db, MYSQL_RES *result,
                             mylite_exec_callback callback, void *ctx);
+int execute_prepared_statement(mylite_stmt *stmt);
+int bind_prepared_result(mylite_stmt *stmt);
+int fetch_prepared_row(mylite_stmt *stmt);
+int fetch_truncated_columns(mylite_stmt *stmt);
+void reset_prepared_result_state(mylite_stmt *stmt);
+void free_statement_metadata(mylite_stmt *stmt);
+int set_error_from_stmt(mylite_stmt *stmt);
+int set_error_from_mysql_stmt(mylite_db *db, MYSQL_STMT *stmt);
 int set_error_from_mysql(mylite_db *db);
 int return_error_with_message(mylite_db *db, char **errmsg);
 int return_standalone_error(int code, const char *message, char **errmsg);
 char *duplicate_message(const std::string &message);
 int classify_mariadb_error(const char *sqlstate);
+bool valid_column(const mylite_stmt *stmt, unsigned column);
+int map_column_type(const MYSQL_FIELD &field);
+enum_field_types bind_buffer_type(int column_type);
 
 } // namespace
 
@@ -151,6 +181,12 @@ extern "C" int mylite_close(mylite_db *db)
     return MYLITE_OK;
 
   std::lock_guard<std::mutex> guard(runtime_mutex);
+  if (db->open_statements != 0)
+  {
+    return set_error(db, MYLITE_BUSY, 0, "HY000",
+                     "database handle has active statements");
+  }
+
   if (db->mysql)
   {
     mysql_close(db->mysql);
@@ -252,6 +288,210 @@ extern "C" unsigned long long mylite_last_insert_id(mylite_db *db)
 extern "C" unsigned mylite_warning_count(mylite_db *db)
 {
   return db && db->mysql ? mysql_warning_count(db->mysql) : 0;
+}
+
+extern "C" int mylite_prepare(mylite_db *db, const char *sql,
+                              size_t sql_len, mylite_stmt **out_stmt,
+                              const char **tail)
+{
+  if (out_stmt)
+    *out_stmt= nullptr;
+  if (tail)
+    *tail= sql;
+
+  if (!db)
+    return MYLITE_MISUSE;
+  if (!out_stmt)
+    return set_error(db, MYLITE_MISUSE, 0, "HY000",
+                     "statement output pointer is required");
+  if (!sql)
+    return set_error(db, MYLITE_MISUSE, 0, "HY000",
+                     "SQL string is required");
+  if (!db->mysql)
+    return set_error(db, MYLITE_MISUSE, 0, "HY000",
+                     "database handle is not open");
+
+  const size_t effective_len= sql_len != 0 ? sql_len : std::strlen(sql);
+  if (effective_len > ULONG_MAX)
+    return set_error(db, MYLITE_MISUSE, 0, "HY000",
+                     "SQL string is too long");
+
+  MYSQL_STMT *mysql_stmt= mysql_stmt_init(db->mysql);
+  if (!mysql_stmt)
+    return set_error(db, MYLITE_NOMEM, 0, "HY001", "mysql_stmt_init failed");
+
+  if (mysql_stmt_prepare(mysql_stmt, sql,
+                         static_cast<unsigned long>(effective_len)) != 0)
+  {
+    const int rc= set_error_from_mysql_stmt(db, mysql_stmt);
+    mysql_stmt_close(mysql_stmt);
+    return rc;
+  }
+
+  if (mysql_stmt_param_count(mysql_stmt) != 0)
+  {
+    mysql_stmt_close(mysql_stmt);
+    return set_error(db, MYLITE_MISUSE, 0, "HY000",
+                     "parameter binding is not implemented");
+  }
+
+  mylite_stmt *stmt= new (std::nothrow) mylite_stmt;
+  if (!stmt)
+  {
+    mysql_stmt_close(mysql_stmt);
+    return set_error(db, MYLITE_NOMEM, 0, "HY001", "out of memory");
+  }
+
+  stmt->db= db;
+  stmt->stmt= mysql_stmt;
+  stmt->metadata= mysql_stmt_result_metadata(mysql_stmt);
+  if (stmt->metadata)
+  {
+    const unsigned column_count= mysql_num_fields(stmt->metadata);
+    MYSQL_FIELD *fields= mysql_fetch_fields(stmt->metadata);
+    if (!fields && column_count != 0)
+    {
+      free_statement_metadata(stmt);
+      mysql_stmt_close(mysql_stmt);
+      delete stmt;
+      return set_error(db, MYLITE_ERROR, 0, "HY000",
+                       "could not read prepared result metadata");
+    }
+
+    try
+    {
+      stmt->column_names.reserve(column_count);
+      stmt->column_types.reserve(column_count);
+      for (unsigned i= 0; i < column_count; ++i)
+      {
+        stmt->column_names.push_back(fields[i].name ? fields[i].name : "");
+        stmt->column_types.push_back(map_column_type(fields[i]));
+      }
+    }
+    catch (const std::bad_alloc &)
+    {
+      free_statement_metadata(stmt);
+      mysql_stmt_close(mysql_stmt);
+      delete stmt;
+      return set_error(db, MYLITE_NOMEM, 0, "HY001", "out of memory");
+    }
+  }
+
+  ++db->open_statements;
+  *out_stmt= stmt;
+  if (tail)
+    *tail= sql + effective_len;
+  clear_error(db);
+  return MYLITE_OK;
+}
+
+extern "C" int mylite_step(mylite_stmt *stmt)
+{
+  if (!stmt || !stmt->stmt || !stmt->db)
+    return MYLITE_MISUSE;
+  if (stmt->done)
+    return MYLITE_DONE;
+  if (!stmt->executed)
+    return execute_prepared_statement(stmt);
+  return fetch_prepared_row(stmt);
+}
+
+extern "C" int mylite_reset(mylite_stmt *stmt)
+{
+  if (!stmt || !stmt->stmt || !stmt->db)
+    return MYLITE_MISUSE;
+  if (mysql_stmt_reset(stmt->stmt) != 0)
+    return set_error_from_stmt(stmt);
+  reset_prepared_result_state(stmt);
+  clear_error(stmt->db);
+  return MYLITE_OK;
+}
+
+extern "C" int mylite_finalize(mylite_stmt *stmt)
+{
+  if (!stmt)
+    return MYLITE_OK;
+
+  mylite_db *db= stmt->db;
+  free_statement_metadata(stmt);
+  const int close_error= stmt->stmt && mysql_stmt_close(stmt->stmt) != 0;
+  stmt->stmt= nullptr;
+  if (db && db->open_statements > 0)
+    --db->open_statements;
+  delete stmt;
+
+  if (close_error && db)
+    return set_error(db, MYLITE_ERROR, 0, "HY000",
+                     "mysql_stmt_close failed");
+  if (db)
+    clear_error(db);
+  return close_error ? MYLITE_ERROR : MYLITE_OK;
+}
+
+extern "C" unsigned mylite_column_count(mylite_stmt *stmt)
+{
+  return stmt ? static_cast<unsigned>(stmt->column_names.size()) : 0;
+}
+
+extern "C" const char *mylite_column_name(mylite_stmt *stmt, unsigned column)
+{
+  return valid_column(stmt, column) ? stmt->column_names[column].c_str() :
+    nullptr;
+}
+
+extern "C" int mylite_column_type(mylite_stmt *stmt, unsigned column)
+{
+  if (!valid_column(stmt, column))
+    return MYLITE_NULL;
+  if (stmt->has_current_row && stmt->column_is_null[column])
+    return MYLITE_NULL;
+  return stmt->column_types[column];
+}
+
+extern "C" long long mylite_column_int64(mylite_stmt *stmt, unsigned column)
+{
+  const char *value= mylite_column_text(stmt, column);
+  if (!value)
+    return 0;
+  return std::strtoll(value, nullptr, 10);
+}
+
+extern "C" unsigned long long mylite_column_uint64(mylite_stmt *stmt,
+                                                   unsigned column)
+{
+  const char *value= mylite_column_text(stmt, column);
+  if (!value)
+    return 0;
+  return std::strtoull(value, nullptr, 10);
+}
+
+extern "C" double mylite_column_double(mylite_stmt *stmt, unsigned column)
+{
+  const char *value= mylite_column_text(stmt, column);
+  if (!value)
+    return 0.0;
+  return std::strtod(value, nullptr);
+}
+
+extern "C" const char *mylite_column_text(mylite_stmt *stmt, unsigned column)
+{
+  if (!valid_column(stmt, column) || !stmt->has_current_row ||
+      stmt->column_is_null[column])
+    return nullptr;
+  return stmt->column_buffers[column].data();
+}
+
+extern "C" const void *mylite_column_blob(mylite_stmt *stmt, unsigned column)
+{
+  return mylite_column_text(stmt, column);
+}
+
+extern "C" size_t mylite_column_bytes(mylite_stmt *stmt, unsigned column)
+{
+  if (!valid_column(stmt, column) || !stmt->has_current_row ||
+      stmt->column_is_null[column])
+    return 0;
+  return static_cast<size_t>(stmt->column_lengths[column]);
 }
 
 extern "C" int mylite_errcode(mylite_db *db)
@@ -562,6 +802,220 @@ int execute_result_callback(mylite_db *db, MYSQL_RES *result,
   return MYLITE_OK;
 }
 
+int execute_prepared_statement(mylite_stmt *stmt)
+{
+  mylite_db *db= stmt->db;
+  clear_error(db);
+
+  my_bool update_max_length= 1;
+  if (mysql_stmt_attr_set(stmt->stmt, STMT_ATTR_UPDATE_MAX_LENGTH,
+                          &update_max_length) != 0)
+    return set_error_from_stmt(stmt);
+
+  if (mysql_stmt_execute(stmt->stmt) != 0)
+    return set_error_from_stmt(stmt);
+
+  stmt->executed= true;
+  if (mysql_stmt_field_count(stmt->stmt) == 0)
+  {
+    stmt->done= true;
+    return MYLITE_DONE;
+  }
+
+  if (mysql_stmt_store_result(stmt->stmt) != 0)
+    return set_error_from_stmt(stmt);
+
+  const int bind_result= bind_prepared_result(stmt);
+  if (bind_result != MYLITE_OK)
+    return bind_result;
+  return fetch_prepared_row(stmt);
+}
+
+int bind_prepared_result(mylite_stmt *stmt)
+{
+  if (!stmt->metadata)
+    stmt->metadata= mysql_stmt_result_metadata(stmt->stmt);
+  if (!stmt->metadata)
+    return set_error(stmt->db, MYLITE_ERROR, 0, "HY000",
+                     "prepared statement has no result metadata");
+
+  const unsigned column_count= mysql_stmt_field_count(stmt->stmt);
+  if (column_count != stmt->column_names.size())
+    return set_error(stmt->db, MYLITE_ERROR, 0, "HY000",
+                     "prepared result metadata changed");
+
+  MYSQL_FIELD *fields= mysql_fetch_fields(stmt->metadata);
+  if (!fields && column_count != 0)
+    return set_error(stmt->db, MYLITE_ERROR, 0, "HY000",
+                     "could not read prepared result metadata");
+
+  try
+  {
+    stmt->result_binds.assign(column_count, MYSQL_BIND());
+    stmt->column_buffers.assign(column_count, std::vector<char>());
+    stmt->column_lengths.assign(column_count, 0);
+    stmt->column_is_null.assign(column_count, 0);
+    stmt->column_errors.assign(column_count, 0);
+
+    for (unsigned i= 0; i < column_count; ++i)
+    {
+      unsigned long capacity= fields[i].max_length;
+      if (capacity == 0)
+        capacity= 1;
+      if (capacity == ULONG_MAX)
+        return set_error(stmt->db, MYLITE_ERROR, 0, "HY000",
+                         "prepared result column is too large");
+
+      stmt->column_buffers[i].assign(static_cast<size_t>(capacity) + 1, 0);
+      MYSQL_BIND &bind= stmt->result_binds[i];
+      bind.buffer_type= bind_buffer_type(stmt->column_types[i]);
+      bind.buffer= stmt->column_buffers[i].data();
+      bind.buffer_length= capacity;
+      bind.length= &stmt->column_lengths[i];
+      bind.is_null= &stmt->column_is_null[i];
+      bind.error= &stmt->column_errors[i];
+    }
+  }
+  catch (const std::bad_alloc &)
+  {
+    return set_error(stmt->db, MYLITE_NOMEM, 0, "HY001", "out of memory");
+  }
+
+  if (mysql_stmt_bind_result(stmt->stmt, stmt->result_binds.data()) != 0)
+    return set_error_from_stmt(stmt);
+
+  stmt->result_bound= true;
+  return MYLITE_OK;
+}
+
+int fetch_prepared_row(mylite_stmt *stmt)
+{
+  if (!stmt->result_bound)
+    return set_error(stmt->db, MYLITE_MISUSE, 0, "HY000",
+                     "prepared statement result is not bound");
+
+  for (unsigned i= 0; i < stmt->column_errors.size(); ++i)
+    stmt->column_errors[i]= 0;
+
+  const int fetch_result= mysql_stmt_fetch(stmt->stmt);
+  if (fetch_result == MYSQL_NO_DATA)
+  {
+    stmt->has_current_row= false;
+    stmt->done= true;
+    clear_error(stmt->db);
+    return MYLITE_DONE;
+  }
+  if (fetch_result != 0 && fetch_result != MYSQL_DATA_TRUNCATED)
+    return set_error_from_stmt(stmt);
+
+  if (fetch_result == MYSQL_DATA_TRUNCATED)
+  {
+    const int truncate_result= fetch_truncated_columns(stmt);
+    if (truncate_result != MYLITE_OK)
+      return truncate_result;
+  }
+
+  for (unsigned i= 0; i < stmt->column_buffers.size(); ++i)
+  {
+    if (!stmt->column_is_null[i])
+    {
+      const size_t length= static_cast<size_t>(stmt->column_lengths[i]);
+      if (length >= stmt->column_buffers[i].size())
+        stmt->column_buffers[i].push_back('\0');
+      else
+        stmt->column_buffers[i][length]= '\0';
+    }
+  }
+
+  stmt->has_current_row= true;
+  clear_error(stmt->db);
+  return MYLITE_ROW;
+}
+
+int fetch_truncated_columns(mylite_stmt *stmt)
+{
+  bool rebind_needed= false;
+  try
+  {
+    for (unsigned i= 0; i < stmt->column_buffers.size(); ++i)
+    {
+      if (!stmt->column_errors[i] &&
+          stmt->column_lengths[i] <= stmt->result_binds[i].buffer_length)
+        continue;
+
+      const unsigned long length= stmt->column_lengths[i];
+      if (length == ULONG_MAX)
+        return set_error(stmt->db, MYLITE_ERROR, 0, "HY000",
+                         "prepared result column is too large");
+
+      stmt->column_buffers[i].assign(static_cast<size_t>(length) + 1, 0);
+      stmt->result_binds[i].buffer= stmt->column_buffers[i].data();
+      stmt->result_binds[i].buffer_length= length;
+      rebind_needed= true;
+
+      MYSQL_BIND fetch_bind= MYSQL_BIND();
+      fetch_bind.buffer_type= stmt->result_binds[i].buffer_type;
+      fetch_bind.buffer= stmt->column_buffers[i].data();
+      fetch_bind.buffer_length= length;
+      fetch_bind.length= &stmt->column_lengths[i];
+      fetch_bind.is_null= &stmt->column_is_null[i];
+      fetch_bind.error= &stmt->column_errors[i];
+
+      if (mysql_stmt_fetch_column(stmt->stmt, &fetch_bind, i, 0) != 0)
+        return set_error_from_stmt(stmt);
+    }
+  }
+  catch (const std::bad_alloc &)
+  {
+    return set_error(stmt->db, MYLITE_NOMEM, 0, "HY001", "out of memory");
+  }
+
+  if (rebind_needed &&
+      mysql_stmt_bind_result(stmt->stmt, stmt->result_binds.data()) != 0)
+    return set_error_from_stmt(stmt);
+
+  return MYLITE_OK;
+}
+
+void reset_prepared_result_state(mylite_stmt *stmt)
+{
+  stmt->result_binds.clear();
+  stmt->column_buffers.clear();
+  stmt->column_lengths.clear();
+  stmt->column_is_null.clear();
+  stmt->column_errors.clear();
+  stmt->executed= false;
+  stmt->result_bound= false;
+  stmt->has_current_row= false;
+  stmt->done= false;
+}
+
+void free_statement_metadata(mylite_stmt *stmt)
+{
+  if (stmt->metadata)
+  {
+    mysql_free_result(stmt->metadata);
+    stmt->metadata= nullptr;
+  }
+  reset_prepared_result_state(stmt);
+}
+
+int set_error_from_stmt(mylite_stmt *stmt)
+{
+  return set_error_from_mysql_stmt(stmt->db, stmt->stmt);
+}
+
+int set_error_from_mysql_stmt(mylite_db *db, MYSQL_STMT *stmt)
+{
+  const unsigned error= mysql_stmt_errno(stmt);
+  const char *sqlstate= mysql_stmt_sqlstate(stmt);
+  const char *message= mysql_stmt_error(stmt);
+  const int code= classify_mariadb_error(sqlstate);
+  return set_error(db, code, error, sqlstate,
+                   message && message[0] ? message :
+                   "MariaDB prepared statement failed");
+}
+
 int set_error_from_mysql(mylite_db *db)
 {
   const unsigned error= mysql_errno(db->mysql);
@@ -613,6 +1067,45 @@ int classify_mariadb_error(const char *sqlstate)
   if (sqlstate && sqlstate[0] == '2' && sqlstate[1] == '3')
     return MYLITE_CONSTRAINT;
   return MYLITE_ERROR;
+}
+
+bool valid_column(const mylite_stmt *stmt, unsigned column)
+{
+  return stmt && column < stmt->column_names.size();
+}
+
+int map_column_type(const MYSQL_FIELD &field)
+{
+  switch (field.type)
+  {
+  case MYSQL_TYPE_TINY:
+  case MYSQL_TYPE_SHORT:
+  case MYSQL_TYPE_LONG:
+  case MYSQL_TYPE_LONGLONG:
+  case MYSQL_TYPE_INT24:
+  case MYSQL_TYPE_YEAR:
+    return MYLITE_INTEGER;
+  case MYSQL_TYPE_DECIMAL:
+  case MYSQL_TYPE_FLOAT:
+  case MYSQL_TYPE_DOUBLE:
+  case MYSQL_TYPE_NEWDECIMAL:
+    return MYLITE_FLOAT;
+  case MYSQL_TYPE_TINY_BLOB:
+  case MYSQL_TYPE_MEDIUM_BLOB:
+  case MYSQL_TYPE_LONG_BLOB:
+  case MYSQL_TYPE_BLOB:
+  case MYSQL_TYPE_GEOMETRY:
+    return (field.flags & BINARY_FLAG) ? MYLITE_BLOB : MYLITE_TEXT;
+  case MYSQL_TYPE_NULL:
+    return MYLITE_NULL;
+  default:
+    return MYLITE_TEXT;
+  }
+}
+
+enum_field_types bind_buffer_type(int column_type)
+{
+  return column_type == MYLITE_BLOB ? MYSQL_TYPE_BLOB : MYSQL_TYPE_STRING;
 }
 
 } // namespace

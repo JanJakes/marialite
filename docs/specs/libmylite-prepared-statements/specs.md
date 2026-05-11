@@ -98,13 +98,13 @@ Extend `vendor/mariadb/server/mylite/include/mylite.h`:
 ```c
 typedef struct mylite_stmt mylite_stmt;
 
-typedef enum mylite_column_type {
+typedef enum mylite_column_kind {
   MYLITE_INTEGER = 1,
   MYLITE_FLOAT = 2,
   MYLITE_TEXT = 3,
   MYLITE_BLOB = 4,
   MYLITE_NULL = 5
-} mylite_column_type;
+} mylite_column_kind;
 
 MYLITE_API int mylite_prepare(
     mylite_db *db,
@@ -184,7 +184,7 @@ no new runtime sidecars.
 Public API additions:
 
 - `mylite_stmt`,
-- `mylite_column_type`,
+- `mylite_column_kind`,
 - `mylite_prepare()`,
 - `mylite_step()`,
 - `mylite_reset()`,
@@ -198,7 +198,17 @@ No file-format change.
 Expected size impact is moderate for `libmylite.a`: statement state, result
 buffer allocation, and smoke coverage. The MariaDB embedded archive already
 exports prepared statement symbols, so `libmariadbd.a` object count is not
-expected to increase. The implementation result should record measured sizes.
+expected to increase.
+
+The post-implementation `MinSizeRel` build records:
+
+| Artifact | Size |
+| --- | ---: |
+| `build/mariadb-minsize/mylite/libmylite.a` | 69,178 bytes |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 44,415,256 bytes |
+
+The build report still records 571 `libmariadbd.a` archive objects and no
+dynamic plugin artifacts.
 
 ## License, Trademark, And Dependency Impact
 
@@ -246,6 +256,26 @@ The `libmylite` smoke should verify:
   `MYLITE_BUSY` while statements are active.
 - Existing storage, compatibility, embedded bootstrap, and open/close smokes
   continue to pass.
+
+## Implementation Result
+
+Implemented in `vendor/mariadb/server/mylite/include/mylite.h` and
+`vendor/mariadb/server/mylite/mylite.cc` with public no-parameter prepared
+statement lifecycle functions and first column accessors. `mylite_close()` now
+returns `MYLITE_BUSY` when active statements depend on the handle.
+
+The `libmylite` smoke now verifies:
+
+- `prepared_param_message=parameter binding is not implemented`,
+- `prepared_columns=id,note,payload`,
+- `prepared_types=1,3,4`,
+- `prepared_rows=1:one:610062,2:NULL:NULL`,
+- `prepared_reset_row=1:one:610062`,
+- `prepared_dml_rows=1:one,2:NULL,3:three`,
+- `prepared_close_busy_message=database handle has active statements`.
+
+The `610062` payload proves the prepared column byte path preserves an embedded
+NUL byte in a BLOB value.
 
 ## Risks And Unresolved Questions
 

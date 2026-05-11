@@ -7,6 +7,8 @@
 #ifndef MYLITE_H
 #define MYLITE_H
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,12 +28,21 @@ extern "C" {
 #endif
 
 typedef struct mylite_db mylite_db;
+typedef struct mylite_stmt mylite_stmt;
 
 typedef int (*mylite_exec_callback)(
     void *ctx,
     int column_count,
     char **values,
     char **column_names);
+
+typedef enum mylite_column_kind {
+  MYLITE_INTEGER = 1,
+  MYLITE_FLOAT = 2,
+  MYLITE_TEXT = 3,
+  MYLITE_BLOB = 4,
+  MYLITE_NULL = 5
+} mylite_column_kind;
 
 typedef enum mylite_result {
   MYLITE_OK = 0,
@@ -75,6 +86,28 @@ MYLITE_API void mylite_free(void *ptr);
 MYLITE_API long long mylite_changes(mylite_db *db);
 MYLITE_API unsigned long long mylite_last_insert_id(mylite_db *db);
 MYLITE_API unsigned mylite_warning_count(mylite_db *db);
+
+MYLITE_API int mylite_prepare(
+    mylite_db *db,
+    const char *sql,
+    size_t sql_len,
+    mylite_stmt **out_stmt,
+    const char **tail);
+MYLITE_API int mylite_step(mylite_stmt *stmt);
+MYLITE_API int mylite_reset(mylite_stmt *stmt);
+MYLITE_API int mylite_finalize(mylite_stmt *stmt);
+
+MYLITE_API unsigned mylite_column_count(mylite_stmt *stmt);
+MYLITE_API const char *mylite_column_name(mylite_stmt *stmt, unsigned column);
+MYLITE_API int mylite_column_type(mylite_stmt *stmt, unsigned column);
+MYLITE_API long long mylite_column_int64(mylite_stmt *stmt, unsigned column);
+MYLITE_API unsigned long long mylite_column_uint64(
+    mylite_stmt *stmt,
+    unsigned column);
+MYLITE_API double mylite_column_double(mylite_stmt *stmt, unsigned column);
+MYLITE_API const char *mylite_column_text(mylite_stmt *stmt, unsigned column);
+MYLITE_API const void *mylite_column_blob(mylite_stmt *stmt, unsigned column);
+MYLITE_API size_t mylite_column_bytes(mylite_stmt *stmt, unsigned column);
 
 MYLITE_API int mylite_errcode(mylite_db *db);
 MYLITE_API int mylite_extended_errcode(mylite_db *db);
