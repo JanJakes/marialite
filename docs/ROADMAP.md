@@ -123,6 +123,7 @@ documented read-write create combination.
 | 33 | `libmylite-warning-enumeration` | Done | Add structured warning, note, and error-condition retrieval through the public `libmylite` handle. |
 | 34 | `libmylite-readonly-open` | Done | Enforce `MYLITE_OPEN_READONLY` through runtime startup, storage-engine locking, and public read-only diagnostics. |
 | 35 | `libmylite-exclusive-open` | Done | Support `MYLITE_OPEN_EXCLUSIVE` for create-or-fail primary-file opens. |
+| 36 | `blob-text-key-storage` | In progress | Support non-null BLOB/TEXT prefix key parts in the current row and index storage bridge. |
 
 ## Size and profile direction
 
