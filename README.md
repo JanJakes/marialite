@@ -138,9 +138,10 @@ while replacing the server filesystem and bootstrap model.
 
 ## Development
 
-MyLite currently contains project documentation and workflow guidance.
-Implementation work should start from a pinned MariaDB 11.8 LTS source ref,
-keep upstream imports mechanical, and keep MyLite changes narrow.
+MyLite contains project documentation, workflow guidance, and a mechanical
+MariaDB Server 11.8.6 source import under `vendor/mariadb/server/`.
+Implementation work should keep MyLite changes narrow and separate from
+upstream source imports.
 
 Current design documents:
 

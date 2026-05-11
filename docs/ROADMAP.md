@@ -15,20 +15,21 @@ lands.
 ## Current state
 
 MyLite currently has project documentation, source analysis, architecture
-direction, API sketches, and workflow guidance. It has not imported MariaDB
-source or implemented `libmylite` yet.
+direction, API sketches, workflow guidance, and a mechanical MariaDB Server
+11.8.6 source import under `vendor/mariadb/server/`. It has not implemented
+`libmylite` yet.
 
-The next implementation step is `upstream-11-8-import`, followed by a
-reproducible embedded build baseline. Those two slices establish the source
-tree, build environment, and measurable binary-size starting point before
-larger MyLite changes begin.
+The next implementation step is `build-profile-minsize`, which should produce
+a reproducible embedded build baseline. That slice establishes the build
+environment and measurable binary-size starting point before larger MyLite
+changes begin.
 
 ## Implementation plan
 
 | Order | Slice | Status | Purpose |
 | --- | --- | --- | --- |
 | 0 | Project foundation | Done | Define the product goal, GPL baseline, architecture direction, workflow, and initial research. |
-| 1 | `upstream-11-8-import` | Planned | Import a pinned MariaDB 11.8 LTS source tag mechanically and record upstream refs. |
+| 1 | `upstream-11-8-import` | Done | Import a pinned MariaDB 11.8 LTS source tag mechanically and record upstream refs. |
 | 2 | `build-profile-minsize` | Planned | Produce a reproducible embedded build, record artifact size, and document which server-only or rare optional components are omitted by default. |
 | 3 | `embedded-bootstrap` | Planned | Start an in-process MariaDB-derived runtime under MyLite-owned defaults without exposing daemon administration as the library model. |
 | 4 | `unsupported-server-surface` | Planned | Make daemon-only and unsupported features fail explicitly instead of leaking partial server behavior. |
@@ -63,7 +64,6 @@ when they add or remove runtime surface.
 The existing research is enough to start implementation, but several decisions
 need focused slice-level research before code is written:
 
-- exact MariaDB 11.8 tag selection immediately before import,
 - reproducible Linux build environment and macOS secondary build notes,
 - DDL metadata routing through `CREATE`, `ALTER`, `DROP`, and `RENAME`,
 - pager, B-tree, transaction, and crash recovery design,

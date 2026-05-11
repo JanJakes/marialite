@@ -132,6 +132,28 @@ Public MyLite packaging still must avoid implying MariaDB or MySQL affiliation.
 - Do not run a full build in this slice; that belongs to
   `build-profile-minsize`.
 
+## Verification Results
+
+Completed on 2026-05-11:
+
+- `git ls-remote --tags https://github.com/MariaDB/server.git
+  refs/tags/mariadb-11.8.6 refs/tags/mariadb-11.8.6^{}` returned tag object
+  `2eeb8795e593db09241c1c5210fee34b3569ca47` and peeled commit
+  `9bfea48ce1214cc4470f6f6f8a4e30352cef84e7`.
+- `git ls-remote --heads https://github.com/MariaDB/server.git
+  refs/heads/11.8` returned branch head
+  `04e09010773caf0b302b2933fff3fe95381a5e13`.
+- The imported tree under `vendor/mariadb/server/` was produced from
+  `git archive` of `9bfea48ce1214cc4470f6f6f8a4e30352cef84e7`.
+- Representative source files were present after import, including
+  `CMakeLists.txt`, `libmysqld/CMakeLists.txt`, `sql/handler.h`,
+  `sql/handler.cc`, `include/mysql.h`, and `COPYING`.
+- `git diff --no-index --quiet` between a fresh checkout of the pinned commit
+  and `vendor/mariadb/server/` passed.
+- The import commit contains only files under `vendor/mariadb/server/`.
+- A full build was intentionally not run; that is part of
+  `build-profile-minsize`.
+
 ## Acceptance Criteria
 
 - `docs/specs/upstream-11-8-import/specs.md` records the selected upstream ref

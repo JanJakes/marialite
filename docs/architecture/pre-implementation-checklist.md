@@ -5,14 +5,15 @@ or changes MariaDB source in earnest.
 
 ## Upstream base
 
-- Choose an exact MariaDB 11.8 LTS tag or commit as the initial base.
-- Record the upstream repository URL, tag, commit, and release status.
-- The current preferred initial import ref is `mariadb-11.8.6`
-  (`9bfea48ce1214cc4470f6f6f8a4e30352cef84e7`), subject to a fresh release
-  check immediately before import.
-- Keep an upstream-tracking branch separate from MyLite patch branches.
-- Decide whether early work tracks the `11.8` branch or a specific patch tag.
-  The branch is useful for observation; implementation should pin a ref.
+- Initial base selected and imported: MariaDB Server tag `mariadb-11.8.6`
+  (`9bfea48ce1214cc4470f6f6f8a4e30352cef84e7`).
+- Upstream repository: <https://github.com/MariaDB/server>.
+- Release status checked on 2026-05-11: MariaDB.org listed 11.8.6 as Stable,
+  and MariaDB release notes described it as a Stable GA 11.8 long-term release.
+- The floating `11.8` branch remains useful for observation, but MyLite
+  implementation is pinned to the imported tag until a deliberate upstream
+  update slice changes it.
+- Keep any future upstream-tracking branch separate from MyLite patch branches.
 
 ## Build environment
 
@@ -27,7 +28,8 @@ or changes MariaDB source in earnest.
 
 ## Source layout and patch stack
 
-- Decide how upstream MariaDB source enters this repository.
+- Upstream MariaDB source enters this repository under
+  `vendor/mariadb/server/`.
 - Keep mechanical upstream imports separate from MyLite commits.
 - Keep MyLite-owned code in clearly named modules where possible.
 - Preserve upstream formatting in MariaDB-derived files.
