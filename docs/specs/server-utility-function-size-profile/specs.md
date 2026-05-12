@@ -89,9 +89,10 @@ current XML, GIS, vector, JSON schema, and Oracle function minsize behavior.
 
 ## Non-Goals
 
-- Do not remove `UUID()`, `UUID_v4()`, `UUID_v7()`, `RANDOM_BYTES()`, normal
-  diagnostic functions such as `ROW_COUNT()` and `LAST_INSERT_ID()`, or normal
-  string/date/numeric functions.
+- Do not remove additional retained functions such as `RANDOM_BYTES()`,
+  `CONNECTION_ID()`, `VERSION()`, normal diagnostic functions such as
+  `ROW_COUNT()` and `LAST_INSERT_ID()`, or normal string/date/numeric
+  functions.
 - Do not remove `pause_execution()` or sleep mutex initialization while retained
   JSON code can still call it.
 - Do not remove `uuid_short_init()` or `server_uuid_value()` because DDL logging
@@ -192,6 +193,27 @@ nm -C --size-sort \
 
 The grep should return no targeted item or builder symbols in the minsize
 linked smoke.
+
+## Implementation Result
+
+Implemented with `MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS=ON` in the minsize
+build profile. The guard removes the targeted native function builders, item
+class declarations, and item method definitions while retaining shared
+MariaDB lifecycle helpers used outside the SQL-facing functions.
+
+Measured against `build/mariadb-minsize-oracle-functions`:
+
+| Artifact | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| `libmysqld/libmariadbd.a` | 35,783,646 | 35,555,602 | -228,044 |
+| `mylite/mylite-open-close-smoke` | 10,897,072 | 10,838,176 | -58,896 |
+| stripped `mylite-open-close-smoke` | 8,355,880 | 8,318,304 | -37,576 |
+| `size` decimal total | 8,649,945 | 8,612,773 | -37,172 |
+
+The linked smoke has no remaining targeted `Create_func_*` or `Item_*`
+symbols for the omitted functions. The open/close smoke verifies all targeted
+functions fail with `ER_SP_DOES_NOT_EXIST` / SQLSTATE `42000`, and retained
+`RANDOM_BYTES()`, `VERSION()`, and `CONNECTION_ID()` calls still execute.
 
 ## Acceptance Criteria
 

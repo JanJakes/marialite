@@ -1592,6 +1592,7 @@ protected:
 };
 
 
+#ifndef MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS
 class Item_func_binlog_gtid_pos :public Item_str_func
 {
 public:
@@ -1613,6 +1614,7 @@ protected:
   Item *shallow_copy(THD *thd) const override
   { return get_item_copy<Item_func_binlog_gtid_pos>(thd, this); }
 };
+#endif
 
 
 class Item_func_pad: public Item_str_func
@@ -1956,6 +1958,7 @@ protected:
 };
 
 
+#ifndef MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS
 class Item_load_file :public Item_str_func
 {
   String tmp_value;
@@ -1983,6 +1986,7 @@ protected:
   Item *shallow_copy(THD *thd) const override
   { return get_item_copy<Item_load_file>(thd, this); }
 };
+#endif
 
 
 class Item_func_export_set: public Item_str_func

@@ -61,6 +61,8 @@ struct SmokeResult
   std::string exec_vector_distance_message;
   std::string exec_json_valid_rows;
   std::string exec_json_schema_valid_message;
+  std::string exec_server_utility_standard_rows;
+  std::string exec_server_utility_messages;
   std::string exec_query_cache_have_rows;
   std::string exec_query_cache_size_rows;
   std::string exec_query_cache_type_rows;
@@ -159,6 +161,8 @@ static bool check_vector_functions_unsupported(const SmokeOptions &options,
                                                SmokeResult *result);
 static bool check_json_schema_valid_unsupported(const SmokeOptions &options,
                                                 SmokeResult *result);
+static bool check_server_utility_functions_unsupported(
+  const SmokeOptions &options, SmokeResult *result);
 static bool check_query_cache_unsupported(const SmokeOptions &options,
                                           SmokeResult *result);
 static bool check_profiling_unsupported(const SmokeOptions &options,
@@ -335,6 +339,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "json_schema_valid_unsupported";
   ok= check_json_schema_valid_unsupported(options, result) && ok;
+
+  result->phase= "server_utility_functions_unsupported";
+  ok= check_server_utility_functions_unsupported(options, result) && ok;
 
   result->phase= "query_cache_unsupported";
   ok= check_query_cache_unsupported(options, result) && ok;
@@ -916,6 +923,82 @@ static bool check_json_schema_valid_unsupported(const SmokeOptions &options,
     rc= mylite_close(db);
     ok= record_result(result, "json_schema_valid_close", MYLITE_OK, rc,
                       nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_server_utility_functions_unsupported(
+  const SmokeOptions &options, SmokeResult *result)
+{
+  struct UnsupportedFunction
+  {
+    const char *label;
+    const char *sql;
+    const char *name;
+  };
+
+  static const UnsupportedFunction functions[] = {
+    {"server_utility_benchmark", "SELECT BENCHMARK(1,1+1)", "BENCHMARK"},
+    {"server_utility_binlog_gtid_pos",
+     "SELECT BINLOG_GTID_POS('binlog.000001', 4)", "BINLOG_GTID_POS"},
+    {"server_utility_get_lock", "SELECT GET_LOCK('mylite',0)", "GET_LOCK"},
+    {"server_utility_is_free_lock", "SELECT IS_FREE_LOCK('mylite')",
+     "IS_FREE_LOCK"},
+    {"server_utility_is_used_lock", "SELECT IS_USED_LOCK('mylite')",
+     "IS_USED_LOCK"},
+    {"server_utility_load_file", "SELECT LOAD_FILE('/tmp/mylite-none')",
+     "LOAD_FILE"},
+    {"server_utility_master_gtid_wait",
+     "SELECT MASTER_GTID_WAIT('0-1-1',0)", "MASTER_GTID_WAIT"},
+    {"server_utility_master_pos_wait",
+     "SELECT MASTER_POS_WAIT('binlog.000001',4,0)", "MASTER_POS_WAIT"},
+    {"server_utility_release_all_locks", "SELECT RELEASE_ALL_LOCKS()",
+     "RELEASE_ALL_LOCKS"},
+    {"server_utility_release_lock", "SELECT RELEASE_LOCK('mylite')",
+     "RELEASE_LOCK"},
+    {"server_utility_sleep", "SELECT SLEEP(0)", "SLEEP"},
+    {"server_utility_uuid_short", "SELECT UUID_SHORT()", "UUID_SHORT"},
+  };
+
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "server_utility_function_open",
+                         MYLITE_OK, rc, db);
+  if (db)
+  {
+    ExecCapture standard_capture;
+    ok= exec_query_capture(
+          db,
+          "SELECT LENGTH(HEX(RANDOM_BYTES(4))), LENGTH(VERSION()) > 0, "
+          "CONNECTION_ID() >= 0",
+          "server_utility_standard", &standard_capture, result) && ok;
+    result->exec_server_utility_standard_rows=
+      join_strings(standard_capture.rows, ",");
+    if (result->exec_server_utility_standard_rows != "8:1:1")
+      ok= false;
+
+    std::vector<std::string> messages;
+    for (size_t i= 0; i < sizeof(functions) / sizeof(functions[0]); ++i)
+    {
+      char *errmsg= nullptr;
+      rc= mylite_exec(db, functions[i].sql, nullptr, nullptr, &errmsg);
+      std::string message= errmsg ? errmsg : mylite_errmsg(db);
+      if (errmsg)
+        mylite_free(errmsg);
+      messages.push_back(std::string(functions[i].name) + "=" + message);
+
+      ok= record_result(result, functions[i].label, MYLITE_ERROR, rc,
+                        db) && ok;
+      if (mylite_mariadb_errno(db) != ER_SP_DOES_NOT_EXIST ||
+          std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+          message.find(functions[i].name) == std::string::npos)
+        ok= false;
+    }
+    result->exec_server_utility_messages= join_strings(messages, " | ");
+
+    rc= mylite_close(db);
+    ok= record_result(result, "server_utility_function_close",
+                      MYLITE_OK, rc, nullptr) && ok;
   }
   return ok;
 }
@@ -2367,6 +2450,12 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_json_schema_valid_message.empty())
     report << "exec_json_schema_valid_message="
            << result.exec_json_schema_valid_message << "\n";
+  if (!result.exec_server_utility_standard_rows.empty())
+    report << "exec_server_utility_standard_rows="
+           << result.exec_server_utility_standard_rows << "\n";
+  if (!result.exec_server_utility_messages.empty())
+    report << "exec_server_utility_messages="
+           << result.exec_server_utility_messages << "\n";
   if (!result.exec_query_cache_have_rows.empty())
     report << "exec_query_cache_have_rows="
            << result.exec_query_cache_have_rows << "\n";

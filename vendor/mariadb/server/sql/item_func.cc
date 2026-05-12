@@ -3973,6 +3973,7 @@ bool udf_handler::get_arguments() { return 0; }
 #endif /* HAVE_DLOPEN */
 
 
+#ifndef MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS
 longlong Item_master_pos_wait::val_int()
 {
   DBUG_ASSERT(fixed());
@@ -4066,6 +4067,7 @@ longlong Item_master_gtid_wait::val_int()
 #endif /* REPLICATION */
   DBUG_RETURN(result);
 }
+#endif
 
 
 /**
@@ -4177,6 +4179,7 @@ public:
 };
 
 
+#ifndef MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS
 /** Extract a hash key from User_level_lock. */
 
 const uchar *ull_get_key(const void *ptr, size_t *length, my_bool)
@@ -4186,6 +4189,7 @@ const uchar *ull_get_key(const void *ptr, size_t *length, my_bool)
   *length= key->length();
   return key->ptr();
 }
+#endif
 
 
 /**
@@ -4230,6 +4234,7 @@ void mysql_ull_set_explicit_lock_duration(THD *thd)
 }
 
 
+#ifndef MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS
 /**
   When MDL detects a lock wait timeout, it pushes
   an error into the statement diagnostics area.
@@ -4518,6 +4523,7 @@ longlong Item_func_is_used_lock::val_int()
   null_value= 0;
   return thread_id;
 }
+#endif
 
 
 longlong Item_func_last_insert_id::val_int()
@@ -4553,6 +4559,7 @@ bool Item_func_last_insert_id::fix_fields(THD *thd, Item **ref)
 
 /* This function is just used to test speed of different functions */
 
+#ifndef MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS
 longlong Item_func_benchmark::val_int()
 {
   DBUG_ASSERT(fixed());
@@ -4615,6 +4622,7 @@ void Item_func_benchmark::print(String *str, enum_query_type query_type)
   args[1]->print(str, query_type);
   str->append(')');
 }
+#endif
 
 
 mysql_mutex_t LOCK_item_func_sleep;
@@ -4667,6 +4675,7 @@ void item_func_sleep_free(void)
 
 /** This function is just used to create tests with time gaps. */
 
+#ifndef MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS
 longlong Item_func_sleep::val_int()
 {
   THD *thd= current_thd;
@@ -4701,6 +4710,7 @@ longlong Item_func_sleep::val_int()
 
   return MY_TEST(!error);                  // Return 1 killed
 }
+#endif
 
 
 bool Item_func_user_var::check_vcol_func_processor(void *arg)
@@ -6991,10 +7001,12 @@ ulonglong server_uuid_value()
   return val;
 }
 
+#ifndef MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS
 longlong Item_func_uuid_short::val_int()
 {
   return (longlong) server_uuid_value();
 }
+#endif
 
 
 /**

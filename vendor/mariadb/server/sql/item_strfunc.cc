@@ -3634,6 +3634,7 @@ err:
 }
 
 
+#ifndef MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS
 bool Item_func_binlog_gtid_pos::fix_length_and_dec(THD *thd)
 {
   collation.set(system_charset_info_for_i_s);
@@ -3673,6 +3674,7 @@ err:
   return NULL;
 #endif  /* !HAVE_REPLICATION */
 }
+#endif
 
 
 static String *default_pad_str(String *pad_str, CHARSET_INFO *collation)
@@ -4384,6 +4386,7 @@ void Item_func_binary::print(String *str, enum_query_type query_type)
 }
 
 
+#ifndef MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS
 #include <my_dir.h>				// For my_stat
 
 String *Item_load_file::val_str(String *str)
@@ -4451,6 +4454,7 @@ err:
   null_value = 1;
   DBUG_RETURN(0);
 }
+#endif
 
 
 String* Item_func_export_set::val_str(String* str)
