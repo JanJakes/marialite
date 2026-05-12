@@ -70,6 +70,21 @@ pages, locking, recovery, or open/close ownership.
 The direct stripped archive opportunity is roughly 122 KiB from the three
 present plugin objects. Final linked savings may be smaller.
 
+After implementation, the measured size is:
+
+- `libmariadbd.a`: 34,474,690 bytes,
+- archive objects: 491,
+- `mylite-open-close-smoke`: 18,259,560 bytes,
+- stripped `mylite-open-close-smoke`: 15,849,720 bytes,
+- `size` total: 16,084,955 bytes.
+
+Compared with the static-archive-strip profile, this saves 131,980 bytes from
+`libmariadbd.a` and 1,016 bytes from the stripped linked open-close proxy.
+Compared with the original production-size baseline, the combined type-plugin,
+charset-small, Oracle-parser, static-archive-strip, and small-plugin profile
+saves 8,930,742 bytes from `libmariadbd.a` and 3,482,184 bytes from the
+stripped linked open-close proxy.
+
 ## Test plan
 
 Run:
@@ -82,6 +97,21 @@ MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
 
 Also inspect the generated built-in plugin list in
 `build/mariadb-minsize/sql/sql_builtin.cc`.
+
+## Verification
+
+Run on 2026-05-12:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+```
+
+All passed. The generated built-in plugin list no longer includes `sequence`,
+`thread_pool_info`, `user_variables`, or `userstat`. The archive still contains
+`ha_sequence.cc.o` and `sql_sequence.cc.o` for mandatory `sql_sequence`
+support.
 
 ## Acceptance criteria
 

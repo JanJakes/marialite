@@ -89,6 +89,10 @@ build_inside_container() {
     -DPLUGIN_TYPE_GEOM=NO
     -DPLUGIN_TYPE_INET=NO
     -DPLUGIN_TYPE_UUID=NO
+    -DPLUGIN_USERSTAT=NO
+    -DPLUGIN_USER_VARIABLES=NO
+    -DPLUGIN_SEQUENCE=NO
+    -DPLUGIN_THREAD_POOL_INFO=NO
   )
 
   write_cmake_command "${build_dir}" "${source_dir}" "${cmake_args[@]}"

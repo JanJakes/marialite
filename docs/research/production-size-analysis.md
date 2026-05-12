@@ -25,10 +25,11 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 The original comparison baseline was generated at `2026-05-12T00:33:29Z` from
 `vendor/mariadb/server` into `build/mariadb-minsize`. Current measurements
 include the `type-plugin-size-profile`, `charset-small-profile`, and
-`oracle-parser-size-profile`, and `static-archive-strip-profile` attempts,
-which remove the built-in `type_geom`, `type_inet`, and `type_uuid` plugins,
-set `WITH_EXTRA_CHARSETS=none`, omit the Oracle SQL-mode parser, and strip the
-static archive in the MyLite minsize profile.
+`oracle-parser-size-profile`, `static-archive-strip-profile`, and
+`small-builtin-plugin-profile` attempts, which remove the built-in `type_geom`,
+`type_inet`, `type_uuid`, `sequence`, `thread_pool_info`, `user_variables`, and
+`userstat` plugins, set `WITH_EXTRA_CHARSETS=none`, omit the Oracle SQL-mode
+parser, and strip the static archive in the MyLite minsize profile.
 
 This project does not yet have a final packaged production artifact such as a
 shared `libmylite.so` bundle. For now, the most useful size signals are:
@@ -44,20 +45,20 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 34,606,670 | 33.00 | Main embedded MariaDB archive, 494 objects, stripped |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 34,474,690 | 32.88 | Main embedded MariaDB archive, 491 objects, stripped |
 | `build/mariadb-minsize/mylite/libmylite.a` | 93,752 | 0.09 | First-party public wrapper |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 303,480 | 0.29 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 18,264,608 | 17.42 | Unstripped linked proxy |
-| stripped `mylite-open-close-smoke` copy | 15,850,736 | 15.12 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 18,259,560 | 17.41 | Unstripped linked proxy |
+| stripped `mylite-open-close-smoke` copy | 15,849,720 | 15.12 | `strip --strip-unneeded` on copied binary |
 
 The linked proxy has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 13,571,296 |
-| data | 2,236,152 |
-| bss | 304,408 |
-| total `size` decimal | 16,111,856 |
+| text | 13,553,243 |
+| data | 2,233,064 |
+| bss | 298,648 |
+| total `size` decimal | 16,084,955 |
 
 Largest linked sections in the open-close proxy:
 
@@ -93,9 +94,9 @@ distribution formats that bundle runtime libraries.
 ## Where the bytes are
 
 The SQL layer dominates the current static footprint. The component table below
-was captured before the type-plugin, charset-small, Oracle-parser, and static
-archive strip size profiles were applied and explains why those attempts were
-worth testing.
+was captured before the type-plugin, charset-small, Oracle-parser, static
+archive strip, and small-plugin size profiles were applied and explains why
+those attempts were worth testing.
 
 | Component archive | Bytes | MiB |
 | --- | ---: | ---: |
@@ -146,11 +147,7 @@ The current built-in plugins are:
 - `mylite`
 - `mysql_password`
 - `online_alter_log`
-- `sequence`
 - `sql_sequence`
-- `thread_pool_info`
-- `user_variables`
-- `userstat`
 
 ## Measured reduction experiments
 
@@ -161,6 +158,7 @@ The current built-in plugins are:
 | `charset-small-profile` after type plugins | 37,356,932 | -6,048,500 | 16,440,560 | -2,891,344 | Passes current smokes |
 | `oracle-parser-size-profile` after charset | 35,944,110 | -7,461,322 | 15,850,736 | -3,481,168 | Passes current smokes |
 | `static-archive-strip-profile` after Oracle parser | 34,606,670 | -8,798,762 | 15,850,736 | -3,481,168 | Passes current smokes |
+| `small-builtin-plugin-profile` after archive strip | 34,474,690 | -8,930,742 | 15,849,720 | -3,482,184 | Passes current smokes |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
 | `WITH_EXTRA_CHARSETS=none` before UCA fix | 40,820,782 | -2,584,650 | 16,836,664 | -2,495,240 | Segfaulted in open-close smoke |
@@ -178,8 +176,8 @@ by skipping generated collations whose base compiled charset is absent. The
 profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
-Stripping the current linked open-close proxy reduces it from 18,264,608 bytes
-to 15,850,736 bytes, saving 2,413,872 bytes, or 2.30 MiB. That remains the
+Stripping the current linked open-close proxy reduces it from 18,259,560 bytes
+to 15,849,720 bytes, saving 2,409,840 bytes, or 2.30 MiB. That remains the
 lowest-risk packaging win for any copied executable or shared-library style
 artifact.
 
@@ -190,8 +188,8 @@ not a safe release lever today.
 
 The earlier plugin flags experiment did remove small built-ins such as `sequence`,
 `thread_pool_info`, and `user_variables`, but `type_geom`, `type_inet`,
-`type_uuid`, and `userstat` remained built in. Source or CMake fork work is
-needed before the larger plugin savings are actually available.
+`type_uuid`, and `userstat` remained built in. The later type-plugin and
+small-plugin profiles supersede that partial result.
 
 The `type-plugin-size-profile` attempt then made `type_geom`, `type_inet`, and
 `type_uuid` non-mandatory and disabled them in the MyLite minsize profile. That
@@ -217,6 +215,12 @@ of the Oracle-parser profile, it reduced the static archive by another
 1,337,440 bytes. The stripped linked proxy was unchanged, but relinking current
 smokes against the stripped archive passed.
 
+The `small-builtin-plugin-profile` attempt then disabled optional `sequence`,
+`thread_pool_info`, `user_variables`, and `userstat` built-ins while leaving
+mandatory `sql_sequence` support intact. On top of the static archive strip, it
+reduced the static archive by another 131,980 bytes and the stripped linked
+proxy by another 1,016 bytes.
+
 ## Decision matrix
 
 | Lever | Expected savings | Risk | Worth doing? | Reason |
@@ -227,6 +231,7 @@ smokes against the stripped archive passed.
 | `WITH_EXTRA_CHARSETS=complex` | About 0.08 MiB | Low | No | Savings are too small to justify a compatibility profile |
 | `WITH_EXTRA_CHARSETS=none` / `charset-small-profile` | 2.46 MiB archive and 2.38 MiB stripped linked beyond type-plugin profile | High compatibility | Applied as size attempt | Current smokes pass after the UCA 1400 null-base fix, but non-default charsets are omitted |
 | Make type plugins profile-gated | 3.30 MiB archive, 0.38 MiB stripped linked | Medium/high | Applied as size attempt | Current smokes pass, but `INET`, `UUID`, and spatial plugin surfaces are compatibility tradeoffs |
+| Remove small optional built-ins | 0.13 MiB archive, 0.001 MiB stripped linked | Medium/low | Applied as size attempt | Current smokes pass, but plugin-provided information-schema surfaces are omitted |
 | Remove or profile-gate Oracle SQL parser | 1.35 MiB archive and 0.56 MiB stripped linked beyond charset-small profile | High compatibility | Applied as size attempt | Current smokes pass, but `sql_mode=ORACLE` now fails explicitly in the minsize profile |
 | Remove server-only SQL subsystems | Potentially large | High | Research later | The big bytes are entangled in `libsql_embedded.a`; needs slice-by-slice fork work |
 | `DISABLE_PSI_*` switches | 0 in this build | Low | No | No measured effect |
