@@ -5686,8 +5686,12 @@ static int init_server_components()
   init_max_user_conn();
   init_global_user_stats();
   init_global_client_stats();
+#ifdef EMBEDDED_LIBRARY
+  servers_init(1);
+#else
   if (!opt_bootstrap)
     servers_init(0);
+#endif
   init_status_vars();
   Item_false= new (&read_only_root) Item_bool_static("FALSE", 0);
   Item_true=  new (&read_only_root) Item_bool_static("TRUE", 1);

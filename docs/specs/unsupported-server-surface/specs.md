@@ -121,9 +121,10 @@ DDL routing and storage-engine slices.
 
 Rejecting these commands avoids accidental durable writes to `mysql.plugin`,
 `mysql.func`, or `mysql.servers` and avoids dynamic library loading in the
-embedded profile. The startup `mysql.servers` diagnostic and Aria startup logs
-remain documented bootstrap side effects until a later cleanup slice changes
-server component initialization.
+embedded profile. At the time of this slice, the startup `mysql.servers`
+diagnostic and Aria startup logs remained documented bootstrap side effects;
+the `foreign-server-cache-startup` slice later removed the `mysql.servers`
+startup diagnostic.
 
 ## Public API Or File-Format Impact
 
@@ -195,8 +196,8 @@ Observed implementation artifacts after the slice:
 - `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke`: 22,611,272
   bytes.
 - Dynamic plugin artifacts: none.
-- Startup still emits the pre-existing `mysql.servers` diagnostic recorded by
-  the embedded-bootstrap slice.
+- The pre-existing `mysql.servers` startup diagnostic was still present in
+  this slice's report, and was later removed by `foreign-server-cache-startup`.
 
 ## Risks And Unresolved Questions
 
@@ -208,7 +209,6 @@ Observed implementation artifacts after the slice:
   replication control, events, `SET GLOBAL`, log control, resource groups, and
   administrative `SHOW` statements. This slice documents but does not complete
   the full compatibility matrix.
-- Startup still calls `servers_init(false)` and emits a `mysql.servers`
-  diagnostic. A later bootstrap-cleanup slice can evaluate whether embedded
-  MyLite should call the no-table initialization path or replace server-cache
-  initialization entirely.
+- Startup still called `servers_init(false)` and emitted a `mysql.servers`
+  diagnostic when this slice landed. `foreign-server-cache-startup` later moved
+  embedded startup to the no-table initialization path.

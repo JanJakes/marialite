@@ -109,9 +109,15 @@ No public `libmylite` API change. No file-format change.
 
 ## Binary-Size Impact
 
-Expected binary-size impact is negligible because the foreign-server cache code
+Measured artifact sizes after implementation:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,440,784 bytes.
+- `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke`: 22,775,488
+  bytes.
+- `build/mariadb-minsize/mylite/mylite-compatibility-smoke`: 22,776,528 bytes.
+
+The binary-size impact is negligible because the foreign-server cache code
 still compiles; embedded startup just chooses an existing no-table branch.
-Record measured artifacts after implementation.
 
 ## License, Trademark, And Dependency Impact
 
@@ -138,6 +144,33 @@ No new dependency. New code remains GPL-2.0-only.
 - Foreign-server SQL statements remain explicitly rejected in embedded mode.
 - Non-embedded startup behavior is unchanged.
 - The grouped compatibility harness passes.
+
+## Implementation Result
+
+`sql/mysqld.cc:init_server_components()` now calls `servers_init(1)` for
+embedded builds, while non-embedded builds keep the existing
+`if (!opt_bootstrap) servers_init(0)` path. This initializes the cache data
+structures without reading `mysql.servers`.
+
+`tools/run-embedded-bootstrap-smoke.sh` now records startup diagnostic status
+and fails if the old `mysql.servers` diagnostic appears.
+
+Verification completed:
+
+- `git diff --check`.
+- `bash -n tools/run-embedded-bootstrap-smoke.sh
+  tools/run-compatibility-test-harness.sh`.
+- `MYLITE_BUILD_JOBS=8 tools/run-embedded-bootstrap-smoke.sh`.
+- `MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh`.
+
+Report evidence:
+
+- `mylite-embedded-bootstrap-report.txt`: `status=0`,
+  `mysql_servers_startup=absent`, `Smoke Process Output=none`, and
+  `Dynamic Plugin Artifacts=none`.
+- The same report still records passing embedded rejections for
+  `CREATE SERVER`, `ALTER SERVER`, and `DROP SERVER`.
+- `mylite-compatibility-harness-report.txt`: all groups report `status=0`.
 
 ## Risks And Unresolved Questions
 

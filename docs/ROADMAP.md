@@ -123,7 +123,10 @@ catalog records, and embedded `CREATE DATABASE`, `DROP DATABASE`, `USE`,
 operate on the catalog namespace without requiring durable schema directories.
 Server-owned schema names `mysql`, `performance_schema`, and `sys` are now
 reserved so they cannot become ordinary MyLite catalog schemas before
-replacement system surfaces are designed.
+replacement system surfaces are designed. Embedded startup now initializes the
+foreign-server cache without probing `mysql.servers`, removing the inherited
+missing-table diagnostic from MyLite smoke reports while keeping foreign-server
+SQL explicitly unsupported.
 
 ## Implementation plan
 
@@ -179,7 +182,7 @@ replacement system surfaces are designed.
 | 47 | `truncate-table-lifecycle` | Done | Implement handler-based `TRUNCATE TABLE` for supported MyLite tables, clearing rows and indexes while resetting autoincrement state. |
 | 48 | `schema-namespace-catalog` | Done | Persist MyLite schema names in the catalog and route schema namespace operations without datadir directories. |
 | 49 | `system-schema-namespace-policy` | Done | Keep server-owned schema names from becoming ordinary MyLite catalog schemas before replacement system surfaces are designed. |
-| 50 | `foreign-server-cache-startup` | In progress | Initialize the embedded foreign-server cache without probing missing `mysql.servers` system tables at startup. |
+| 50 | `foreign-server-cache-startup` | Done | Initialize the embedded foreign-server cache without probing missing `mysql.servers` system tables at startup. |
 
 ## Size and profile direction
 

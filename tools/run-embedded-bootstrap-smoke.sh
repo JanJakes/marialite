@@ -64,6 +64,9 @@ run_inside_container() {
     "--report=${report}" > "${smoke_log}" 2>&1 || status=$?
 
   append_observed_files "${runtime_dir}" "${report}" "${smoke_log}"
+  if has_mysql_servers_startup_diagnostic "${smoke_log}"; then
+    status=1
+  fi
   printf "Bootstrap smoke report: %s\n" "${report}"
   return "${status}"
 }
@@ -79,6 +82,13 @@ append_observed_files() {
       cat "${smoke_log}"
     else
       printf "none\n"
+    fi
+
+    printf "\n## Startup Diagnostics\n\n"
+    if has_mysql_servers_startup_diagnostic "${smoke_log}"; then
+      printf "mysql_servers_startup=present\n"
+    else
+      printf "mysql_servers_startup=absent\n"
     fi
 
     printf "\n## Observed Runtime Files\n\n"
@@ -98,6 +108,11 @@ append_observed_files() {
       printf "none\n"
     fi
   } >> "${report}"
+}
+
+has_mysql_servers_startup_diagnostic() {
+  local smoke_log="$1"
+  grep -q "mysql\\.servers" "${smoke_log}"
 }
 
 main "$@"

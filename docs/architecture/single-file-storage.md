@@ -364,6 +364,11 @@ virtual through MariaDB's existing schema-table machinery. Replacement
 need separate designs before those names can expose MyLite-owned system
 surfaces.
 
+Embedded startup initializes MariaDB's foreign-server cache through the
+existing no-table path, so MyLite no longer probes the absent `mysql.servers`
+table during startup. Foreign-server SQL remains explicitly unsupported until
+MyLite has a catalog or virtual-table design for that metadata.
+
 Implementation options:
 
 - store minimal system tables in the MyLite engine,
