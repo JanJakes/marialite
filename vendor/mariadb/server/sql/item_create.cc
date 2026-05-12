@@ -739,6 +739,7 @@ protected:
 };
 
 
+#ifndef MYLITE_DISABLE_DES_FUNCTIONS
 class Create_func_des_decrypt : public Create_native_func
 {
 public:
@@ -765,6 +766,7 @@ protected:
   Create_func_des_encrypt() = default;
   ~Create_func_des_encrypt() override = default;
 };
+#endif
 
 
 class Create_func_elt : public Create_native_func
@@ -3824,6 +3826,7 @@ Create_func_degrees::create_1_arg(THD *thd, Item *arg1)
 }
 
 
+#ifndef MYLITE_DISABLE_DES_FUNCTIONS
 Create_func_des_decrypt Create_func_des_decrypt::s_singleton;
 
 Item*
@@ -3896,6 +3899,7 @@ Create_func_des_encrypt::create_native(THD *thd, const LEX_CSTRING *name,
 
   return func;
 }
+#endif
 
 
 Create_func_elt Create_func_elt::s_singleton;
@@ -6515,8 +6519,10 @@ const Native_func_registry func_array[] =
 #ifndef MYLITE_DISABLE_ORACLE_FUNCTIONS
   { { STRING_WITH_LEN("DECODE_ORACLE") }, BUILDER(Create_func_decode_oracle)},
 #endif
+#ifndef MYLITE_DISABLE_DES_FUNCTIONS
   { { STRING_WITH_LEN("DES_DECRYPT") }, BUILDER(Create_func_des_decrypt)},
   { { STRING_WITH_LEN("DES_ENCRYPT") }, BUILDER(Create_func_des_encrypt)},
+#endif
   { { STRING_WITH_LEN("ELT") }, BUILDER(Create_func_elt)},
   { { STRING_WITH_LEN("ENCODE") }, BUILDER(Create_func_encode)},
 #ifndef MYLITE_DISABLE_CRYPT_FUNCTION

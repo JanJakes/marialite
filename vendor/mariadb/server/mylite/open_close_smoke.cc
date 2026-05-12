@@ -70,6 +70,7 @@ struct SmokeResult
   std::string exec_server_utility_standard_rows;
   std::string exec_server_utility_messages;
   std::string exec_crypt_function_message;
+  std::string exec_des_function_messages;
   std::string exec_zlib_compression_have_rows;
   std::string exec_zlib_compression_crc32_rows;
   std::string exec_zlib_compression_messages;
@@ -186,6 +187,8 @@ static bool check_server_utility_functions_unsupported(
   const SmokeOptions &options, SmokeResult *result);
 static bool check_crypt_function_unsupported(const SmokeOptions &options,
                                              SmokeResult *result);
+static bool check_des_functions_unsupported(const SmokeOptions &options,
+                                            SmokeResult *result);
 static bool check_zlib_compression_unsupported(const SmokeOptions &options,
                                                SmokeResult *result);
 static bool check_dynamic_plugin_loading_unsupported(
@@ -385,6 +388,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "crypt_function_unsupported";
   ok= check_crypt_function_unsupported(options, result) && ok;
+
+  result->phase= "des_functions_unsupported";
+  ok= check_des_functions_unsupported(options, result) && ok;
 
   result->phase= "zlib_compression_unsupported";
   ok= check_zlib_compression_unsupported(options, result) && ok;
@@ -1247,6 +1253,52 @@ static bool check_crypt_function_unsupported(const SmokeOptions &options,
 
     rc= mylite_close(db);
     ok= record_result(result, "crypt_function_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_des_functions_unsupported(const SmokeOptions &options,
+                                            SmokeResult *result)
+{
+  struct UnsupportedFunction
+  {
+    const char *label;
+    const char *sql;
+    const char *name;
+  };
+
+  static const UnsupportedFunction functions[] = {
+    {"des_function_encrypt", "SELECT DES_ENCRYPT('mylite')", "DES_ENCRYPT"},
+    {"des_function_decrypt", "SELECT DES_DECRYPT('mylite')", "DES_DECRYPT"},
+  };
+
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "des_function_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    std::vector<std::string> messages;
+    for (size_t i= 0; i < sizeof(functions) / sizeof(functions[0]); ++i)
+    {
+      char *errmsg= nullptr;
+      rc= mylite_exec(db, functions[i].sql, nullptr, nullptr, &errmsg);
+      std::string message= errmsg ? errmsg : mylite_errmsg(db);
+      if (errmsg)
+        mylite_free(errmsg);
+      messages.push_back(std::string(functions[i].name) + "=" + message);
+
+      ok= record_result(result, functions[i].label, MYLITE_ERROR, rc,
+                        db) && ok;
+      if (mylite_mariadb_errno(db) != ER_SP_DOES_NOT_EXIST ||
+          std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+          message.find(functions[i].name) == std::string::npos)
+        ok= false;
+    }
+    result->exec_des_function_messages= join_strings(messages, " | ");
+
+    rc= mylite_close(db);
+    ok= record_result(result, "des_function_close", MYLITE_OK, rc,
                       nullptr) && ok;
   }
   return ok;
@@ -2962,6 +3014,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_crypt_function_message.empty())
     report << "exec_crypt_function_message="
            << result.exec_crypt_function_message << "\n";
+  if (!result.exec_des_function_messages.empty())
+    report << "exec_des_function_messages="
+           << result.exec_des_function_messages << "\n";
   if (!result.exec_zlib_compression_have_rows.empty())
     report << "exec_zlib_compression_have_rows="
            << result.exec_zlib_compression_have_rows << "\n";

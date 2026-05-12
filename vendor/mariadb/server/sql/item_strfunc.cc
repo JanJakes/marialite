@@ -893,6 +893,7 @@ bool Item_func_concat::fix_length_and_dec(THD *thd)
   return FALSE;
 }
 
+#ifndef MYLITE_DISABLE_DES_FUNCTIONS
 /**
   @details
   Function des_encrypt() by tonu@spam.ee & monty
@@ -1108,6 +1109,7 @@ wrong_key:
   null_value=1;
   return 0;
 }
+#endif
 
 
 /**

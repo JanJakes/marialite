@@ -26,6 +26,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `MYLITE_DISABLE_BINLOG_REPLICATION=ON`
 - `MYLITE_DISABLE_RPL_FILTER=ON`
 - `MYLITE_DISABLE_CRYPT_FUNCTION=ON`
+- `MYLITE_DISABLE_DES_FUNCTIONS=ON`
 - `MYLITE_DISABLE_ZLIB_COMPRESSION=ON`
 - `MYLITE_DISABLE_REGEX_FUNCTIONS=ON`
 - `MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS=ON`
@@ -67,8 +68,8 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `geometry-type-size-profile`, `general1400-collation-size-profile`,
 `rpl-filter-size-profile`, `icf-linker-size-profile`, and
 `vio-tls-size-profile`, `libcrypt-encrypt-size-profile`,
-`zlib-compression-size-profile`, and
-`dynamic-plugin-loading-size-profile`
+`zlib-compression-size-profile`,
+`dynamic-plugin-loading-size-profile`, and `des-function-size-profile`
 attempts, which remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
@@ -110,7 +111,8 @@ compressed-column, compressed-protocol, and compressed-binlog surfaces while
 retaining CRC32 support, remove the `libz.so.1` runtime dependency, compile out
 the dynamic plugin loader and full dynamic plugin service bridge while
 reporting `have_dynamic_loading=NO`, and strip the static archive in the
-MyLite minsize profile.
+MyLite minsize profile, and omit legacy `DES_ENCRYPT()` / `DES_DECRYPT()`
+SQL functions plus DES key-file server administration plumbing.
 
 `no-myisam-temp-spill-size-profile` was measured separately as an opt-in
 `MYLITE_DISABLE_MYISAM_TEMP_SPILL=ON` experiment. It is not part of the current
@@ -130,40 +132,40 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-dynamic-plugin-loading`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-des-function`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 32,122,742 | 30.63 | Main embedded MariaDB archive, 436 objects, stripped; section metadata grows the archive |
-| `build/mariadb-minsize/mylite/libmylite.a` | 122,800 | 0.12 | First-party public wrapper |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 32,081,652 | 30.60 | Main embedded MariaDB archive, 435 objects, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/mylite/libmylite.a` | 122,792 | 0.12 | First-party public wrapper |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,440 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 8,415,504 | 8.03 | Unstripped linked smoke binary, lld RELR, section GC, ICF, no VIO TLS transport, no `ENCRYPT()`, no zlib compression, and no dynamic plugin loading |
-| stripped `mylite-open-close-smoke` copy | 6,041,152 | 5.76 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 8,405,008 | 8.02 | Unstripped linked smoke binary, lld RELR, section GC, ICF, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 6,034,528 | 5.76 | `strip --strip-unneeded` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 4,744,181 |
-| data | 1,293,616 |
-| bss | 253,313 |
-| total `size` decimal | 6,291,110 |
+| text | 4,741,495 |
+| data | 1,289,696 |
+| bss | 247,673 |
+| total `size` decimal | 6,278,864 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,896,892 | Executable code |
-| `.data.rel.ro` | 1,078,392 | Relocated read-only data |
+| `.text` | 2,895,532 | Executable code |
+| `.data.rel.ro` | 1,074,760 | Relocated read-only data |
 | `.rodata` | 978,379 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.eh_frame` | 598,404 | Unwind metadata |
-| `.data` | 185,280 | Writable data |
-| `.bss` | 249,361 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 125,748 | Unwind table index |
-| `.rela.dyn` | 49,488 | Remaining unpacked dynamic relocations |
-| `.gcc_except_table` | 42,936 | Exception metadata |
-| `.relr.dyn` | 19,656 | Packed relative relocations |
+| `.eh_frame` | 597,728 | Unwind metadata |
+| `.data` | 185,120 | Writable data |
+| `.bss` | 245,449 | Zero-initialized writable data |
+| `.eh_frame_hdr` | 125,588 | Unwind table index |
+| `.rela.dyn` | 49,392 | Remaining unpacked dynamic relocations |
+| `.gcc_except_table` | 42,932 | Exception metadata |
+| `.relr.dyn` | 19,592 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 9,679,568 bytes, or 9.23 MiB, before compression:
@@ -273,6 +275,7 @@ The current built-in plugins are:
 | `libcrypt-encrypt-size-profile` after VIO TLS | 32,243,074 | -11,162,358 | 6,080,176 | -13,251,728 | Passes current smokes and harness; omits legacy `ENCRYPT()` and removes `libcrypt.so.1` from the linked runtime dependency set |
 | `zlib-compression-size-profile` after libcrypt | 32,172,020 | -11,233,412 | 6,067,344 | -13,264,560 | Passes current smokes and harness; omits zlib compression surfaces and removes `libz.so.1` from the linked runtime dependency set |
 | `dynamic-plugin-loading-size-profile` after zlib compression | 32,122,742 | -11,282,690 | 6,041,152 | -13,290,752 | Passes current smokes and harness; compiles out dynamic plugin loading and the full plugin service bridge, reports `have_dynamic_loading=NO`, and leaves the `libcrypto.so.3` dependency in place |
+| `des-function-size-profile` after dynamic plugin loading | 32,081,652 | -11,323,780 | 6,034,528 | -13,297,376 | Passes current smokes and harness; omits legacy DES SQL functions and DES key-file administration plumbing, and leaves the `libcrypto.so.3` dependency in place |
 | `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Opt-in experiment only; open/close smoke passes, but storage/catalog harness fails because schema-table queries need disk temp tables |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -296,7 +299,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-8,415,504 bytes to 6,041,152 bytes, saving 2,374,352 bytes, or 2.26 MiB. That
+8,405,008 bytes to 6,034,528 bytes, saving 2,370,480 bytes, or 2.26 MiB. That
 remains the lowest-risk packaging win for any copied executable or
 shared-library style artifact.
 
@@ -345,8 +348,18 @@ The open/close smoke now verifies `have_dynamic_loading=NO`. The
 `sql_plugin.cc.o` undefined-symbol count dropped from 309 to 141, including
 removing service-table references to crypto, wsrep, logger, JSON, and SQL
 client callbacks. This did not remove `libcrypto.so.3`, because SQL crypto,
-password/auth, DES key-file, and startup compatibility helpers still root
-OpenSSL.
+password/auth, DES key-file, and startup compatibility helpers still rooted
+OpenSSL at that point.
+
+The `des-function-size-profile` attempt then removed legacy
+`DES_ENCRYPT()` / `DES_DECRYPT()` registration and DES key-file administration
+from the aggressive embedded profile. On top of the dynamic-plugin-loading
+profile, it reduced the static archive by 41,090 bytes and the stripped linked
+smoke by 6,624 bytes. The archive no longer contains `des_key_file.cc.o`, and
+the linked smoke no longer contains `des_keyschedule`, `Item_func_des*`, or
+`Create_func_des*` symbols. `libcrypto.so.3` remains because retained AES,
+SHA, MD5, random-byte, password/auth, SQL digest, and startup compatibility
+helpers still root OpenSSL-backed code.
 
 The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
 static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings
@@ -702,6 +715,7 @@ MyISAM-compatible storage.
 | Omit VIO TLS transport | 0.02 MiB archive, 0.01 MiB stripped linked, 0.70 MiB vendored dependency beyond ICF | Low/medium embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; network TLS transport is unavailable, which fits the no-network embedded profile |
 | Omit legacy `ENCRYPT()` / `libcrypt` | 0.02 MiB archive, 0.003 MiB stripped linked, 0.19 MiB vendored dependency beyond VIO TLS | Medium compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; `ENCRYPT()` is a Unix `crypt()` wrapper with low embedded value |
 | Omit zlib compression surfaces / `libz` | 0.07 MiB archive, 0.01 MiB stripped linked, 0.13 MiB vendored dependency beyond libcrypt | Medium compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; zlib SQL functions and compressed columns are omitted while `CRC32()` remains |
+| Omit legacy DES functions and key file | 0.04 MiB archive, 0.006 MiB stripped linked beyond dynamic plugin loading | Low/medium embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; embedded DES execution was already disabled, and process-global DES key files do not fit MyLite's file-owned runtime |
 | Omit MyISAM temp-spill handler | 0.66 MiB archive, 0.23 MiB stripped linked beyond no-binlog-core | High | No, keep opt-in only | Breaks schema-table metadata and catalog smokes; needs a MyLite-owned disk temporary-table replacement or a compatible memory-only schema-table path |
 | Remove server-only SQL subsystems | Potentially large | High | Research later | The big bytes are entangled in `libsql_embedded.a`; needs slice-by-slice fork work |
 | `DISABLE_PSI_*` switches | 0 in this build | Low | No | No measured effect |
@@ -769,7 +783,10 @@ Take these now:
 23. Keep the zlib compression omission in the aggressive embedded profile. It
    removes `libz.so.1` from the runtime dependency set while retaining `CRC32()`
    and rejecting compressed-column DDL explicitly.
-24. Keep a stripped linked smoke binary size in the build report so regressions
+24. Keep the legacy DES omission in the aggressive embedded profile. The size
+   win is small, but embedded DES execution was already disabled and key-file
+   administration is server-shaped process-global state.
+25. Keep a stripped linked smoke binary size in the build report so regressions
    are visible.
 
 Do not take these now:

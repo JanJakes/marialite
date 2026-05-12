@@ -933,12 +933,12 @@ PSI_file_key key_file_relaylog, key_file_relaylog_index,
              key_file_relaylog_cache, key_file_relaylog_index_cache;
 PSI_file_key key_file_binlog_state, key_file_gtid_index;
 
-#ifdef HAVE_des
+#if defined(HAVE_des) && !defined(MYLITE_DISABLE_DES_FUNCTIONS)
 char *des_key_file;
 PSI_file_key key_file_des_key_file;
 PSI_mutex_key key_LOCK_des_key_file;
 mysql_mutex_t LOCK_des_key_file;
-#endif /* HAVE_des */
+#endif /* HAVE_des && !MYLITE_DISABLE_DES_FUNCTIONS */
 
 #ifdef HAVE_PSI_INTERFACE
 #ifdef HAVE_MMAP
@@ -1004,9 +1004,9 @@ static PSI_mutex_info all_server_mutexes[]=
   { &key_LOCK_pool, "TC_LOG_MMAP::LOCK_pending_checkpoint", 0},
 #endif /* HAVE_MMAP */
 
-#ifdef HAVE_des
+#if defined(HAVE_des) && !defined(MYLITE_DISABLE_DES_FUNCTIONS)
   { &key_LOCK_des_key_file, "LOCK_des_key_file", PSI_FLAG_GLOBAL},
-#endif /* HAVE_des */
+#endif /* HAVE_des && !MYLITE_DISABLE_DES_FUNCTIONS */
 
   { &key_BINLOG_LOCK_index, "MYSQL_BIN_LOG::LOCK_index", 0},
   { &key_BINLOG_LOCK_xid_list, "MYSQL_BIN_LOG::LOCK_xid_list", 0},
@@ -2157,9 +2157,9 @@ static void clean_up_mutexes()
   mysql_mutex_destroy(&LOCK_global_table_stats);
   mysql_mutex_destroy(&LOCK_global_index_stats);
 #ifdef HAVE_OPENSSL
-#ifdef HAVE_des
+#if defined(HAVE_des) && !defined(MYLITE_DISABLE_DES_FUNCTIONS)
   mysql_mutex_destroy(&LOCK_des_key_file);
-#endif /* HAVE_des */
+#endif /* HAVE_des && !MYLITE_DISABLE_DES_FUNCTIONS */
 #if defined(HAVE_OPENSSL10) && !defined(HAVE_WOLFSSL)
   for (int i= 0; i < CRYPTO_num_locks(); ++i)
     mysql_rwlock_destroy(&openssl_stdlocks[i].lock);
@@ -4554,10 +4554,10 @@ static int init_thread_environment()
   mysql_mutex_init(key_LOCK_temp_pool, &LOCK_temp_pool, MY_MUTEX_INIT_FAST);
 
 #ifdef HAVE_OPENSSL
-#ifdef HAVE_des
+#if defined(HAVE_des) && !defined(MYLITE_DISABLE_DES_FUNCTIONS)
   mysql_mutex_init(key_LOCK_des_key_file,
                    &LOCK_des_key_file, MY_MUTEX_INIT_FAST);
-#endif /* HAVE_des */
+#endif /* HAVE_des && !MYLITE_DISABLE_DES_FUNCTIONS */
 #if defined(HAVE_OPENSSL10) && !defined(HAVE_WOLFSSL)
   openssl_stdlocks= (openssl_lock_t*) OPENSSL_malloc(CRYPTO_num_locks() *
                                                      sizeof(openssl_lock_t));
@@ -4786,10 +4786,10 @@ static void init_ssl()
   {
     have_ssl= SHOW_OPTION_DISABLED;
   }
-#ifdef HAVE_des
+#if defined(HAVE_des) && !defined(MYLITE_DISABLE_DES_FUNCTIONS)
   if (des_key_file)
     load_des_key_file(des_key_file);
-#endif /* HAVE_des */
+#endif /* HAVE_des && !MYLITE_DISABLE_DES_FUNCTIONS */
 #endif /* HAVE_OPENSSL */
 #endif /* !EMBEDDED_LIBRARY */
 }
@@ -6748,12 +6748,12 @@ struct my_option my_long_options[]=
    &opt_debug_sync_timeout, 0,
    0, GET_UINT, OPT_ARG, 0, 0, UINT_MAX, 0, 0, 0},
 #endif /* defined(ENABLED_DEBUG_SYNC) */
-#ifdef HAVE_des
+#if defined(HAVE_des) && !defined(MYLITE_DISABLE_DES_FUNCTIONS)
   {"des-key-file", 0,
    "Load keys for des_encrypt() and des_encrypt from given file",
    &des_key_file, &des_key_file, 0, GET_STR, REQUIRED_ARG,
    0, 0, 0, 0, 0, 0},
-#endif /* HAVE_des */
+#endif /* HAVE_des && !MYLITE_DISABLE_DES_FUNCTIONS */
 #ifdef HAVE_STACKTRACE
   {"stack-trace", 0 , "Print a symbolic stack trace on failure",
    &opt_stack_trace, &opt_stack_trace, 0, GET_BOOL, NO_ARG, 1, 0, 0, 0, 0, 0},
@@ -8175,9 +8175,9 @@ static int mysql_init_variables(void)
   libwrapName= NullS;
 #endif
 #ifdef HAVE_OPENSSL
-#ifdef HAVE_des
+#if defined(HAVE_des) && !defined(MYLITE_DISABLE_DES_FUNCTIONS)
   des_key_file = 0;
-#endif /* HAVE_des */
+#endif /* HAVE_des && !MYLITE_DISABLE_DES_FUNCTIONS */
 #ifndef EMBEDDED_LIBRARY
   ssl_acceptor_fd= 0;
 #endif /* ! EMBEDDED_LIBRARY */
@@ -9513,7 +9513,7 @@ static PSI_file_info all_server_files[]=
   { &key_file_io_cache, "io_cache", 0},
   { &key_file_casetest, "casetest", 0},
   { &key_file_dbopt, "dbopt", 0},
-#ifdef HAVE_des
+#if defined(HAVE_des) && !defined(MYLITE_DISABLE_DES_FUNCTIONS)
   { &key_file_des_key_file, "des_key_file", 0},
 #endif
   { &key_file_ERRMSG, "ERRMSG", 0},

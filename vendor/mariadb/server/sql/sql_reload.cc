@@ -399,7 +399,7 @@ bool reload_acl_and_cache(THD *thd, unsigned long long options,
     }
   }
 #endif
-#ifdef HAVE_des
+#if defined(HAVE_des) && !defined(MYLITE_DISABLE_DES_FUNCTIONS)
    if (options & REFRESH_DES_KEY_FILE)
    {
      if (des_key_file && load_des_key_file(des_key_file))

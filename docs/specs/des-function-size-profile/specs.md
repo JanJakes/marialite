@@ -126,3 +126,37 @@ current archive and stripped linked-smoke sizes against
   `load_des_key_file()`. The build and symbol checks should catch this.
 - DES function removal is SQL-visible. It should remain limited to the
   aggressive embedded minsize profile.
+
+## Attempt Result
+
+Implemented in `build/mariadb-minsize-des-function` with
+`MYLITE_DISABLE_DES_FUNCTIONS=ON`.
+
+Measured against `build/mariadb-minsize-dynamic-plugin-loading`:
+
+| Artifact | Previous bytes | New bytes | Delta |
+| --- | ---: | ---: | ---: |
+| `libmysqld/libmariadbd.a` | 32,122,742 | 32,081,652 | -41,090 |
+| `mylite/mylite-open-close-smoke` | 8,415,504 | 8,405,008 | -10,496 |
+| stripped `mylite-open-close-smoke` copy | 6,041,152 | 6,034,528 | -6,624 |
+
+Verification:
+
+- `MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-des-function
+  MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh` passed.
+- `MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-des-function
+  MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh` passed.
+- `MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-des-function
+  MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh` passed.
+- `bash -n tools/build-mariadb-minsize.sh` passed.
+- `git diff --check` passed.
+
+The resulting embedded archive has 435 objects and no `des_key_file.cc.o`
+member. The linked open/close smoke has no `des_keyschedule`,
+`Item_func_des*`, or `Create_func_des*` symbols. The open/close smoke verifies
+`DES_ENCRYPT()` and `DES_DECRYPT()` now fail through MariaDB's unknown-function
+diagnostic.
+
+`libcrypto.so.3` remains in the linked runtime dependencies because retained
+AES, SHA, MD5, random-byte, password/auth, SQL digest, and startup compatibility
+helpers still use OpenSSL-backed `mysys_ssl` symbols.
