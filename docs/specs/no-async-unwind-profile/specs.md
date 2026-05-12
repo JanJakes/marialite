@@ -57,6 +57,19 @@ The theoretical linked savings are bounded by the current `.eh_frame` and
 `.eh_frame_hdr` sections, about 1.02 MiB before any compiler-retained
 synchronous unwind data.
 
+The implementation attempt added `-fno-asynchronous-unwind-tables` to both
+`CMAKE_C_FLAGS` and `CMAKE_CXX_FLAGS`. After a full rebuild, the measured
+artifact sizes were unchanged:
+
+- `libmariadbd.a`: 34,474,690 bytes,
+- `mylite-open-close-smoke`: 18,259,560 bytes,
+- stripped `mylite-open-close-smoke`: 15,849,720 bytes,
+- `size` total: 16,084,955 bytes.
+
+The linked section profile still contained `.eh_frame` at 828,292 bytes and
+`.eh_frame_hdr` at 188,884 bytes. The attempt is rejected because it does not
+reduce the production artifacts.
+
 ## Test plan
 
 Run:
@@ -80,6 +93,20 @@ size -A build/mariadb-minsize/mylite/mylite-open-close-smoke
 - Linked section-size deltas are recorded in this spec and in production-size
   analysis.
 - If savings are negligible, reject the attempt and document why.
+
+## Verification
+
+Run on 2026-05-12 with `-fno-asynchronous-unwind-tables` added to C and C++
+flags:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+```
+
+All passed. The attempt was reverted because measured artifact sizes were
+unchanged.
 
 ## Risks
 
