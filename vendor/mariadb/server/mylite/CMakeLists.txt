@@ -53,14 +53,3 @@ MYSQL_ADD_EXECUTABLE(mylite-compatibility-smoke
   COMPONENT Test
 )
 TARGET_LINK_LIBRARIES(mylite-compatibility-smoke mysqlserver tpool)
-
-IF(UNIX)
-  SET_TARGET_PROPERTIES(mylite-embedded-bootstrap-smoke PROPERTIES
-    ENABLE_EXPORTS TRUE)
-  SET_TARGET_PROPERTIES(mylite-open-close-smoke PROPERTIES
-    ENABLE_EXPORTS TRUE)
-  SET_TARGET_PROPERTIES(mylite-storage-engine-smoke PROPERTIES
-    ENABLE_EXPORTS TRUE)
-  SET_TARGET_PROPERTIES(mylite-compatibility-smoke PROPERTIES
-    ENABLE_EXPORTS TRUE)
-ENDIF()

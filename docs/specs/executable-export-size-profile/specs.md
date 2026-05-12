@@ -123,6 +123,38 @@ nm -D build/mariadb-minsize/mylite/mylite-open-close-smoke | wc -l
 - Linked proxy size deltas are recorded in
   `docs/research/production-size-analysis.md`.
 
+## Verification
+
+Validated on 2026-05-12 with:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+```
+
+Observed evidence:
+
+- `mylite-open-close-smoke` link command no longer contains
+  `--export-dynamic`.
+- `nm -D build/mariadb-minsize/mylite/mylite-open-close-smoke | wc -l`
+  reports 488 dynamic symbols, down from 28,646.
+- `libmariadbd.a` remains 33,092,908 bytes.
+- `libmylite-open-close-report.txt` reports `status=0` and `phase=complete`.
+- `mylite-compatibility-harness-report.txt` reports `status=0` for all groups.
+
+Measured artifacts after this slice:
+
+| Artifact | Bytes | Delta from GIS profile |
+| --- | ---: | ---: |
+| `libmariadbd.a` | 33,092,908 | 0 |
+| archive object count | 488 | 0 |
+| `libmylite.a` | 93,752 | 0 |
+| `libmylite_embedded.a` | 303,480 | 0 |
+| `mylite-open-close-smoke` | 15,261,992 | -2,162,792 |
+| stripped `mylite-open-close-smoke` copy | 12,959,352 | -2,162,688 |
+| linked `size` total | 13,249,609 | -2,124,234 |
+
 ## Risks and unresolved questions
 
 - This reduces test/proxy executable size, not the current static archive.
