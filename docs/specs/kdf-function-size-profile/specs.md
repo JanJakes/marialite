@@ -110,3 +110,36 @@ Also compare current archive and stripped linked-smoke sizes against
   execution was already disabled.
 - The linked-runtime savings may be too small to justify losing `KDF()` outside
   the most aggressive size profile.
+
+## Attempt Result
+
+Implemented in `build/mariadb-minsize-kdf-function` with
+`MYLITE_DISABLE_KDF_FUNCTION=ON`.
+
+Measured against `build/mariadb-minsize-des-function`:
+
+| Artifact | Previous bytes | New bytes | Delta |
+| --- | ---: | ---: | ---: |
+| `libmysqld/libmariadbd.a` | 32,081,652 | 32,052,836 | -28,816 |
+| `mylite/mylite-open-close-smoke` | 8,405,008 | 8,397,032 | -7,976 |
+| stripped `mylite-open-close-smoke` copy | 6,034,528 | 6,029,392 | -5,136 |
+
+Verification:
+
+- `MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-kdf-function
+  MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh` passed.
+- `MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-kdf-function
+  MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh` passed.
+- `MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-kdf-function
+  MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh` passed.
+- `bash -n tools/build-mariadb-minsize.sh` passed.
+- `git diff --check` passed.
+
+The linked open/close smoke has no `Item_func_kdf` or `Create_func_kdf`
+symbols. The embedded archive no longer has direct undefined references to
+`EVP_PKEY_CTX*` or `PKCS5_PBKDF2_HMAC()` from `KDF()` code. The open/close
+smoke verifies `KDF()` fails through MariaDB's unknown-function diagnostic.
+
+`libcrypto.so.3` remains in the linked runtime dependencies because retained
+AES, SHA, MD5, random-byte, password/auth, SQL digest, and startup compatibility
+helpers still use OpenSSL-backed `mysys_ssl` symbols.

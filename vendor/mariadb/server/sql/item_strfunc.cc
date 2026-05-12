@@ -442,6 +442,7 @@ bool Item_func_aes_decrypt::fix_length_and_dec(THD *thd)
   return FALSE;
 }
 
+#ifndef MYLITE_DISABLE_KDF_FUNCTION
 bool Item_func_kdf::fix_length_and_dec(THD *thd)
 {
   if (arg_count > 4 && args[4]->const_item())
@@ -558,6 +559,7 @@ ret_null:
   null_value=1;
   return 0;
 }
+#endif
 
 bool Item_func_to_base64::fix_length_and_dec(THD *thd)
 {
