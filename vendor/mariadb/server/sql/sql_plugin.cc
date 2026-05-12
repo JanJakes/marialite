@@ -55,6 +55,10 @@ static PSI_memory_key key_memory_plugin_bookmark;
 extern struct st_maria_plugin *mysql_optional_plugins[];
 extern struct st_maria_plugin *mysql_mandatory_plugins[];
 
+#if defined(HAVE_DLOPEN) && !defined(MYLITE_DISABLE_DYNAMIC_PLUGIN_LOADING)
+#define MYLITE_HAVE_DYNAMIC_PLUGIN_LOADING 1
+#endif
+
 /**
   @note The order of the enumeration is critical.
   @see construct_options
@@ -155,7 +159,7 @@ static int plugin_type_initialization_order[MYSQL_MAX_PLUGIN_TYPE_NUM]=
   MYSQL_UDF_PLUGIN
 };
 
-#ifdef HAVE_DLOPEN
+#ifdef MYLITE_HAVE_DYNAMIC_PLUGIN_LOADING
 static const char *plugin_interface_version_sym=
                    "_mysql_plugin_interface_version_";
 static const char *sizeof_st_plugin_sym=
@@ -457,7 +461,7 @@ static int item_val_real(struct st_mysql_value *value, double *buf)
   Plugin support code
 ****************************************************************************/
 
-#ifdef HAVE_DLOPEN
+#ifdef MYLITE_HAVE_DYNAMIC_PLUGIN_LOADING
 
 static struct st_plugin_dl *plugin_dl_find(const LEX_CSTRING *dl)
 {
@@ -499,16 +503,16 @@ static st_plugin_dl *plugin_dl_insert_or_reuse(struct st_plugin_dl *plugin_dl)
   DBUG_RETURN(tmp);
 }
 #else
-static struct st_plugin_dl *plugin_dl_find(const LEX_STRING *)
+static struct st_plugin_dl *plugin_dl_find(const LEX_CSTRING *)
 {
   return 0;
 }
-#endif /* HAVE_DLOPEN */
+#endif /* MYLITE_HAVE_DYNAMIC_PLUGIN_LOADING */
 
 
 static void free_plugin_mem(struct st_plugin_dl *p)
 {
-#ifdef HAVE_DLOPEN
+#ifdef MYLITE_HAVE_DYNAMIC_PLUGIN_LOADING
   if (p->ptr_backup)
   {
     DBUG_ASSERT(p->nbackups);
@@ -537,7 +541,7 @@ static void free_plugin_mem(struct st_plugin_dl *p)
   @retval TRUE  ERROR
 */
 
-#ifdef HAVE_DLOPEN
+#ifdef MYLITE_HAVE_DYNAMIC_PLUGIN_LOADING
 static my_bool read_mysql_plugin_info(struct st_plugin_dl *plugin_dl,
                                       void *sym, char *dlpath, myf MyFlags)
 {
@@ -736,11 +740,11 @@ static my_bool read_maria_plugin_info(struct st_plugin_dl *plugin_dl,
 
   DBUG_RETURN(FALSE);
 }
-#endif /* HAVE_DLOPEN */
+#endif /* MYLITE_HAVE_DYNAMIC_PLUGIN_LOADING */
 
 static st_plugin_dl *plugin_dl_add(const LEX_CSTRING *dl, myf MyFlags)
 {
-#ifdef HAVE_DLOPEN
+#ifdef MYLITE_HAVE_DYNAMIC_PLUGIN_LOADING
   char dlpath[FN_REFLEN];
   size_t plugin_dir_len,i;
   uint dummy_errors;

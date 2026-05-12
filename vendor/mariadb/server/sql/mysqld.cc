@@ -8145,7 +8145,7 @@ static int mysql_init_variables(void)
 #else
   have_openssl= have_ssl= SHOW_OPTION_NO;
 #endif
-#ifdef HAVE_DLOPEN
+#if defined(HAVE_DLOPEN) && !defined(MYLITE_DISABLE_DYNAMIC_PLUGIN_LOADING)
   have_dlopen=SHOW_OPTION_YES;
 #else
   have_dlopen=SHOW_OPTION_NO;

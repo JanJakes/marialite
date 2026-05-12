@@ -74,6 +74,7 @@ struct SmokeResult
   std::string exec_zlib_compression_crc32_rows;
   std::string exec_zlib_compression_messages;
   std::string exec_zlib_compressed_column_message;
+  std::string exec_dynamic_plugin_loading_have_rows;
   std::string exec_query_cache_have_rows;
   std::string exec_query_cache_size_rows;
   std::string exec_query_cache_type_rows;
@@ -187,6 +188,8 @@ static bool check_crypt_function_unsupported(const SmokeOptions &options,
                                              SmokeResult *result);
 static bool check_zlib_compression_unsupported(const SmokeOptions &options,
                                                SmokeResult *result);
+static bool check_dynamic_plugin_loading_unsupported(
+  const SmokeOptions &options, SmokeResult *result);
 static bool check_query_cache_unsupported(const SmokeOptions &options,
                                           SmokeResult *result);
 static bool check_profiling_unsupported(const SmokeOptions &options,
@@ -385,6 +388,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "zlib_compression_unsupported";
   ok= check_zlib_compression_unsupported(options, result) && ok;
+
+  result->phase= "dynamic_plugin_loading_unsupported";
+  ok= check_dynamic_plugin_loading_unsupported(options, result) && ok;
 
   result->phase= "query_cache_unsupported";
   ok= check_query_cache_unsupported(options, result) && ok;
@@ -1334,6 +1340,32 @@ static bool check_zlib_compression_unsupported(const SmokeOptions &options,
     rc= mylite_close(db);
     ok= record_result(result, "zlib_compression_close", MYLITE_OK, rc,
                       nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_dynamic_plugin_loading_unsupported(
+  const SmokeOptions &options, SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "dynamic_plugin_loading_open",
+                         MYLITE_OK, rc, db);
+  if (db)
+  {
+    ExecCapture have_capture;
+    ok= exec_query_capture(db, "SHOW VARIABLES LIKE 'have_dynamic_loading'",
+                           "dynamic_plugin_loading_have", &have_capture,
+                           result) && ok;
+    result->exec_dynamic_plugin_loading_have_rows=
+      join_strings(have_capture.rows, ",");
+    if (result->exec_dynamic_plugin_loading_have_rows !=
+        "have_dynamic_loading:NO")
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "dynamic_plugin_loading_close",
+                      MYLITE_OK, rc, nullptr) && ok;
   }
   return ok;
 }
@@ -2942,6 +2974,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_zlib_compressed_column_message.empty())
     report << "exec_zlib_compressed_column_message="
            << result.exec_zlib_compressed_column_message << "\n";
+  if (!result.exec_dynamic_plugin_loading_have_rows.empty())
+    report << "exec_dynamic_plugin_loading_have_rows="
+           << result.exec_dynamic_plugin_loading_have_rows << "\n";
   if (!result.exec_query_cache_have_rows.empty())
     report << "exec_query_cache_have_rows="
            << result.exec_query_cache_have_rows << "\n";

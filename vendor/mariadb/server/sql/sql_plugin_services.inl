@@ -26,6 +26,14 @@ struct st_service_ref {
   void *service;
 };
 
+#ifdef MYLITE_DISABLE_DYNAMIC_PLUGIN_LOADING
+static struct st_service_ref list_of_services[]=
+{
+  { "mylite_unused_service",      0,                   0 },
+  { "debug_sync_service",         VERSION_debug_sync,  0 }
+};
+#else
+
 static struct my_snprintf_service_st my_snprintf_handler = {
   my_snprintf,
   my_vsnprintf
@@ -368,3 +376,4 @@ static struct st_service_ref list_of_services[]=
   { "provider_service_lzo",        VERSION_provider_lzo,        &provider_handler_lzo },
   { "provider_service_snappy",     VERSION_provider_snappy,     &provider_handler_snappy }
 };
+#endif /* MYLITE_DISABLE_DYNAMIC_PLUGIN_LOADING */

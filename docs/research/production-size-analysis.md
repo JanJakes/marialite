@@ -66,8 +66,9 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `spatial-core-size-profile`, `sql-sequence-size-profile`,
 `geometry-type-size-profile`, `general1400-collation-size-profile`,
 `rpl-filter-size-profile`, `icf-linker-size-profile`, and
-`vio-tls-size-profile`, `libcrypt-encrypt-size-profile`, and
-`zlib-compression-size-profile`
+`vio-tls-size-profile`, `libcrypt-encrypt-size-profile`,
+`zlib-compression-size-profile`, and
+`dynamic-plugin-loading-size-profile`
 attempts, which remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
@@ -106,8 +107,10 @@ VIO TLS transport and the `libssl.so.3` runtime dependency while retaining
 `libcrypto.so.3`, omit the legacy `ENCRYPT()` SQL function and the
 `libcrypt.so.1` runtime dependency, omit zlib-backed SQL compression,
 compressed-column, compressed-protocol, and compressed-binlog surfaces while
-retaining CRC32 support, remove the `libz.so.1` runtime dependency, and strip
-the static archive in the MyLite minsize profile.
+retaining CRC32 support, remove the `libz.so.1` runtime dependency, compile out
+the dynamic plugin loader and full dynamic plugin service bridge while
+reporting `have_dynamic_loading=NO`, and strip the static archive in the
+MyLite minsize profile.
 
 `no-myisam-temp-spill-size-profile` was measured separately as an opt-in
 `MYLITE_DISABLE_MYISAM_TEMP_SPILL=ON` experiment. It is not part of the current
@@ -127,40 +130,40 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-zlib`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-dynamic-plugin-loading`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 32,172,020 | 30.68 | Main embedded MariaDB archive, 436 objects, stripped; section metadata grows the archive |
-| `build/mariadb-minsize/mylite/libmylite.a` | 122,784 | 0.12 | First-party public wrapper |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 32,122,742 | 30.63 | Main embedded MariaDB archive, 436 objects, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/mylite/libmylite.a` | 122,800 | 0.12 | First-party public wrapper |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,440 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 8,455,992 | 8.06 | Unstripped linked smoke binary, lld RELR, section GC, ICF, no VIO TLS transport, no `ENCRYPT()`, and no zlib compression |
-| stripped `mylite-open-close-smoke` copy | 6,067,344 | 5.79 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 8,415,504 | 8.03 | Unstripped linked smoke binary, lld RELR, section GC, ICF, no VIO TLS transport, no `ENCRYPT()`, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 6,041,152 | 5.76 | `strip --strip-unneeded` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 4,767,393 |
-| data | 1,296,560 |
-| bss | 250,137 |
-| total `size` decimal | 6,314,090 |
+| text | 4,744,181 |
+| data | 1,293,616 |
+| bss | 253,313 |
+| total `size` decimal | 6,291,110 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,913,228 | Executable code |
-| `.data.rel.ro` | 1,078,768 | Relocated read-only data |
-| `.rodata` | 979,659 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.eh_frame` | 602,908 | Unwind metadata |
-| `.data` | 187,808 | Writable data |
-| `.bss` | 249,369 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 126,748 | Unwind table index |
-| `.rela.dyn` | 49,560 | Remaining unpacked dynamic relocations |
-| `.gcc_except_table` | 42,916 | Exception metadata |
-| `.relr.dyn` | 19,696 | Packed relative relocations |
+| `.text` | 2,896,892 | Executable code |
+| `.data.rel.ro` | 1,078,392 | Relocated read-only data |
+| `.rodata` | 978,379 | Parser tables, SQL metadata, constants, retained Unicode data |
+| `.eh_frame` | 598,404 | Unwind metadata |
+| `.data` | 185,280 | Writable data |
+| `.bss` | 249,361 | Zero-initialized writable data |
+| `.eh_frame_hdr` | 125,748 | Unwind table index |
+| `.rela.dyn` | 49,488 | Remaining unpacked dynamic relocations |
+| `.gcc_except_table` | 42,936 | Exception metadata |
+| `.relr.dyn` | 19,656 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 9,679,568 bytes, or 9.23 MiB, before compression:
@@ -269,6 +272,7 @@ The current built-in plugins are:
 | `vio-tls-size-profile` after ICF | 32,261,482 | -11,143,950 | 6,083,040 | -13,248,864 | Passes current smokes and harness; removes VIO TLS transport and `libssl.so.3` from the linked runtime dependency set |
 | `libcrypt-encrypt-size-profile` after VIO TLS | 32,243,074 | -11,162,358 | 6,080,176 | -13,251,728 | Passes current smokes and harness; omits legacy `ENCRYPT()` and removes `libcrypt.so.1` from the linked runtime dependency set |
 | `zlib-compression-size-profile` after libcrypt | 32,172,020 | -11,233,412 | 6,067,344 | -13,264,560 | Passes current smokes and harness; omits zlib compression surfaces and removes `libz.so.1` from the linked runtime dependency set |
+| `dynamic-plugin-loading-size-profile` after zlib compression | 32,122,742 | -11,282,690 | 6,041,152 | -13,290,752 | Passes current smokes and harness; compiles out dynamic plugin loading and the full plugin service bridge, reports `have_dynamic_loading=NO`, and leaves the `libcrypto.so.3` dependency in place |
 | `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Opt-in experiment only; open/close smoke passes, but storage/catalog harness fails because schema-table queries need disk temp tables |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -292,7 +296,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-8,455,992 bytes to 6,067,344 bytes, saving 2,388,648 bytes, or 2.28 MiB. That
+8,415,504 bytes to 6,041,152 bytes, saving 2,374,352 bytes, or 2.26 MiB. That
 remains the lowest-risk packaging win for any copied executable or
 shared-library style artifact.
 
@@ -331,6 +335,18 @@ packages that vendor runtime libraries. `have_compress` now reports `NO`,
 `COMPRESS()`, `UNCOMPRESS()`, and `UNCOMPRESSED_LENGTH()` fail through the
 unknown-function path, and compressed-column DDL fails with
 `ER_UNKNOWN_COMPRESSION_METHOD`.
+
+The `dynamic-plugin-loading-size-profile` attempt then compiled out the
+runtime `dlopen()` plugin loader and replaced the full dynamic plugin service
+bridge with the minimal startup-visible `debug_sync_service` placeholder in
+the aggressive embedded profile. On top of the zlib profile, it reduced the
+static archive by 49,278 bytes and the stripped linked smoke by 26,192 bytes.
+The open/close smoke now verifies `have_dynamic_loading=NO`. The
+`sql_plugin.cc.o` undefined-symbol count dropped from 309 to 141, including
+removing service-table references to crypto, wsrep, logger, JSON, and SQL
+client callbacks. This did not remove `libcrypto.so.3`, because SQL crypto,
+password/auth, DES key-file, and startup compatibility helpers still root
+OpenSSL.
 
 The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
 static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings

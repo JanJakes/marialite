@@ -166,3 +166,43 @@ nm -A --undefined-only \
   helper.
 - `libcrypto.so.3` is expected to remain after this slice because SQL crypto,
   authentication, DES key-file, and startup helpers still reference OpenSSL.
+
+## Implementation Result
+
+Implemented behind `MYLITE_DISABLE_DYNAMIC_PLUGIN_LOADING` and enabled in
+`tools/build-mariadb-minsize.sh`.
+
+The implementation:
+
+- compiles `sql_plugin.cc` dynamic `dlopen()` loading paths through the
+  existing disabled-feature fallback when the MyLite option is enabled,
+- replaces the full dynamic plugin service table with a two-entry minimal list
+  that preserves the existing `debug_sync_service` startup update,
+- leaves static builtin plugin registration intact,
+- reports `have_dynamic_loading=NO`, and
+- extends the open/close smoke to verify that runtime variable.
+
+Measured from
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-dynamic-plugin-loading`:
+
+| Artifact | Bytes | Delta From Zlib Profile |
+| --- | ---: | ---: |
+| `libmysqld/libmariadbd.a` | 32,122,742 | -49,278 |
+| `mylite/mylite-open-close-smoke` | 8,415,504 | -40,488 |
+| stripped `mylite-open-close-smoke` copy | 6,041,152 | -26,192 |
+
+The linked dependency set is unchanged and still includes `libcrypto.so.3`.
+`sql_plugin.cc.o` no longer roots dynamic-service references to crypto, wsrep,
+logger, JSON, or SQL client callbacks, but other retained objects still root
+OpenSSL.
+
+Verification passed:
+
+```sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-dynamic-plugin-loading \
+  MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-dynamic-plugin-loading \
+  MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-dynamic-plugin-loading \
+  MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+```
