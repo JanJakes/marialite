@@ -191,6 +191,7 @@ without injecting the old hard-coded `mylite.probe` seed table.
 | 50 | `foreign-server-cache-startup` | Done | Initialize the embedded foreign-server cache without probing missing `mysql.servers` system tables at startup. |
 | 51 | `aria-startup-sidecars` | Done | Omit Aria from the default MyLite embedded profile and remove the remaining inherited Aria log/control sidecar exception. |
 | 52 | `seed-probe-removal` | Done | Remove the hard-coded `mylite.probe` seed table now that user-created catalog tables cover discovery. |
+| 53 | `libmylite-uri-open` | In progress | Support local `file:` URI filenames through the existing public `MYLITE_OPEN_URI` flag. |
 
 ## Size and profile direction
 
