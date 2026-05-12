@@ -30,6 +30,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `MYLITE_DISABLE_KDF_FUNCTION=ON`
 - `MYLITE_DISABLE_SQL_CRYPTO_FUNCTIONS=ON`
 - `MYLITE_DISABLE_SERVER_ENCRYPTION=ON`
+- `MYLITE_DISABLE_OPENSSL_DIGESTS=ON`
 - `MYLITE_DISABLE_ZLIB_COMPRESSION=ON`
 - `MYLITE_DISABLE_REGEX_FUNCTIONS=ON`
 - `MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS=ON`
@@ -78,8 +79,8 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `dynamic-plugin-loading-size-profile`, `des-function-size-profile`, and
 `kdf-function-size-profile`, `unwind-table-size-profile`,
 `udf-runtime-size-profile`, `window-function-size-profile`, and
-`sql-crypto-function-size-profile`, and `server-encryption-size-profile`
-attempts, which remove the built-in
+`sql-crypto-function-size-profile`, `server-encryption-size-profile`, and
+`openssl-digest-size-profile` attempts, which remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
 `WITH_EXTRA_CHARSETS=none`, omit the Oracle SQL-mode parser, omit XML, GIS, and
@@ -113,8 +114,8 @@ symbols, omit compiled `general1400_as_ci` collations and unused extended
 Unicode casefold tables while retaining ordinary `general_ci`, replace
 MariaDB's remaining replication filter implementation with a minimal
 permissive minsize stub, fold identical linked code with lld `--icf=all`, omit
-VIO TLS transport and the `libssl.so.3` runtime dependency while retaining
-`libcrypto.so.3`, omit the legacy `ENCRYPT()` SQL function and the
+VIO TLS transport and the `libssl.so.3` runtime dependency, omit the legacy
+`ENCRYPT()` SQL function and the
 `libcrypt.so.1` runtime dependency, omit zlib-backed SQL compression,
 compressed-column, compressed-protocol, and compressed-binlog surfaces while
 retaining CRC32 support, remove the `libz.so.1` runtime dependency, compile out
@@ -129,7 +130,9 @@ embedded profile, and omit SQL window-function item/execution code from the
 aggressive embedded profile, and omit OpenSSL-backed SQL crypto/password
 functions from the aggressive embedded profile while reporting the SSL library
 as disabled when VIO TLS is disabled, and omit inherited server-side encryption
-hooks for binlogs, relay logs, and encrypted temporary IO caches.
+hooks for binlogs, relay logs, and encrypted temporary IO caches, and replace
+the remaining OpenSSL-backed internal MD5/SHA-1 wrappers in the aggressive
+embedded profile so `libcrypto.so.3` is no longer a linked runtime dependency.
 
 `no-myisam-temp-spill-size-profile` was measured separately as an opt-in
 `MYLITE_DISABLE_MYISAM_TEMP_SPILL=ON` experiment. It is not part of the current
@@ -149,47 +152,46 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-server-encryption`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-openssl-digests`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 30,983,136 | 29.55 | Main embedded MariaDB archive, 434 objects, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 30,943,248 | 29.51 | Main embedded MariaDB archive, 425 objects, stripped; section metadata grows the archive |
 | `build/mariadb-minsize/mylite/libmylite.a` | 122,800 | 0.12 | First-party public wrapper |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,440 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 8,099,344 | 7.72 | Unstripped linked smoke binary, lld RELR, section GC, ICF, reduced unwind tables, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
-| stripped `mylite-open-close-smoke` copy | 5,815,856 | 5.55 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 8,099,472 | 7.72 | Unstripped linked smoke binary, lld RELR, section GC, ICF, reduced unwind tables, no OpenSSL runtime dependency, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 5,816,536 | 5.55 | `strip --strip-unneeded` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 4,592,503 |
-| data | 1,220,016 |
-| bss | 243,425 |
-| total `size` decimal | 6,055,944 |
+| text | 4,593,260 |
+| data | 1,219,880 |
+| bss | 242,721 |
+| total `size` decimal | 6,055,861 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,842,828 | Executable code |
+| `.text` | 2,844,212 | Executable code |
 | `.data.rel.ro` | 1,006,856 | Relocated read-only data |
-| `.rodata` | 977,483 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.eh_frame` | 525,948 | Unwind metadata |
+| `.rodata` | 977,867 | Parser tables, SQL metadata, constants, retained Unicode data |
+| `.eh_frame` | 526,188 | Unwind metadata |
 | `.data` | 184,648 | Writable data |
-| `.bss` | 240,089 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 110,508 | Unwind table index |
+| `.bss` | 240,065 | Zero-initialized writable data |
+| `.eh_frame_hdr` | 110,548 | Unwind table index |
 | `.rela.dyn` | 46,752 | Remaining unpacked dynamic relocations |
 | `.gcc_except_table` | 41,972 | Exception metadata |
 | `.relr.dyn` | 18,496 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
-adds about 9,679,568 bytes, or 9.23 MiB, before compression:
+adds about 5,081,640 bytes, or 4.85 MiB, before compression:
 
 | Dependency | Resolved file size |
 | --- | ---: |
-| `libcrypto.so.3` | 4,597,928 |
 | `libstdc++.so.6.0.33` | 2,633,224 |
 | `libm.so.6` | 591,800 |
 | `libgcc_s.so.1` | 133,696 |
@@ -299,6 +301,7 @@ The current built-in plugins are:
 | `window-function-size-profile` after UDF runtime | 31,138,612 | -12,266,820 | 5,849,432 | -13,482,472 | Passes current smokes and harness; omits dedicated window-function item/execution objects, with small retained stubs |
 | `sql-crypto-function-size-profile` after window functions | 31,000,638 | -12,404,794 | 5,823,416 | -13,508,488 | Passes current smokes and harness; omits OpenSSL-backed SQL crypto/password functions, but `libcrypto.so.3` remains rooted by auth, digest, table, and binlog/io-cache encryption helpers |
 | `server-encryption-size-profile` after SQL crypto | 30,983,136 | -12,422,296 | 5,815,856 | -13,516,048 | Passes current smokes and harness; omits inherited server-side encryption hooks for binlogs and temporary IO caches, but `libcrypto.so.3` remains rooted by auth, digest, table, and startup compatibility helpers |
+| `openssl-digest-size-profile` after server encryption | 30,943,248 | -12,462,184 | 5,816,536 | -13,515,368 | Passes current smokes and harness; replaces retained OpenSSL-backed MD5/SHA-1 wrappers, omits the startup compatibility check, and removes the `libcrypto.so.3` runtime dependency; stripped linked smoke grows by 680 bytes while vendored dependency size drops 4,597,928 bytes |
 | `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Opt-in experiment only; open/close smoke passes, but storage/catalog harness fails because schema-table queries need disk temp tables |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -453,6 +456,18 @@ remains because retained objects still reference `my_sha1` from
 `lib_sql.cc.o`, `client.c.o`, and `password.c.o`, `my_md5` from
 `sql_digest.cc.o` and `table.cc.o`, `my_make_scrambled_password*` from
 `sql_acl.cc.o`, and OpenSSL startup compatibility helpers from `openssl.c.o`.
+
+The `openssl-digest-size-profile` attempt then replaced the retained
+OpenSSL-backed internal MD5/SHA-1 wrappers with first-party minsize digest
+code, omitted unused SHA-2/AES/random wrapper objects from `mysys_ssl`, and
+guarded VIO's OpenSSL cleanup path under `MYLITE_DISABLE_VIO_SSL`. On top of
+the server-encryption profile, it reduced the static archive by 39,888 bytes.
+The stripped linked smoke grew by 680 bytes because the local digest code is
+slightly larger than the tiny OpenSSL wrapper call sites, but `ldd` no longer
+lists `libcrypto.so.3`. If a package vendors runtime libraries, that removes
+4,597,928 bytes from the current Ubuntu 24.04 ARM64 bundle before compression.
+The new `mylite-digest-smoke` verifies standard MD5/SHA-1 vectors, multi-input
+wrappers, context APIs, and the stubbed startup compatibility check.
 
 The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
 static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings
@@ -816,12 +831,13 @@ MyISAM-compatible storage.
 | Omit SQL window functions | 0.58 MiB archive, 0.07 MiB stripped linked beyond UDF runtime | High compatibility | Applied as aggressive size attempt | Current smokes and harness pass; ordinary aggregates remain, but `OVER` and named `WINDOW` analytical SQL are removed from the minsize profile |
 | Omit OpenSSL-backed SQL crypto/password functions | 0.13 MiB archive, 0.02 MiB stripped linked beyond window functions | High compatibility | Applied as aggressive size attempt | Current smokes and harness pass; SQL-visible crypto/password helpers are omitted, but retained auth/digest/table roots keep `libcrypto.so.3` |
 | Omit server-side encryption hooks | 0.02 MiB archive, 0.008 MiB stripped linked beyond SQL crypto | Low embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; binlog, relay-log, and temp-file encryption need daemon/plugin key management that is outside the current embedded profile |
+| Replace OpenSSL digest wrappers | 0.04 MiB archive, +0.001 MiB stripped linked, 4.38 MiB vendored dependency beyond server encryption | Medium packaging | Applied as aggressive embedded-size attempt | Current smokes and harness pass; internal MD5/SHA-1 vectors are preserved, and `libcrypto.so.3` is no longer a runtime dependency |
 | Omit MyISAM temp-spill handler | 0.66 MiB archive, 0.23 MiB stripped linked beyond no-binlog-core | High | No, keep opt-in only | Breaks schema-table metadata and catalog smokes; needs a MyLite-owned disk temporary-table replacement or a compatible memory-only schema-table path |
 | Remove server-only SQL subsystems | Potentially large | High | Research later | The big bytes are entangled in `libsql_embedded.a`; needs slice-by-slice fork work |
 | `DISABLE_PSI_*` switches | 0 in this build | Low | No | No measured effect |
 | `-fno-asynchronous-unwind-tables` | 0 in this build | Low | No | Full rebuild produced identical archive and stripped linked sizes |
 | LTO | About 1.25 MiB linked, archive much larger | High | No | ODR warnings and huge archives are unacceptable for release |
-| Bundle fewer dynamic libraries | Up to 9.23 MiB if currently vendored | Distribution-dependent | Decide per packaging target | Current static archive does not include these libraries |
+| Bundle fewer dynamic libraries | Up to 4.85 MiB remaining if currently vendored | Distribution-dependent | Decide per packaging target | Current static archive does not include these libraries; OpenSSL, PCRE2, zlib, and libcrypt have already been removed from the linked runtime dependency set |
 
 ## Recommendations
 
@@ -876,7 +892,7 @@ Take these now:
    release testing proves no address-identity issues in target integrations.
 21. Keep VIO TLS omitted in the aggressive embedded profile while MyLite has no
    network listener or remote client login path. This removes `libssl.so.3`
-   from the runtime dependency set without removing retained SQL/auth crypto.
+   from the runtime dependency set.
 22. Keep the legacy `ENCRYPT()` omission in the aggressive embedded profile.
    It removes `libcrypt.so.1` from the runtime dependency set; retained crypto
    functions still cover current smoke needs.
@@ -899,13 +915,15 @@ Take these now:
    The savings are meaningful, but this removes real analytical SQL
    compatibility rather than a server-only runtime surface.
 29. Keep SQL crypto/password functions omitted only in the most aggressive size
-   profile. The savings are modest and SQL-visible, but this narrows the
-   remaining OpenSSL dependency to internal auth, digest, table, and startup
-   compatibility roots.
+   profile. The savings are modest and SQL-visible, but this is required for
+   the later OpenSSL-free minsize profile.
 30. Keep server-side encryption hooks omitted in the aggressive embedded
    profile. Binlog, relay-log, and temp-file encryption require server/plugin
    key-management state that does not fit the current file-owned runtime.
-31. Keep a stripped linked smoke binary size in the build report so regressions
+31. Keep the OpenSSL-free digest wrapper profile for the aggressive embedded
+   target. It removes `libcrypto.so.3` from the linked runtime dependency set
+   while preserving retained internal MD5/SHA-1 behavior.
+32. Keep a stripped linked smoke binary size in the build report so regressions
    are visible.
 
 Do not take these now:
@@ -922,21 +940,18 @@ Do not take these now:
 
 Research next if size becomes a release blocker:
 
-1. Decide whether SQL/auth crypto compatibility is worth the remaining
-   `libcrypto.so.3` dependency. Removing or replacing it is a much larger
-   compatibility decision than the VIO TLS cut.
-2. Investigate a deeper no-binlog core for the embedded profile. The current
+1. Investigate a deeper no-binlog core for the embedded profile. The current
    linked smoke still retains `MYSQL_BIN_LOG`, `log_event*`, GTID state,
    `Gtid_index_writer`, and `Rpl_filter` because embedded startup/cleanup,
    table-open filtering, and generic log helpers still root them.
-3. Investigate whether remaining generic `MYSQL_TYPE_GEOMETRY` metadata
+2. Investigate whether remaining generic `MYSQL_TYPE_GEOMETRY` metadata
    branches can be removed cleanly. The current profile still keeps minimal
    GEOMETRY handler symbols so retained MariaDB type aggregation and metadata
    paths link.
-4. Longer-term SQL-layer pruning of server-only surfaces. This is likely where
+3. Longer-term SQL-layer pruning of server-only surfaces. This is likely where
    meaningful multi-MiB savings exist, but it should be done as compatibility
    slices, not as broad dead-code removal.
-5. Separate x86-64 size measurements for lld RELR and ICF before making architecture
+4. Separate x86-64 size measurements for lld RELR and ICF before making architecture
    independent claims.
 
 The best next decisions are deeper SQL-layer reductions as deliberate

@@ -42,6 +42,12 @@ MYSQL_ADD_EXECUTABLE(mylite-open-close-smoke
 )
 TARGET_LINK_LIBRARIES(mylite-open-close-smoke libmylite)
 
+MYSQL_ADD_EXECUTABLE(mylite-digest-smoke
+  digest_smoke.cc
+  COMPONENT Test
+)
+TARGET_LINK_LIBRARIES(mylite-digest-smoke mysys_ssl)
+
 MYSQL_ADD_EXECUTABLE(mylite-storage-engine-smoke
   storage_engine_smoke.cc
   COMPONENT Test

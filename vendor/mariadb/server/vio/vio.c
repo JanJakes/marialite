@@ -22,7 +22,9 @@
 */
 
 #include "vio_priv.h"
+#ifndef MYLITE_DISABLE_VIO_SSL
 #include "ssl_compat.h"
+#endif
 
 PSI_memory_key key_memory_vio_ssl_fd;
 PSI_memory_key key_memory_vio;
@@ -355,9 +357,9 @@ void vio_delete(Vio* vio)
 */
 void vio_end(void)
 {
-#ifdef HAVE_WOLFSSL
+#if defined(HAVE_WOLFSSL) && !defined(MYLITE_DISABLE_VIO_SSL)
   wolfSSL_Cleanup();
-#elif defined(HAVE_OPENSSL)
+#elif defined(HAVE_OPENSSL) && !defined(MYLITE_DISABLE_VIO_SSL)
   // This one is needed on the client side
   ERR_remove_state(0);
   ERR_free_strings();

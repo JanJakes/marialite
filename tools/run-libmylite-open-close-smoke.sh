@@ -40,9 +40,18 @@ run_inside_container() {
   cmake --build "${build_dir}" \
     --target mylite-open-close-smoke \
     --parallel "${jobs}"
+  cmake --build "${build_dir}" \
+    --target mylite-digest-smoke \
+    --parallel "${jobs}"
 
   local abs_build_dir
   abs_build_dir="$(cd "${build_dir}" && pwd)"
+
+  local digest_smoke="${abs_build_dir}/mylite/mylite-digest-smoke"
+  local digest_log="${abs_build_dir}/mylite-digest-smoke-output.log"
+  rm -f "${digest_log}"
+  "${digest_smoke}" > "${digest_log}" 2>&1
+  printf "mylite digest smoke output: %s\n" "${digest_log}"
 
   local runtime_dir="${abs_build_dir}/libmylite-open-close"
   local database="${runtime_dir}/open-close.mylite"
