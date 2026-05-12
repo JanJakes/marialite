@@ -267,6 +267,8 @@ The current built-in plugins are:
 | plugin flags for type/user/sequence plugins | 43,296,232 | -109,200 | 19,265,896 | -66,008 | Large type plugins remain built in |
 | `-fno-asynchronous-unwind-tables` | 34,474,690 | 0 from current | 15,849,720 | 0 from current | Reject; current smokes pass but no artifact-size reduction |
 | `-fno-rtti` | n/a | n/a | n/a | n/a | Reject; retained SQL headers use `dynamic_cast`, so the build fails |
+| `CXXFLAGS=-fno-exceptions` | n/a | n/a | n/a | n/a | Reject; MariaDB thread-pool code uses `catch (std::system_error&)`, so the build fails before SQL sources |
+| `SECURITY_HARDENED=OFF` after RPL filter | 32,762,840 | +479,460 | 6,359,576 | +101,968 | Reject; open/close smoke and harness pass, but both archive and linked runtime grow |
 | early `-ffunction-sections -fdata-sections` plus `--gc-sections` before export removal | 48,305,352 | +4,899,920 | 19,331,816 | -88 | Superseded by `section-gc-size-profile` after executable exports were removed |
 | CMake LTO | 342,480,510 | +299,075,078 | 18,016,192 | -1,315,712 | Reject for now due archive bloat and ODR warnings |
 
@@ -287,6 +289,18 @@ The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
 static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings
 around MariaDB parser and server structures, including generated parser types.
 That is not a safe release lever today.
+
+Disabling MariaDB's `SECURITY_HARDENED` CMake option is also not a size win in
+the current profile. It removes stack-protector and related hardening checks,
+but the measured `build/mariadb-size-no-hardening-rpl` build was larger in
+both the stripped static archive and stripped linked smoke while still keeping
+the same OpenSSL dynamic dependencies.
+
+The `-fno-exceptions` compiler experiment failed before reaching SQL sources:
+`vendor/mariadb/server/tpool/tpool_generic.cc` catches
+`std::system_error`. Removing exception support would require a real
+thread-pool and first-party allocation/error-handling slice rather than a
+compiler flag.
 
 The earlier plugin flags experiment did remove small built-ins such as `sequence`,
 `thread_pool_info`, and `user_variables`, but `type_geom`, `type_inet`,
