@@ -109,6 +109,13 @@ struct SmokeResult
   std::string schema_schemata_count;
   std::string schema_information_table_count;
   std::string schema_drop_error;
+  std::string reserved_create_mysql;
+  std::string reserved_drop_mysql;
+  std::string reserved_create_performance_schema;
+  std::string reserved_create_sys;
+  std::string reserved_seed_drop;
+  std::string reserved_seed_replace;
+  std::string reserved_schema_count;
   std::string duplicate_key;
   std::string update_duplicate_key;
   std::string unsupported_reverse_key;
@@ -181,6 +188,8 @@ static bool exercise_schema_namespace_lifecycle(MYSQL *mysql,
 static bool exercise_schema_namespace_reopen(MYSQL *mysql,
                                              SmokeResult *result,
                                              bool drop_schema);
+static bool exercise_system_schema_namespace_policy(MYSQL *mysql,
+                                                    SmokeResult *result);
 static bool exercise_ddl(MYSQL *mysql, SmokeResult *result);
 static bool exercise_dml(MYSQL *mysql, SmokeResult *result);
 static bool exercise_index_dml(MYSQL *mysql, SmokeResult *result);
@@ -383,6 +392,10 @@ static int run_smoke(const SmokeOptions &options,
   {
     result->phase= "schema_namespace";
     if (!exercise_schema_namespace(mysql, result))
+      goto done;
+
+    result->phase= "system_schema_namespace_policy";
+    if (!exercise_system_schema_namespace_policy(mysql, result))
       goto done;
   }
 
@@ -789,6 +802,52 @@ static bool exercise_schema_namespace_reopen(MYSQL *mysql,
                                         &result->schema_drop_error, result))
       return false;
     return true;
+  }
+
+  return execute_statement(mysql, "USE mylite", "USE seed schema", result);
+}
+
+static bool exercise_system_schema_namespace_policy(MYSQL *mysql,
+                                                    SmokeResult *result)
+{
+  if (!execute_statement_expect_error(mysql, "CREATE DATABASE mysql",
+                                      "CREATE reserved mysql schema",
+                                      &result->reserved_create_mysql,
+                                      result))
+    return false;
+  if (!execute_statement_expect_error(mysql, "DROP DATABASE IF EXISTS mysql",
+                                      "DROP reserved mysql schema",
+                                      &result->reserved_drop_mysql, result))
+    return false;
+  if (!execute_statement_expect_error(
+        mysql, "CREATE DATABASE performance_schema",
+        "CREATE reserved performance_schema schema",
+        &result->reserved_create_performance_schema, result))
+    return false;
+  if (!execute_statement_expect_error(mysql, "CREATE DATABASE sys",
+                                      "CREATE reserved sys schema",
+                                      &result->reserved_create_sys, result))
+    return false;
+  if (!execute_statement_expect_error(mysql, "DROP DATABASE mylite",
+                                      "DROP seed schema",
+                                      &result->reserved_seed_drop, result))
+    return false;
+  if (!execute_statement_expect_error(
+        mysql, "CREATE OR REPLACE DATABASE mylite",
+        "CREATE OR REPLACE seed schema", &result->reserved_seed_replace,
+        result))
+    return false;
+  if (!fetch_single_value(
+        mysql,
+        "SELECT COUNT(*) FROM information_schema.SCHEMATA "
+        "WHERE SCHEMA_NAME IN ('mysql', 'performance_schema', 'sys')",
+        "reserved schema namespace count", &result->reserved_schema_count,
+        result))
+    return false;
+  if (result->reserved_schema_count != "0")
+  {
+    result->message= "reserved schema names leaked into I_S.SCHEMATA";
+    return false;
   }
 
   return execute_statement(mysql, "USE mylite", "USE seed schema", result);
@@ -4186,6 +4245,24 @@ static void write_report(const SmokeOptions &options,
            << result.schema_information_table_count << "\n";
   if (!result.schema_drop_error.empty())
     report << "schema_drop_error=" << result.schema_drop_error << "\n";
+  if (!result.reserved_create_mysql.empty())
+    report << "reserved_create_mysql="
+           << result.reserved_create_mysql << "\n";
+  if (!result.reserved_drop_mysql.empty())
+    report << "reserved_drop_mysql=" << result.reserved_drop_mysql << "\n";
+  if (!result.reserved_create_performance_schema.empty())
+    report << "reserved_create_performance_schema="
+           << result.reserved_create_performance_schema << "\n";
+  if (!result.reserved_create_sys.empty())
+    report << "reserved_create_sys=" << result.reserved_create_sys << "\n";
+  if (!result.reserved_seed_drop.empty())
+    report << "reserved_seed_drop=" << result.reserved_seed_drop << "\n";
+  if (!result.reserved_seed_replace.empty())
+    report << "reserved_seed_replace="
+           << result.reserved_seed_replace << "\n";
+  if (!result.reserved_schema_count.empty())
+    report << "reserved_schema_count="
+           << result.reserved_schema_count << "\n";
   if (!result.duplicate_key.empty())
     report << "duplicate_key=" << result.duplicate_key << "\n";
   if (!result.update_duplicate_key.empty())

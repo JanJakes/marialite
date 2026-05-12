@@ -356,6 +356,14 @@ Initial policy:
 - no event scheduler in the first profile,
 - time zone support starts with `SYSTEM` and named time zones can be added later.
 
+Current MyLite schema namespace policy reserves `mysql`,
+`performance_schema`, and `sys` so they cannot become ordinary catalog schemas
+through `CREATE DATABASE` or `DROP DATABASE`. `information_schema` remains
+virtual through MariaDB's existing schema-table machinery. Replacement
+`mysql.*` tables, performance schema tables, and any `sys` helper views still
+need separate designs before those names can expose MyLite-owned system
+surfaces.
+
 Implementation options:
 
 - store minimal system tables in the MyLite engine,

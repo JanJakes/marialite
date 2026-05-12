@@ -67,6 +67,8 @@ static void mysql_change_db_impl(THD *thd,
                                  CHARSET_INFO *new_db_charset);
 static bool mysql_rm_db_internal(THD *thd, const Lex_ident_db &db,
                                  bool if_exists, bool silent);
+static bool mylite_schema_name_is_reserved(const LEX_CSTRING *db);
+static void mylite_report_reserved_schema_error();
 static void mylite_report_schema_error(const char *operation,
                                        const Lex_ident_db &db, int error);
 
@@ -774,6 +776,12 @@ mysql_create_db_internal(THD *thd, const Lex_ident_db &db,
   long affected_rows= 1;
   if (mylite_schema_namespace_active())
   {
+    if (mylite_schema_name_is_reserved(&dbnorm))
+    {
+      mylite_report_reserved_schema_error();
+      DBUG_RETURN(-1);
+    }
+
     if (mylite_schema_exists(db.str, db.length))
     {
       if (options.or_replace())
@@ -1122,6 +1130,12 @@ mysql_rm_db_internal(THD *thd, const Lex_ident_db &db, bool if_exists,
 
   if (mylite_schema_namespace_active())
   {
+    if (mylite_schema_name_is_reserved(&dbnorm))
+    {
+      mylite_report_reserved_schema_error();
+      DBUG_RETURN(true);
+    }
+
     if (!mylite_schema_exists(db.str, db.length))
     {
       if (!if_exists)
@@ -1389,6 +1403,22 @@ end:
   if (dirp)
     my_dirend(dirp);
   DBUG_RETURN(error);
+}
+
+static bool mylite_schema_name_is_reserved(const LEX_CSTRING *db)
+{
+  static const LEX_CSTRING mysql_schema_name= { C_STRING_WITH_LEN("mysql") };
+  static const LEX_CSTRING sys_schema_name= { C_STRING_WITH_LEN("sys") };
+
+  return lex_string_eq(db, &mysql_schema_name) ||
+         is_perfschema_db(db) ||
+         lex_string_eq(db, &sys_schema_name);
+}
+
+static void mylite_report_reserved_schema_error()
+{
+  my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0),
+           "reserved MyLite schema");
 }
 
 static void mylite_report_schema_error(const char *operation,

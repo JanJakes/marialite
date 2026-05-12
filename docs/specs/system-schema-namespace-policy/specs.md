@@ -132,8 +132,17 @@ No public `libmylite` API changes. No intended file-format change.
 
 ## Binary-Size Impact
 
-Expected impact is negligible: a small SQL-layer name check plus smoke report
-fields. Record measured artifact sizes after implementation.
+Measured artifact sizes after implementation:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 44,440,792 bytes.
+- `build/mariadb-minsize/mylite/libmylite.a`: 87,206 bytes.
+- `build/mariadb-minsize/storage/mylite/libmylite_embedded.a`: 305,932 bytes.
+- `build/mariadb-minsize/mylite/mylite-storage-engine-smoke`: 22,842,288
+  bytes.
+- `build/mariadb-minsize/mylite/mylite-compatibility-smoke`: 22,776,336 bytes.
+
+The size impact is limited to a small SQL-layer name check and additional
+smoke report fields.
 
 ## License, Trademark, And Dependency Impact
 
@@ -170,6 +179,38 @@ public MariaDB/MySQL trademark-facing packaging.
   `schema-namespace-catalog` still passes.
 - Reports and docs distinguish this policy from future replacement
   `mysql.*`, performance schema, or `sys` implementations.
+
+## Implementation Result
+
+`sql/sql_db.cc` now checks normalized schema names before MyLite catalog
+create/drop routing. `mysql`, `performance_schema`, and `sys` fail with an
+explicit unsupported-statement diagnostic when the MyLite namespace is active,
+including `DROP DATABASE IF EXISTS`. Ordinary user schemas continue through
+the catalog helpers.
+
+The storage smoke now verifies:
+
+- `reserved_create_mysql=rejected`,
+- `reserved_drop_mysql=rejected`,
+- `reserved_create_performance_schema=rejected`,
+- `reserved_create_sys=rejected`,
+- `reserved_seed_drop=rejected`,
+- `reserved_seed_replace=rejected`,
+- `reserved_schema_count=0`,
+- `FRM Artifacts=none`,
+- `Schema Directory Artifacts=none`.
+
+Verification completed:
+
+- `git diff --check`.
+- `bash -n tools/run-storage-engine-smoke.sh
+  tools/run-compatibility-test-harness.sh`.
+- `MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh`.
+- `MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh`.
+
+`mylite-compatibility-harness-report.txt` reports `status=0` for
+`embedded_lifecycle`, `libmylite_lifecycle`, `storage_single_file`,
+`mariadb_comparison`, and `sidecar_scan`.
 
 ## Risks And Unresolved Questions
 
