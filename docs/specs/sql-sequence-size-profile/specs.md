@@ -50,8 +50,7 @@ MariaDB source references are from imported MariaDB Server tag
 
 Add a `MYLITE_DISABLE_SQL_SEQUENCE` aggressive minsize option that:
 
-- makes the `sql_sequence` plugin non-mandatory and disables it for the MyLite
-  minsize profile,
+- skips `sql_sequence` plugin registration for the MyLite minsize profile,
 - removes `../sql/sql_sequence.cc` and `../sql/ha_sequence.cc` from the embedded
   SQL source list,
 - links a small embedded-only stub for the remaining sequence symbols still
@@ -82,6 +81,11 @@ stub and retained parser references will reduce the net win.
 
 Expected linked-runtime savings are likely tens of KiB, not MiB, because the
 parser and generic SQL layer still retain sequence syntax and metadata paths.
+
+Measured on `build/mariadb-minsize-sql-sequence`, this reduced
+`libmysqld/libmariadbd.a` from 33,144,206 bytes to 32,926,698 bytes, saving
+217,508 bytes. The stripped `mylite-open-close-smoke` copy dropped from
+6,532,968 bytes to 6,518,592 bytes, saving 14,376 bytes.
 
 ## DDL Metadata Routing Impact
 
@@ -143,6 +147,33 @@ Measure:
 - Ordinary MyLite table creation, insert, select, and `AUTO_INCREMENT` smokes
   still pass.
 - Size deltas are recorded in `docs/research/production-size-analysis.md`.
+
+## Verification Result
+
+Verified with:
+
+```sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-sql-sequence MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-sql-sequence MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-sql-sequence MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+git diff --check
+bash -n tools/build-mariadb-minsize.sh tools/run-libmylite-open-close-smoke.sh tools/run-compatibility-test-harness.sh
+```
+
+Measured artifacts:
+
+| Artifact | Bytes |
+| --- | ---: |
+| `libmysqld/libmariadbd.a` | 32,926,698 |
+| `mylite/libmylite.a` | 122,792 |
+| `storage/mylite/libmylite_embedded.a` | 388,440 |
+| `mylite/mylite-open-close-smoke` | 8,941,384 |
+| stripped `mylite-open-close-smoke` copy | 6,518,592 |
+
+`sql_sequence.cc.o`, `ha_sequence.cc.o`, and
+`builtin_maria_sql_sequence_plugin` are absent from the minsize linked
+artifacts. The retained sequence symbols are from the MyLite unsupported stub
+needed by retained parser, table-open, expression, and metadata code.
 
 ## Risks
 

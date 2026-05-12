@@ -76,6 +76,7 @@ struct SmokeResult
   std::string exec_show_profiles_message;
   std::string exec_help_message;
   std::string exec_procedure_analyse_message;
+  std::string exec_sequence_messages;
   std::string exec_csv_engine_message;
   std::string exec_myisam_engine_message;
   std::string exec_mrg_myisam_engine_message;
@@ -184,6 +185,8 @@ static bool check_help_unsupported(const SmokeOptions &options,
                                    SmokeResult *result);
 static bool check_procedure_analyse_unsupported(const SmokeOptions &options,
                                                 SmokeResult *result);
+static bool check_sql_sequence_unsupported(const SmokeOptions &options,
+                                           SmokeResult *result);
 static bool check_legacy_storage_engines_unsupported(
   const SmokeOptions &options, SmokeResult *result);
 static bool check_temp_spill_profile(const SmokeOptions &options,
@@ -378,6 +381,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "procedure_analyse_unsupported";
   ok= check_procedure_analyse_unsupported(options, result) && ok;
+
+  result->phase= "sql_sequence_unsupported";
+  ok= check_sql_sequence_unsupported(options, result) && ok;
 
   result->phase= "legacy_storage_engines_unsupported";
   ok= check_legacy_storage_engines_unsupported(options, result) && ok;
@@ -1333,6 +1339,69 @@ static bool check_procedure_analyse_unsupported(const SmokeOptions &options,
 
     rc= mylite_close(db);
     ok= record_result(result, "procedure_analyse_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_sql_sequence_unsupported(const SmokeOptions &options,
+                                           SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "sql_sequence_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    struct SequenceCase
+    {
+      const char *label;
+      const char *sql;
+    };
+
+    SequenceCase cases[]=
+    {
+      { "create_sequence",
+        "CREATE SEQUENCE mylite.unsupported_sequence" },
+      { "create_table_sequence_option",
+        "CREATE TABLE mylite.unsupported_sequence_table "
+        "(next_not_cached_value BIGINT NOT NULL) ENGINE=MYLITE SEQUENCE=1" },
+      { "next_value_for",
+        "SELECT NEXT VALUE FOR mylite.unsupported_sequence" },
+      { "nextval_function",
+        "SELECT NEXTVAL(mylite.unsupported_sequence)" },
+      { "lastval_function",
+        "SELECT LASTVAL(mylite.unsupported_sequence)" },
+      { "setval_function",
+        "SELECT SETVAL(mylite.unsupported_sequence, 1)" }
+    };
+
+    std::vector<std::string> messages;
+    for (const SequenceCase &sequence_case : cases)
+    {
+      char *errmsg= nullptr;
+      rc= mylite_exec(db, sequence_case.sql, nullptr, nullptr, &errmsg);
+
+      std::string message;
+      if (errmsg)
+      {
+        message= errmsg;
+        mylite_free(errmsg);
+      }
+      messages.push_back(std::string(sequence_case.label) + ":" + message);
+
+      const std::string label= std::string("sql_sequence_") +
+        sequence_case.label;
+      ok= record_result(result, label.c_str(), MYLITE_ERROR, rc, db) && ok;
+      if (mylite_mariadb_errno(db) == 0 ||
+          (message.find("SEQUENCE") == std::string::npos &&
+           message.find("sequence") == std::string::npos))
+        ok= false;
+    }
+
+    result->exec_sequence_messages= join_strings(messages, "|");
+
+    rc= mylite_close(db);
+    ok= record_result(result, "sql_sequence_close", MYLITE_OK, rc,
                       nullptr) && ok;
   }
   return ok;
@@ -2721,6 +2790,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_procedure_analyse_message.empty())
     report << "exec_procedure_analyse_message="
            << result.exec_procedure_analyse_message << "\n";
+  if (!result.exec_sequence_messages.empty())
+    report << "exec_sequence_messages=" << result.exec_sequence_messages
+           << "\n";
   if (!result.exec_csv_engine_message.empty())
     report << "exec_csv_engine_message="
            << result.exec_csv_engine_message << "\n";

@@ -26,6 +26,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `MYLITE_DISABLE_BINLOG_REPLICATION=ON`
 - `MYLITE_DISABLE_REGEX_FUNCTIONS=ON`
 - `MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS=ON`
+- `MYLITE_DISABLE_SQL_SEQUENCE=ON`
 - `MYLITE_DISABLE_UCA_COLLATIONS=ON`
 - `MYLITE_DISABLE_LEGACY_STORAGE_ENGINES=ON`
 - `MYLITE_DISABLE_MYISAM_ADMIN=ON`
@@ -55,7 +56,7 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `regex-function-size-profile`, `binlog-replication-size-profile`, and
 `no-binlog-core-size-profile`, `myisam-admin-size-profile`,
 `myisam-fulltext-size-profile`, `myisam-rtree-size-profile`, and
-`spatial-core-size-profile`
+`spatial-core-size-profile`, and `sql-sequence-size-profile`
 attempts, which remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
@@ -83,7 +84,9 @@ MyISAM for inherited disk temporary tables, omit MyISAM full-text indexing
 implementation code, omit MyISAM RTREE/spatial-key implementation code while
 reporting `have_rtree_keys=NO`, omit the retained spatial WKB/WKT
 implementation core while keeping GEOMETRY type parsing and MyLite rejection
-paths, and strip the static archive in the MyLite minsize profile.
+paths, omit the SQL sequence engine implementation while retaining parser
+syntax and explicit unsupported/missing-sequence diagnostics, and strip the
+static archive in the MyLite minsize profile.
 
 `no-myisam-temp-spill-size-profile` was measured separately as an opt-in
 `MYLITE_DISABLE_MYISAM_TEMP_SPILL=ON` experiment. It is not part of the current
@@ -103,40 +106,40 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-spatial-core`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-sql-sequence`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 33,144,206 | 31.61 | Main embedded MariaDB archive, 439 objects, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 32,926,698 | 31.40 | Main embedded MariaDB archive, 437 objects, stripped; section metadata grows the archive |
 | `build/mariadb-minsize/mylite/libmylite.a` | 122,792 | 0.12 | First-party public wrapper |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,440 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 8,961,760 | 8.55 | Unstripped linked smoke binary, lld RELR and section GC |
-| stripped `mylite-open-close-smoke` copy | 6,532,968 | 6.23 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 8,941,384 | 8.53 | Unstripped linked smoke binary, lld RELR and section GC |
+| stripped `mylite-open-close-smoke` copy | 6,518,592 | 6.22 | `strip --strip-unneeded` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 5,087,430 |
-| data | 1,442,216 |
-| bss | 253,713 |
-| total `size` decimal | 6,783,359 |
+| text | 5,075,006 |
+| data | 1,440,288 |
+| bss | 251,577 |
+| total `size` decimal | 6,766,871 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,997,540 | Executable code |
-| `.data.rel.ro` | 1,115,256 | Relocated read-only data |
+| `.text` | 2,987,644 | Executable code |
+| `.data.rel.ro` | 1,113,472 | Relocated read-only data |
 | `.rodata` | 1,084,107 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.eh_frame` | 693,304 | Unwind metadata |
-| `.data` | 295,728 | Writable data |
+| `.eh_frame` | 691,340 | Unwind metadata |
+| `.data` | 295,600 | Writable data |
 | `.bss` | 250,201 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 159,292 | Unwind table index |
-| `.rela.dyn` | 50,544 | Remaining unpacked dynamic relocations |
-| `.gcc_except_table` | 43,272 | Exception metadata |
-| `.relr.dyn` | 20,488 | Packed relative relocations |
+| `.eh_frame_hdr` | 158,812 | Unwind table index |
+| `.rela.dyn` | 50,496 | Remaining unpacked dynamic relocations |
+| `.gcc_except_table` | 43,276 | Exception metadata |
+| `.relr.dyn` | 20,448 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 10,748,616 bytes, or 10.25 MiB, before compression:
@@ -207,7 +210,6 @@ The current built-in plugins are:
 - `myisam` (hidden from user engine selection in the MyLite minsize profile)
 - `mylite`
 - `mysql_password`
-- `sql_sequence`
 
 ## Measured reduction experiments
 
@@ -241,6 +243,7 @@ The current built-in plugins are:
 | `myisam-fulltext-size-profile` after MyISAM admin | 33,328,744 | -10,076,688 | 6,589,968 | -12,741,936 | Passes current smokes and harness; omits MyISAM full-text implementation while retaining disk temp tables |
 | `myisam-rtree-size-profile` after MyISAM full-text | 33,284,948 | -10,120,484 | 6,568,840 | -12,763,064 | Passes current smokes and harness; omits MyISAM RTREE/spatial-key implementation while retaining disk temp tables |
 | `spatial-core-size-profile` after MyISAM RTREE | 33,144,206 | -10,261,226 | 6,532,968 | -12,798,936 | Passes current smokes and harness; omits spatial WKB/WKT core while retaining GEOMETRY parse and rejection paths |
+| `sql-sequence-size-profile` after spatial core | 32,926,698 | -10,478,734 | 6,518,592 | -12,813,312 | Passes current smokes and harness; omits SQL sequence engine implementation while retaining parser syntax |
 | `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Opt-in experiment only; open/close smoke passes, but storage/catalog harness fails because schema-table queries need disk temp tables |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -262,7 +265,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-8,961,760 bytes to 6,532,968 bytes, saving 2,428,792 bytes, or 2.32 MiB.
+8,941,384 bytes to 6,518,592 bytes, saving 2,422,792 bytes, or 2.31 MiB.
 That remains the
 lowest-risk packaging win for any copied executable or shared-library style
 artifact.
@@ -526,6 +529,18 @@ archive by another 140,742 bytes and the stripped linked smoke by another
 `Gis_*` implementation symbols, while GEOMETRY type parsing and MyLite
 GEOMETRY/SPATIAL rejection paths remain covered by the compatibility harness.
 
+The `sql-sequence-size-profile` attempt then skipped MariaDB's mandatory
+`sql_sequence` plugin registration for the aggressive profile, removed
+`sql_sequence.cc` and `ha_sequence.cc` from the embedded source list, and
+linked a small unsupported-feature stub for retained parser, table-open,
+expression, and metadata references. On top of the spatial-core profile, it
+reduced the static archive by another 217,508 bytes and the stripped linked
+smoke by another 14,376 bytes. The linked smoke no longer contains
+`sql_sequence.cc.o`, `ha_sequence.cc.o`, or
+`builtin_maria_sql_sequence_plugin`; `CREATE SEQUENCE` reports unsupported,
+`CREATE TABLE ... SEQUENCE=1` is rejected by MyLite, and sequence value
+expressions fail through MariaDB's missing-sequence diagnostics.
+
 The `no-myisam-temp-spill-size-profile` experiment then omitted the mandatory
 MyISAM plugin and rejected inherited disk temporary-table spill with
 `ER_NOT_SUPPORTED_YET`. On top of the no-binlog-core profile, it reduced the
@@ -569,6 +584,7 @@ MyISAM-compatible storage.
 | Omit MyISAM full-text code | 0.08 MiB archive, 0.03 MiB stripped linked beyond MyISAM admin | Low/medium | Applied as size attempt | Keeps MyISAM for disk temp tables but removes unreachable full-text paths from the hidden user engine |
 | Omit MyISAM RTREE/spatial-key code | 0.04 MiB archive, 0.02 MiB stripped linked beyond MyISAM full-text | Low/medium | Applied as size attempt | Keeps MyISAM for disk temp tables but removes unreachable RTREE paths from the hidden user engine |
 | Omit spatial WKB/WKT core | 0.13 MiB archive, 0.03 MiB stripped linked beyond MyISAM RTREE | Medium | Applied as size attempt | Keeps GEOMETRY parsing and rejection but removes unreachable geometry construction/formatting code from the minsize profile |
+| Omit SQL sequence engine implementation | 0.21 MiB archive, 0.01 MiB stripped linked beyond spatial core | Medium/high | Applied as size attempt | Removes sequence persistence and plugin code, but parser syntax and generic sequence metadata paths remain |
 | Omit MyISAM temp-spill handler | 0.66 MiB archive, 0.23 MiB stripped linked beyond no-binlog-core | High | No, keep opt-in only | Breaks schema-table metadata and catalog smokes; needs a MyLite-owned disk temporary-table replacement or a compatible memory-only schema-table path |
 | Remove server-only SQL subsystems | Potentially large | High | Research later | The big bytes are entangled in `libsql_embedded.a`; needs slice-by-slice fork work |
 | `DISABLE_PSI_*` switches | 0 in this build | Low | No | No measured effect |
@@ -619,7 +635,9 @@ Take these now:
 16. Keep the spatial-core omission in the aggressive minsize profile while
    MyLite GEOMETRY storage, SPATIAL indexes, and GIS functions remain
    unsupported.
-17. Keep a stripped linked smoke binary size in the build report so regressions
+17. Keep the SQL sequence omission in the aggressive minsize profile if MyLite
+   does not need MariaDB sequence objects as a compatibility target.
+18. Keep a stripped linked smoke binary size in the build report so regressions
    are visible.
 
 Do not take these now:
