@@ -36,6 +36,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `MYLITE_DISABLE_GENERAL1400_COLLATIONS=ON`
 - `MYLITE_DISABLE_SQL_SEQUENCE=ON`
 - `MYLITE_DISABLE_UNWIND_TABLES=ON`
+- `MYLITE_DISABLE_UDF_RUNTIME=ON`
 - `MYLITE_DISABLE_UCA_COLLATIONS=ON`
 - `MYLITE_DISABLE_LEGACY_STORAGE_ENGINES=ON`
 - `MYLITE_DISABLE_MYISAM_ADMIN=ON`
@@ -72,7 +73,8 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `vio-tls-size-profile`, `libcrypt-encrypt-size-profile`,
 `zlib-compression-size-profile`,
 `dynamic-plugin-loading-size-profile`, `des-function-size-profile`, and
-`kdf-function-size-profile`, and `unwind-table-size-profile`
+`kdf-function-size-profile`, `unwind-table-size-profile`, and
+`udf-runtime-size-profile`
 attempts, which remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
@@ -117,7 +119,9 @@ reporting `have_dynamic_loading=NO`, and strip the static archive in the
 MyLite minsize profile, and omit legacy `DES_ENCRYPT()` / `DES_DECRYPT()`
 SQL functions plus DES key-file server administration plumbing, and omit the
 OpenSSL-backed `KDF()` SQL function, and disable nonessential compiler unwind
-tables while retaining C++ exception support.
+tables while retaining C++ exception support, and omit UDF runtime lookup,
+execution, and `mysql.func` dynamic-library loading from the aggressive
+embedded profile.
 
 `no-myisam-temp-spill-size-profile` was measured separately as an opt-in
 `MYLITE_DISABLE_MYISAM_TEMP_SPILL=ON` experiment. It is not part of the current
@@ -137,40 +141,40 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-unwind`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-udf`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 31,864,556 | 30.39 | Main embedded MariaDB archive, 435 objects, stripped; section metadata grows the archive |
-| `build/mariadb-minsize/mylite/libmylite.a` | 122,792 | 0.12 | First-party public wrapper |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 31,748,626 | 30.28 | Main embedded MariaDB archive, 434 objects, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/mylite/libmylite.a` | 122,784 | 0.12 | First-party public wrapper |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,440 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 8,324,928 | 7.94 | Unstripped linked smoke binary, lld RELR, section GC, ICF, reduced unwind tables, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
-| stripped `mylite-open-close-smoke` copy | 5,962,256 | 5.69 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 8,272,992 | 7.89 | Unstripped linked smoke binary, lld RELR, section GC, ICF, reduced unwind tables, no UDF runtime, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 5,926,048 | 5.65 | `strip --strip-unneeded` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 4,671,291 |
-| data | 1,287,648 |
-| bss | 246,193 |
-| total `size` decimal | 6,205,132 |
+| text | 4,653,175 |
+| data | 1,269,536 |
+| bss | 245,249 |
+| total `size` decimal | 6,167,960 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,893,956 | Executable code |
-| `.data.rel.ro` | 1,072,856 | Relocated read-only data |
-| `.rodata` | 978,379 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.eh_frame` | 541,644 | Unwind metadata |
-| `.data` | 185,096 | Writable data |
-| `.bss` | 245,449 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 114,076 | Unwind table index |
-| `.rela.dyn` | 49,320 | Remaining unpacked dynamic relocations |
-| `.gcc_except_table` | 42,876 | Exception metadata |
-| `.relr.dyn` | 19,560 | Packed relative relocations |
+| `.text` | 2,881,676 | Executable code |
+| `.data.rel.ro` | 1,054,872 | Relocated read-only data |
+| `.rodata` | 977,867 | Parser tables, SQL metadata, constants, retained Unicode data |
+| `.eh_frame` | 538,224 | Unwind metadata |
+| `.data` | 185,072 | Writable data |
+| `.bss` | 245,185 | Zero-initialized writable data |
+| `.eh_frame_hdr` | 113,300 | Unwind table index |
+| `.rela.dyn` | 48,744 | Remaining unpacked dynamic relocations |
+| `.gcc_except_table` | 42,604 | Exception metadata |
+| `.relr.dyn` | 19,280 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 9,679,568 bytes, or 9.23 MiB, before compression:
@@ -283,6 +287,7 @@ The current built-in plugins are:
 | `des-function-size-profile` after dynamic plugin loading | 32,081,652 | -11,323,780 | 6,034,528 | -13,297,376 | Passes current smokes and harness; omits legacy DES SQL functions and DES key-file administration plumbing, and leaves the `libcrypto.so.3` dependency in place |
 | `kdf-function-size-profile` after DES functions | 32,052,836 | -11,352,596 | 6,029,392 | -13,302,512 | Passes current smokes and harness; omits the OpenSSL-backed `KDF()` SQL function and leaves the `libcrypto.so.3` dependency in place |
 | `unwind-table-size-profile` after KDF | 31,864,556 | -11,540,876 | 5,962,256 | -13,369,648 | Passes current smokes and harness; removes nonessential unwind tables while retaining C++ exception support |
+| `udf-runtime-size-profile` after unwind tables | 31,748,626 | -11,656,806 | 5,926,048 | -13,405,856 | Passes current smokes and harness; omits UDF lookup/execution and removes `sql_udf.cc.o` from the embedded archive |
 | `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Opt-in experiment only; open/close smoke passes, but storage/catalog harness fails because schema-table queries need disk temp tables |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -306,7 +311,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-8,324,928 bytes to 5,962,256 bytes, saving 2,362,672 bytes, or 2.25 MiB. That
+8,272,992 bytes to 5,926,048 bytes, saving 2,346,944 bytes, or 2.24 MiB. That
 remains the lowest-risk packaging win for any copied executable or
 shared-library style artifact.
 
@@ -386,6 +391,16 @@ bytes. `.eh_frame` dropped from 597,352 to 541,644 bytes and `.eh_frame_hdr`
 dropped from 125,516 to 114,076 bytes; `.gcc_except_table` stayed unchanged
 because exception support remains enabled. The tradeoff is poorer native
 stack-unwind/debugger/profiler metadata in the aggressive size profile.
+
+The `udf-runtime-size-profile` attempt then removed UDF lookup and execution
+from the aggressive embedded profile. On top of the unwind-table profile, it
+reduced the static archive by 115,930 bytes and the stripped linked smoke by
+36,208 bytes. The archive no longer contains `sql_udf.cc.o`, and the linked
+smoke no longer contains `Create_udf_func`, `Item_func_udf*`,
+`Item_sum_udf*`, `udf_handler`, `find_udf`, `udf_init`,
+`mysql_create_function`, or `mysql_drop_function` symbols. UDF DDL was already
+rejected in embedded mode; this removes the remaining `mysql.func` and dynamic
+library runtime path.
 
 The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
 static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings
@@ -744,6 +759,7 @@ MyISAM-compatible storage.
 | Omit legacy DES functions and key file | 0.04 MiB archive, 0.006 MiB stripped linked beyond dynamic plugin loading | Low/medium embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; embedded DES execution was already disabled, and process-global DES key files do not fit MyLite's file-owned runtime |
 | Omit `KDF()` SQL function | 0.03 MiB archive, 0.005 MiB stripped linked beyond DES | Medium compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; this removes direct HKDF/PBKDF2 SQL code but not the retained `libcrypto.so.3` dependency |
 | Disable nonessential unwind tables | 0.18 MiB archive, 0.06 MiB stripped linked beyond KDF | Low/medium debugging tradeoff | Applied as aggressive embedded-size attempt | Current smokes and harness pass; C++ exceptions remain enabled, but native stack unwinding metadata is reduced |
+| Omit UDF runtime lookup and execution | 0.11 MiB archive, 0.03 MiB stripped linked beyond unwind tables | Medium compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; embedded UDF DDL was already rejected, and the remaining `mysql.func` plus dynamic-library runtime path is server-shaped |
 | Omit MyISAM temp-spill handler | 0.66 MiB archive, 0.23 MiB stripped linked beyond no-binlog-core | High | No, keep opt-in only | Breaks schema-table metadata and catalog smokes; needs a MyLite-owned disk temporary-table replacement or a compatible memory-only schema-table path |
 | Remove server-only SQL subsystems | Potentially large | High | Research later | The big bytes are entangled in `libsql_embedded.a`; needs slice-by-slice fork work |
 | `DISABLE_PSI_*` switches | 0 in this build | Low | No | No measured effect |
@@ -820,7 +836,10 @@ Take these now:
 26. Keep nonessential unwind tables disabled only in the aggressive minsize
    profile. It is a modest size win with a debugging/profiling tradeoff, and
    exception support remains enabled.
-27. Keep a stripped linked smoke binary size in the build report so regressions
+27. Keep the UDF runtime omitted in the aggressive embedded profile. It removes
+   process-global `mysql.func` metadata loading and dynamic-library execution;
+   embedded UDF DDL is already rejected.
+28. Keep a stripped linked smoke binary size in the build report so regressions
    are visible.
 
 Do not take these now:

@@ -3350,7 +3350,7 @@ double Item_variance_field::val_real()
 ** Rewritten by: Monty.
 ****************************************************************************/
 
-#ifdef HAVE_DLOPEN
+#if defined(HAVE_DLOPEN) && !defined(MYLITE_DISABLE_UDF_RUNTIME)
 
 void Item_udf_sum::clear()
 {
@@ -3526,7 +3526,7 @@ String *Item_sum_udf_str::val_str(String *str)
   DBUG_RETURN(res);
 }
 
-#endif /* HAVE_DLOPEN */
+#endif /* HAVE_DLOPEN && !MYLITE_DISABLE_UDF_RUNTIME */
 
 
 /*****************************************************************************

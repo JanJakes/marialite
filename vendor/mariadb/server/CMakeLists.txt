@@ -538,6 +538,11 @@ OPTION(MYLITE_DISABLE_UNWIND_TABLES
 IF(MYLITE_DISABLE_UNWIND_TABLES)
   ADD_COMPILE_OPTIONS(-fno-asynchronous-unwind-tables -fno-unwind-tables)
 ENDIF()
+OPTION(MYLITE_DISABLE_UDF_RUNTIME
+  "Disable UDF lookup and execution in the MyLite minsize profile" OFF)
+IF(MYLITE_DISABLE_UDF_RUNTIME)
+  ADD_DEFINITIONS(-DMYLITE_DISABLE_UDF_RUNTIME)
+ENDIF()
 SET(MYLITE_ENABLE_ICF "none" CACHE STRING
   "Enable lld identical code folding in the MyLite minsize profile")
 SET_PROPERTY(CACHE MYLITE_ENABLE_ICF PROPERTY STRINGS none safe all)

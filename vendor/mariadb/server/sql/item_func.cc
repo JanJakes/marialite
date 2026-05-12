@@ -744,7 +744,7 @@ my_decimal *Item_real_func::val_decimal(my_decimal *decimal_value)
 }
 
 
-#ifdef HAVE_DLOPEN
+#if defined(HAVE_DLOPEN) && !defined(MYLITE_DISABLE_UDF_RUNTIME)
 void Item_udf_func::fix_num_length_and_dec()
 {
   uint fl_length= 0;
@@ -3970,7 +3970,7 @@ udf_handler::~udf_handler()
 
 #else
 bool udf_handler::get_arguments() { return 0; }
-#endif /* HAVE_DLOPEN */
+#endif /* HAVE_DLOPEN && !MYLITE_DISABLE_UDF_RUNTIME */
 
 
 #ifndef MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS

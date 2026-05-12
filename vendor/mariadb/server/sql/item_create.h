@@ -260,7 +260,7 @@ protected:
 extern Create_qfunc * find_qualified_function_builder(THD *thd);
 
 
-#ifdef HAVE_DLOPEN
+#if defined(HAVE_DLOPEN) && !defined(MYLITE_DISABLE_UDF_RUNTIME)
 /**
   Function builder for User Defined Functions.
 */

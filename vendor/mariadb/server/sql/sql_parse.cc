@@ -3137,7 +3137,7 @@ mysql_create_routine(THD *thd, LEX *lex)
   }
 
   const Lex_ident_routine name= Lex_ident_routine(*lex->sphead->name());
-#ifdef HAVE_DLOPEN
+#if defined(HAVE_DLOPEN) && !defined(MYLITE_DISABLE_UDF_RUNTIME)
   if (lex->sphead->m_handler->type() == SP_TYPE_FUNCTION)
   {
     udf_func *udf= find_udf(name.str, name.length);
