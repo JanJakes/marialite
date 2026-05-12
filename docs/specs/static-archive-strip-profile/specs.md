@@ -64,6 +64,21 @@ The expected current archive saving is 1,337,440 bytes compared with the
 Oracle-parser-reduced unstripped archive. Linked binary size is expected to be
 unchanged unless a consumer link shape changes.
 
+After implementation, the measured size is:
+
+- stripped `libmariadbd.a`: 34,606,670 bytes,
+- archive objects: 494,
+- `mylite-open-close-smoke`: 18,264,608 bytes,
+- stripped `mylite-open-close-smoke`: 15,850,736 bytes,
+- `size` total: 16,111,856 bytes.
+
+Compared with the Oracle-parser-reduced unstripped archive, this saves
+1,337,440 bytes from `libmariadbd.a`. Compared with the original
+production-size baseline, the combined type-plugin, charset-small,
+Oracle-parser, and static-archive-strip profile saves 8,798,762 bytes from
+`libmariadbd.a`. The stripped linked open-close proxy is unchanged from the
+Oracle-parser profile at 15,850,736 bytes.
+
 ## Test plan
 
 Run:
@@ -81,6 +96,20 @@ build/mariadb-minsize/mylite-build-report.txt
 ```
 
 The artifact section should record the stripped archive size.
+
+## Verification
+
+Run on 2026-05-12:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+```
+
+All passed. `build/mariadb-minsize/mylite-build-report.txt` records
+`strip=strip --strip-unneeded` and `bytes=34606670` for
+`libmariadbd.a`.
 
 ## Acceptance criteria
 

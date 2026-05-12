@@ -95,6 +95,7 @@ build_inside_container() {
 
   cmake -S "${source_dir}" -B "${build_dir}" "${cmake_args[@]}"
   cmake --build "${build_dir}" --target mysqlserver --parallel "${jobs}"
+  strip_static_archive "${build_dir}"
   write_build_report "${build_dir}" "${source_dir}"
 }
 
@@ -112,6 +113,18 @@ write_cmake_command() {
     done
     printf "\n"
   } > "${build_dir}/mylite-cmake-command.txt"
+}
+
+strip_static_archive() {
+  local build_dir="$1"
+  local artifact="${build_dir}/libmysqld/libmariadbd.a"
+
+  if [[ ! -f "${artifact}" ]]; then
+    return
+  fi
+
+  strip --strip-unneeded "${artifact}"
+  ranlib "${artifact}"
 }
 
 write_build_report() {
@@ -142,6 +155,7 @@ write_build_report() {
     printf "## Artifact\n\n"
     if [[ -f "${artifact}" ]]; then
       printf "path=%s\n" "${artifact}"
+      printf "strip=strip --strip-unneeded\n"
       printf "bytes=%s\n" "$(stat -c "%s" "${artifact}")"
       file "${artifact}"
       printf "objects=%s\n" "$(ar t "${artifact}" | wc -l)"
