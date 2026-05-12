@@ -75,7 +75,7 @@ than switching to `utf8mb4_general_ci`.
 
 ## Compatibility impact
 
-The size profile would omit non-default compiled charsets such as `big5`,
+The size profile omits non-default compiled charsets such as `big5`,
 `cp932`, `euckr`, `gbk`, `sjis`, `tis620`, `ucs2`, `utf16`, and `utf32`.
 Statements that depend on those charsets should fail explicitly under inherited
 MariaDB charset lookup behavior.
@@ -97,8 +97,20 @@ The type-plugin-reduced charset-none experiment measured:
 - `mylite-open-close-smoke`: 19,167,984 bytes,
 - stripped `mylite-open-close-smoke`: 16,440,560 bytes.
 
-Those numbers were from the crashing build. The implementation must remeasure
-after the runtime fix.
+Those numbers were from the crashing build. After the runtime fix, the measured
+size is:
+
+- `libmariadbd.a`: 37,356,932 bytes,
+- archive objects: 494,
+- `mylite-open-close-smoke`: 19,168,184 bytes,
+- stripped `mylite-open-close-smoke`: 16,440,560 bytes,
+- `size` total: 16,727,851 bytes.
+
+Compared with the type-plugin-reduced profile, this saves 2,584,666 bytes from
+`libmariadbd.a` and 2,495,240 bytes from the stripped linked open-close proxy.
+Compared with the original production-size baseline, the combined type-plugin
+and charset-small profile saves 6,048,500 bytes from `libmariadbd.a` and
+2,891,344 bytes from the stripped linked open-close proxy.
 
 ## Test plan
 
@@ -119,6 +131,19 @@ build/mariadb-minsize/mylite-build-report.txt
 The report should show `WITH_EXTRA_CHARSETS=none`, and current smokes should
 pass without changing the default collation away from MariaDB's UCA 1400
 default.
+
+## Verification
+
+Run on 2026-05-12:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+```
+
+All passed. `build/mariadb-minsize/include/config.h` still defines
+`MYSQL_DEFAULT_COLLATION_NAME` as `utf8mb4_uca1400_ai_ci`.
 
 ## Acceptance criteria
 

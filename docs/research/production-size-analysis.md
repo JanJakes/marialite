@@ -14,6 +14,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `DISABLE_SHARED=ON`
 - `WITHOUT_DYNAMIC_PLUGINS=ON`
 - system `ssl`, `pcre`, `fmt`, and `zlib`
+- `WITH_EXTRA_CHARSETS=none`
 - Aria, InnoDB, partitioning, Performance Schema, RocksDB, Mroonga, Connect,
   Spider, S3, OQGraph, Sphinx, ColumnStore, FederatedX, Blackhole, Archive,
   feedback, and selected authentication plugins disabled
@@ -22,9 +23,9 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 
 The original comparison baseline was generated at `2026-05-12T00:33:29Z` from
 `vendor/mariadb/server` into `build/mariadb-minsize`. Current measurements
-include the `type-plugin-size-profile` attempt, which removes the built-in
-`type_geom`, `type_inet`, and `type_uuid` plugins from the MyLite minsize
-profile.
+include the `type-plugin-size-profile` and `charset-small-profile` attempts,
+which remove the built-in `type_geom`, `type_inet`, and `type_uuid` plugins and
+set `WITH_EXTRA_CHARSETS=none` in the MyLite minsize profile.
 
 This project does not yet have a final packaged production artifact such as a
 shared `libmylite.so` bundle. For now, the most useful size signals are:
@@ -40,33 +41,33 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 39,941,598 | 38.09 | Main embedded MariaDB archive, 494 objects |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 37,356,932 | 35.63 | Main embedded MariaDB archive, 494 objects |
 | `build/mariadb-minsize/mylite/libmylite.a` | 93,752 | 0.09 | First-party public wrapper |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 303,480 | 0.29 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 21,713,112 | 20.71 | Unstripped linked proxy |
-| stripped `mylite-open-close-smoke` copy | 18,935,800 | 18.06 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 19,168,184 | 18.28 | Unstripped linked proxy |
+| stripped `mylite-open-close-smoke` copy | 16,440,560 | 15.68 | `strip --strip-unneeded` on copied binary |
 
 The linked proxy has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 16,560,801 |
-| data | 2,321,632 |
+| text | 14,187,259 |
+| data | 2,236,160 |
 | bss | 304,432 |
-| total `size` decimal | 19,186,865 |
+| total `size` decimal | 16,727,851 |
 
 Largest linked sections in the open-close proxy:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.rodata` | 4,880,033 | Collation tables, parser tables, SQL metadata, constants |
-| `.rela.dyn` | 4,601,640 | Dynamic relocations from the current link shape |
-| `.text` | 3,721,292 | Executable code |
-| `.data.rel.ro` | 1,438,232 | Relocated read-only data |
-| `.dynstr` | 1,245,629 | Dynamic string table |
-| `.data` | 845,688 | Writable data |
-| `.eh_frame` | 844,708 | Unwind metadata |
-| `.dynsym` | 724,848 | Dynamic symbol table |
+| `.rela.dyn` | 4,513,608 | Dynamic relocations from the current link shape |
+| `.text` | 3,673,020 | Executable code |
+| `.rodata` | 2,669,985 | Collation tables, parser tables, SQL metadata, constants |
+| `.data.rel.ro` | 1,424,304 | Relocated read-only data |
+| `.dynstr` | 1,240,435 | Dynamic string table |
+| `.eh_frame` | 831,196 | Unwind metadata |
+| `.data` | 775,280 | Writable data |
+| `.dynsym` | 720,672 | Dynamic symbol table |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 11,340,944 bytes, or 10.82 MiB, before compression:
@@ -89,8 +90,8 @@ distribution formats that bundle runtime libraries.
 ## Where the bytes are
 
 The SQL layer dominates the current static footprint. The component table below
-was captured before the type-plugin size profile was applied and explains why
-the plugin-gating attempt was worth testing.
+was captured before the type-plugin and charset-small size profiles were
+applied and explains why those attempts were worth testing.
 
 | Component archive | Bytes | MiB |
 | --- | ---: | ---: |
@@ -153,21 +154,23 @@ The current built-in plugins are:
 | --- | ---: | ---: | ---: | ---: | --- |
 | Baseline | 43,405,432 | 0 | 19,331,904 | 0 | Passes current smokes |
 | `type-plugin-size-profile` | 39,941,598 | -3,463,834 | 18,935,800 | -396,104 | Passes current smokes |
+| `charset-small-profile` after type plugins | 37,356,932 | -6,048,500 | 16,440,560 | -2,891,344 | Passes current smokes |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
-| `WITH_EXTRA_CHARSETS=none` | 40,820,782 | -2,584,650 | 16,836,664 | -2,495,240 | Segfaults in open-close smoke |
-| `WITH_EXTRA_CHARSETS=none`, `DEFAULT_COLLATION=utf8mb4_general_ci` | 40,820,774 | -2,584,658 | 16,836,664 | -2,495,240 | Still segfaults in open-close smoke |
+| `WITH_EXTRA_CHARSETS=none` before UCA fix | 40,820,782 | -2,584,650 | 16,836,664 | -2,495,240 | Segfaulted in open-close smoke |
+| `WITH_EXTRA_CHARSETS=none`, `DEFAULT_COLLATION=utf8mb4_general_ci`, before UCA fix | 40,820,774 | -2,584,658 | 16,836,664 | -2,495,240 | Still segfaulted in open-close smoke |
 | `WITH_EXTRA_CHARSETS=complex` | 43,325,192 | -80,240 | 19,248,368 | -83,536 | Too small to matter |
 | all tested `DISABLE_PSI_*` switches | 43,405,432 | 0 | not retested | n/a | No current size effect |
 | plugin flags for type/user/sequence plugins | 43,296,232 | -109,200 | 19,265,896 | -66,008 | Large type plugins remain built in |
 | `-ffunction-sections -fdata-sections` plus `--gc-sections` | 48,305,352 | +4,899,920 | 19,331,816 | -88 | Reject |
 | CMake LTO | 342,480,510 | +299,075,078 | 18,016,192 | -1,315,712 | Reject for now due archive bloat and ODR warnings |
 
-The two `WITH_EXTRA_CHARSETS=none` builds both completed and linked, but
-`mylite-open-close-smoke --mode=exclusive` exited with signal 139. The failure
-was not deep-debugged because the immediate decision is already clear: this
-cannot be a production default until the crash is fixed and the compatibility
-impact is accepted.
+The two original `WITH_EXTRA_CHARSETS=none` builds both completed and linked,
+but `mylite-open-close-smoke --mode=exclusive` exited with signal 139. The
+follow-up `charset-small-profile` slice fixed the UCA 1400 startup assumption
+by skipping generated collations whose base compiled charset is absent. The
+profile now passes current smokes while retaining the compiled default
+`utf8mb4_uca1400_ai_ci`.
 
 Stripping the linked open-close proxy reduced it from 22,325,488 bytes to
 19,331,904 bytes, saving 2,993,584 bytes, or 2.85 MiB. That is the lowest-risk
@@ -188,6 +191,12 @@ The `type-plugin-size-profile` attempt then made `type_geom`, `type_inet`, and
 reduced the static archive by 3,463,834 bytes and the stripped linked proxy by
 396,104 bytes while current MyLite smokes still passed.
 
+The `charset-small-profile` attempt then set `WITH_EXTRA_CHARSETS=none` and
+fixed UCA 1400 registration for omitted base charsets. On top of the type
+plugin profile, it reduced the static archive by another 2,584,666 bytes and
+the stripped linked proxy by another 2,495,240 bytes while current MyLite smokes
+still passed.
+
 ## Decision matrix
 
 | Lever | Expected savings | Risk | Worth doing? | Reason |
@@ -196,7 +205,7 @@ reduced the static archive by 3,463,834 bytes and the stripped linked proxy by
 | Strip release static archive with `strip -g` | About 1.09 MiB | Low | Yes | Removes debug symbols while preserving normal archive symbol use |
 | Strip release static archive with `strip --strip-unneeded` | About 1.46 MiB | Medium | Maybe | More savings, but static archive consumers can be more sensitive to symbol stripping |
 | `WITH_EXTRA_CHARSETS=complex` | About 0.08 MiB | Low | No | Savings are too small to justify a compatibility profile |
-| `WITH_EXTRA_CHARSETS=none` | About 2.46 MiB archive, 2.38 MiB linked | High today | Not yet | Good size potential, but both measured variants crash |
+| `WITH_EXTRA_CHARSETS=none` / `charset-small-profile` | 2.46 MiB archive and 2.38 MiB stripped linked beyond type-plugin profile | High compatibility | Applied as size attempt | Current smokes pass after the UCA 1400 null-base fix, but non-default charsets are omitted |
 | Make type plugins profile-gated | 3.30 MiB archive, 0.38 MiB stripped linked | Medium/high | Applied as size attempt | Current smokes pass, but `INET`, `UUID`, and spatial plugin surfaces are compatibility tradeoffs |
 | Remove or profile-gate Oracle SQL parser | Up to roughly 1.31 MiB raw object input before link effects | High | Research later | Requires a compatibility decision on Oracle mode support |
 | Remove server-only SQL subsystems | Potentially large | High | Research later | The big bytes are entangled in `libsql_embedded.a`; needs slice-by-slice fork work |
@@ -217,25 +226,21 @@ Take these now:
 
 Do not take these now:
 
-1. Do not make `WITH_EXTRA_CHARSETS=none` the default. It currently crashes even
-   when the default collation is changed away from `utf8mb4_uca1400_ai_ci`.
-2. Do not enable LTO for production. The linked binary gets smaller, but the
+1. Do not enable LTO for production. The linked binary gets smaller, but the
    archive becomes much larger and the compiler reports ODR-sensitive MariaDB
    type mismatches.
-3. Do not spend time on `WITH_EXTRA_CHARSETS=complex`, PSI switches, or section
+2. Do not spend time on `WITH_EXTRA_CHARSETS=complex`, PSI switches, or section
    garbage collection as standalone size work.
 
 Research next if size becomes a release blocker:
 
-1. A `charset-small-profile` slice that fixes the `WITH_EXTRA_CHARSETS=none`
-   crash, defines the compatibility cost, and runs full MyLite smoke coverage.
-2. An `oracle-parser-profile-gating` slice if MyLite decides not to support
+1. An `oracle-parser-profile-gating` slice if MyLite decides not to support
    Oracle SQL mode in the embedded profile.
-3. Longer-term SQL-layer pruning of server-only surfaces. This is likely where
+2. Longer-term SQL-layer pruning of server-only surfaces. This is likely where
    meaningful multi-MiB savings exist, but it should be done as compatibility
    slices, not as broad dead-code removal.
 
 The best near-term decision is to implement packaging stripping and size
-reporting, then treat charset and Oracle-parser reductions as deliberate
-compatibility work. The current data does not support broad compiler/linker
-tuning as an effective path.
+reporting, then treat Oracle-parser and deeper SQL-layer reductions as
+deliberate compatibility work. The current data does not support broad
+compiler/linker tuning as an effective path.
