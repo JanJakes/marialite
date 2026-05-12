@@ -533,6 +533,11 @@ OPTION(MYLITE_ENABLE_SECTION_GC
 IF(MYLITE_ENABLE_SECTION_GC)
   ADD_COMPILE_OPTIONS(-ffunction-sections -fdata-sections)
 ENDIF()
+OPTION(MYLITE_DISABLE_UNWIND_TABLES
+  "Disable nonessential unwind tables in the MyLite minsize profile" OFF)
+IF(MYLITE_DISABLE_UNWIND_TABLES)
+  ADD_COMPILE_OPTIONS(-fno-asynchronous-unwind-tables -fno-unwind-tables)
+ENDIF()
 SET(MYLITE_ENABLE_ICF "none" CACHE STRING
   "Enable lld identical code folding in the MyLite minsize profile")
 SET_PROPERTY(CACHE MYLITE_ENABLE_ICF PROPERTY STRINGS none safe all)
