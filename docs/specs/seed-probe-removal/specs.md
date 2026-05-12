@@ -175,3 +175,43 @@ MariaDB-derived source files.
 - The default `mylite` schema remains a bootstrap policy choice. A later slice
   should decide whether applications can rename or remove it, or whether it is
   a permanent default namespace.
+
+## Implementation Result
+
+The hard-coded `mylite.probe` seed table has been removed from
+`storage/mylite/ha_mylite.cc`. MyLite discovery now only returns persisted
+catalog `frm_image` table definitions, and catalog loads no longer preload
+non-serialized seed-SQL definitions.
+
+The storage smoke now verifies new databases start with an empty default schema
+and that `SELECT COUNT(*) FROM mylite.probe` is rejected. It still exercises
+user-created table discovery through the existing DDL, DML, persistence,
+schema namespace, and transaction phases.
+
+Report evidence:
+
+- `mylite-storage-engine-report.txt`: `status=0`,
+  `default_schema_table_count=0`, `missing_probe=rejected`,
+  `reserved_default_schema_drop=rejected`,
+  `reserved_default_schema_replace=rejected`, `Observed Runtime Files=none`,
+  `FRM Artifacts=none`, and `Schema Directory Artifacts=none`.
+
+Verification completed:
+
+- `bash -n tools/run-storage-engine-smoke.sh
+  tools/run-compatibility-test-harness.sh`.
+- `git diff --check`.
+- `MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh`.
+- `MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh`.
+
+Measured artifacts after implementation:
+
+- `build/mariadb-minsize/libmysqld/libmariadbd.a`: 43,405,432 bytes.
+- `build/mariadb-minsize/mylite/libmylite.a`: 87,206 bytes.
+- `build/mariadb-minsize/storage/mylite/libmylite_embedded.a`: 303,480 bytes.
+- `build/mariadb-minsize/mylite/mylite-storage-engine-smoke`: 22,314,136
+  bytes.
+- `build/mariadb-minsize/mylite/mylite-compatibility-smoke`: 22,248,248
+  bytes.
+- `build/mariadb-minsize/mylite/mylite-embedded-bootstrap-smoke`: 22,247,368
+  bytes.

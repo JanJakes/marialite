@@ -99,8 +99,11 @@ and known risks.
 - The first static `MYLITE` engine is visible through
   `information_schema.ENGINES`, but user DDL remains deferred until metadata
   routing can prevent `.frm` and schema-directory side effects.
-- The engine-discovery smoke proves the seed table `mylite.probe` can be
-  discovered and scanned without a `.frm` file.
+- The original engine-discovery smoke proved the seed table `mylite.probe`
+  could be discovered and scanned without a `.frm` file. Later storage smokes
+  removed that hard-coded probe and now prove new databases start with an empty
+  default schema while user-created catalog tables still discover without
+  `.frm` files.
 - Identify MariaDB tests that can run against embedded mode early.
 - Add file-system checks that distinguish expected MyLite companion files from
   unexpected MariaDB datadir, schema, engine, or log sidecars.

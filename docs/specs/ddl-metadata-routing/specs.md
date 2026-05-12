@@ -207,6 +207,10 @@ The report records:
 - dynamic plugin artifacts: none
 - `.frm` artifacts: none
 
+The later `seed-probe-removal` slice removed the hard-coded `mylite.probe`
+table. Current post-DDL assertions now expect the default schema to be empty
+after the user-created table is dropped.
+
 Regression smokes also pass:
 
 ```sh

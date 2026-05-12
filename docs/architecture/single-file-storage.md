@@ -333,13 +333,13 @@ and `information_schema.TABLES` list paths use catalog helpers instead of
 datadir directory scans. Empty schemas persist because their names are catalog
 records, not inferred from table directories.
 
-The built-in `mylite` schema and `mylite.probe` table remain bootstrap
-artifacts for current smoke coverage, and dropping the seed schema is still
-unsupported. The inherited table-definition bridge still has narrow transient
-`.frm` compatibility paths for copy ALTER, standalone index DDL, and table
-discovery. MyLite skips those transient `.frm` writes or renames only for
-catalog schemas that do not have directories; the final normalized metadata
-catalog remains a later design.
+The built-in `mylite` schema remains the default namespace, but new databases
+no longer expose the old hard-coded `mylite.probe` seed table. Dropping or
+replacing the default schema is still unsupported. The inherited
+table-definition bridge still has narrow transient `.frm` compatibility paths
+for copy ALTER, standalone index DDL, and table discovery. MyLite skips those
+transient `.frm` writes or renames only for catalog schemas that do not have
+directories; the final normalized metadata catalog remains a later design.
 
 ## System schema
 

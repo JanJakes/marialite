@@ -31,8 +31,8 @@ struct SmokeResult
   std::string engine;
   std::string support;
   std::string transactions;
-  std::string discovered_table;
-  std::string count;
+  std::string default_schema_table_count;
+  std::string missing_probe;
   std::string created_count;
   std::string altered_column;
   std::string copy_alter_rows;
@@ -113,8 +113,8 @@ struct SmokeResult
   std::string reserved_drop_mysql;
   std::string reserved_create_performance_schema;
   std::string reserved_create_sys;
-  std::string reserved_seed_drop;
-  std::string reserved_seed_replace;
+  std::string reserved_default_schema_drop;
+  std::string reserved_default_schema_replace;
   std::string reserved_schema_count;
   std::string duplicate_key;
   std::string update_duplicate_key;
@@ -179,8 +179,8 @@ static int run_smoke(const SmokeOptions &options,
                      const std::vector<std::string> &server_args,
                      SmokeResult *result);
 static bool fetch_mylite_engine(MYSQL *mysql, SmokeResult *result);
-static bool fetch_discovered_table(MYSQL *mysql, SmokeResult *result);
-static bool fetch_probe_count(MYSQL *mysql, SmokeResult *result);
+static bool verify_default_schema_empty(MYSQL *mysql, SmokeResult *result);
+static bool verify_probe_absent(MYSQL *mysql, SmokeResult *result);
 static bool exercise_schema_namespace(MYSQL *mysql, SmokeResult *result);
 static bool exercise_schema_namespace_lifecycle(MYSQL *mysql,
                                                 SmokeResult *result,
@@ -375,15 +375,11 @@ static int run_smoke(const SmokeOptions &options,
   if (!lock_conflict_phase &&
       !phase_loads_existing_catalog(options.persistence_phase))
   {
-    result->phase= "table_names";
-    if (!fetch_discovered_table(mysql, result))
+    result->phase= "default_schema_empty";
+    if (!verify_default_schema_empty(mysql, result))
       goto done;
-  }
-
-  if (!lock_conflict_phase)
-  {
-    result->phase= "table_scan";
-    if (!fetch_probe_count(mysql, result))
+    result->phase= "missing_probe";
+    if (!verify_probe_absent(mysql, result))
       goto done;
   }
 
@@ -527,7 +523,7 @@ static bool fetch_mylite_engine(MYSQL *mysql, SmokeResult *result)
   return ok;
 }
 
-static bool fetch_discovered_table(MYSQL *mysql, SmokeResult *result)
+static bool verify_default_schema_empty(MYSQL *mysql, SmokeResult *result)
 {
   if (mysql_query(mysql, "SHOW TABLES FROM mylite"))
   {
@@ -548,18 +544,17 @@ static bool fetch_discovered_table(MYSQL *mysql, SmokeResult *result)
   MYSQL_ROW row= mysql_fetch_row(res);
   if (mysql_num_fields(res) != 1)
     result->message= "SHOW TABLES returned an unexpected column count";
-  else if (!row || !row[0])
-    result->message= "MYLITE seed table was not discovered";
-  else if (std::strcmp(row[0], "probe") != 0)
+  else if (row)
   {
-    result->discovered_table= row[0];
-    result->message= "SHOW TABLES returned an unexpected table";
+    if (row[0])
+      result->message= std::string("default schema listed unexpected table: ") +
+                       row[0];
+    else
+      result->message= "default schema listed an unnamed table";
   }
-  else if (mysql_fetch_row(res) != nullptr)
-    result->message= "SHOW TABLES returned more than one row";
   else
   {
-    result->discovered_table= row[0];
+    result->default_schema_table_count= "0";
     ok= true;
   }
 
@@ -567,44 +562,12 @@ static bool fetch_discovered_table(MYSQL *mysql, SmokeResult *result)
   return ok;
 }
 
-static bool fetch_probe_count(MYSQL *mysql, SmokeResult *result)
+static bool verify_probe_absent(MYSQL *mysql, SmokeResult *result)
 {
-  if (mysql_query(mysql, "SELECT COUNT(*) FROM mylite.probe"))
-  {
-    result->message= std::string("probe count failed: ") +
-                     mysql_error(mysql);
-    return false;
-  }
-
-  MYSQL_RES *res= mysql_store_result(mysql);
-  if (!res)
-  {
-    result->message= std::string("probe count result failed: ") +
-                     mysql_error(mysql);
-    return false;
-  }
-
-  bool ok= false;
-  MYSQL_ROW row= mysql_fetch_row(res);
-  if (mysql_num_fields(res) != 1)
-    result->message= "probe count returned an unexpected column count";
-  else if (!row || !row[0])
-    result->message= "probe count returned no value";
-  else if (std::strcmp(row[0], "0") != 0)
-  {
-    result->count= row[0];
-    result->message= "probe count returned an unexpected value";
-  }
-  else if (mysql_fetch_row(res) != nullptr)
-    result->message= "probe count returned more than one row";
-  else
-  {
-    result->count= row[0];
-    ok= true;
-  }
-
-  mysql_free_result(res);
-  return ok;
+  return execute_statement_expect_error(mysql,
+                                        "SELECT COUNT(*) FROM mylite.probe",
+                                        "SELECT missing probe table",
+                                        &result->missing_probe, result);
 }
 
 static bool exercise_schema_namespace(MYSQL *mysql, SmokeResult *result)
@@ -717,7 +680,7 @@ static bool exercise_schema_namespace_lifecycle(MYSQL *mysql,
     return true;
   }
 
-  return execute_statement(mysql, "USE mylite", "USE seed schema", result);
+  return execute_statement(mysql, "USE mylite", "USE default schema", result);
 }
 
 static bool exercise_schema_namespace_reopen(MYSQL *mysql,
@@ -804,7 +767,7 @@ static bool exercise_schema_namespace_reopen(MYSQL *mysql,
     return true;
   }
 
-  return execute_statement(mysql, "USE mylite", "USE seed schema", result);
+  return execute_statement(mysql, "USE mylite", "USE default schema", result);
 }
 
 static bool exercise_system_schema_namespace_policy(MYSQL *mysql,
@@ -829,13 +792,14 @@ static bool exercise_system_schema_namespace_policy(MYSQL *mysql,
                                       &result->reserved_create_sys, result))
     return false;
   if (!execute_statement_expect_error(mysql, "DROP DATABASE mylite",
-                                      "DROP seed schema",
-                                      &result->reserved_seed_drop, result))
+                                      "DROP default schema",
+                                      &result->reserved_default_schema_drop,
+                                      result))
     return false;
   if (!execute_statement_expect_error(
         mysql, "CREATE OR REPLACE DATABASE mylite",
-        "CREATE OR REPLACE seed schema", &result->reserved_seed_replace,
-        result))
+        "CREATE OR REPLACE default schema",
+        &result->reserved_default_schema_replace, result))
     return false;
   if (!fetch_single_value(
         mysql,
@@ -850,7 +814,7 @@ static bool exercise_system_schema_namespace_policy(MYSQL *mysql,
     return false;
   }
 
-  return execute_statement(mysql, "USE mylite", "USE seed schema", result);
+  return execute_statement(mysql, "USE mylite", "USE default schema", result);
 }
 
 static bool exercise_ddl(MYSQL *mysql, SmokeResult *result)
@@ -1020,7 +984,7 @@ static bool exercise_ddl(MYSQL *mysql, SmokeResult *result)
     return false;
   result->dropped_table= "renamed";
 
-  return fetch_discovered_table(mysql, result);
+  return verify_default_schema_empty(mysql, result);
 }
 
 static bool exercise_dml(MYSQL *mysql, SmokeResult *result)
@@ -4037,10 +4001,11 @@ static void write_report(const SmokeOptions &options,
     report << "support=" << result.support << "\n";
   if (!result.transactions.empty())
     report << "transactions=" << result.transactions << "\n";
-  if (!result.discovered_table.empty())
-    report << "discovered_table=" << result.discovered_table << "\n";
-  if (!result.count.empty())
-    report << "count=" << result.count << "\n";
+  if (!result.default_schema_table_count.empty())
+    report << "default_schema_table_count="
+           << result.default_schema_table_count << "\n";
+  if (!result.missing_probe.empty())
+    report << "missing_probe=" << result.missing_probe << "\n";
   if (!result.created_count.empty())
     report << "created_count=" << result.created_count << "\n";
   if (!result.altered_column.empty())
@@ -4255,11 +4220,12 @@ static void write_report(const SmokeOptions &options,
            << result.reserved_create_performance_schema << "\n";
   if (!result.reserved_create_sys.empty())
     report << "reserved_create_sys=" << result.reserved_create_sys << "\n";
-  if (!result.reserved_seed_drop.empty())
-    report << "reserved_seed_drop=" << result.reserved_seed_drop << "\n";
-  if (!result.reserved_seed_replace.empty())
-    report << "reserved_seed_replace="
-           << result.reserved_seed_replace << "\n";
+  if (!result.reserved_default_schema_drop.empty())
+    report << "reserved_default_schema_drop="
+           << result.reserved_default_schema_drop << "\n";
+  if (!result.reserved_default_schema_replace.empty())
+    report << "reserved_default_schema_replace="
+           << result.reserved_default_schema_replace << "\n";
   if (!result.reserved_schema_count.empty())
     report << "reserved_schema_count="
            << result.reserved_schema_count << "\n";

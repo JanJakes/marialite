@@ -161,8 +161,10 @@ survive fresh-process reopen because their names live in the primary `.mylite`
 catalog payload.
 
 The built-in `mylite` seed schema remains a compatibility bootstrap artifact
-for current smokes. Dropping it needs a later decision because the current
-engine still seeds `mylite.probe` without a persisted user-created definition.
+for current smokes. At this slice's implementation time, dropping it needed a
+later decision because the engine still seeded `mylite.probe` without a
+persisted user-created definition. The later `seed-probe-removal` slice removed
+that hard-coded probe table while keeping the default schema protected.
 
 ## Public API Or File-Format Impact
 
@@ -257,7 +259,10 @@ Report evidence:
 ## Acceptance Criteria
 
 - The storage smoke no longer pre-creates a `mylite` schema directory.
-- `mylite.probe` remains discoverable without a schema directory.
+- At this slice's implementation time, `mylite.probe` remained discoverable
+  without a schema directory. The later `seed-probe-removal` slice replaced
+  that assertion with an empty-default-schema check and user-created table
+  discovery coverage.
 - `CREATE DATABASE mylite_schema` creates a persistent MyLite schema catalog
   record without a datadir directory.
 - `USE mylite_schema` succeeds after schema creation and fails after schema

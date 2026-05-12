@@ -167,6 +167,11 @@ The report records:
 - dynamic plugin artifacts: none
 - `.frm` artifacts: none
 
+The later `seed-probe-removal` slice removed the hard-coded `mylite.probe`
+table after user-created catalog-backed table definitions covered discovery.
+Current storage smokes now expect the default schema to start empty and verify
+that `mylite.probe` is absent.
+
 Regression smokes also pass:
 
 ```sh

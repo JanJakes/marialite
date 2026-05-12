@@ -77,7 +77,6 @@ struct Mylite_table_definition
 {
   std::string db;
   std::string table_name;
-  std::string seed_sql;
   std::vector<uchar> frm_image;
   uint64_t next_rowid;
   uint64_t auto_increment_next;
@@ -151,7 +150,6 @@ static int mylite_discover_table_existence(handlerton *hton, const char *db,
 static bool mylite_read_table_definition(const char *db, size_t db_length,
                                          const char *table_name,
                                          size_t table_name_length,
-                                         std::string *seed_sql,
                                          std::vector<uchar> *frm_image);
 static int mylite_store_table_definition(const char *path, const TABLE *table,
                                          const HA_CREATE_INFO *create_info);
@@ -517,9 +515,6 @@ static handlerton *mylite_hton;
 static char *mylite_catalog_file;
 static char mylite_read_only= 0;
 static const char mylite_seed_db[]= "mylite";
-static const char mylite_seed_table[]= "probe";
-static const char mylite_seed_sql[]=
-  "CREATE TABLE probe (id INT) ENGINE=MYLITE";
 static const char mylite_catalog_magic[]= "MYLITE CATALOG 1";
 static const char mylite_rows_payload_magic[]= "MYLITE ROWS 1";
 static const uchar mylite_row_slot_magic[16]= {
@@ -587,11 +582,7 @@ static std::vector<Mylite_free_page_range> mylite_pending_free_page_ranges;
 static std::vector<Mylite_schema_definition> mylite_schema_catalog= {
   { mylite_seed_db }
 };
-static std::vector<Mylite_table_definition> mylite_catalog= {
-  { mylite_seed_db, mylite_seed_table, mylite_seed_sql, std::vector<uchar>(),
-    1, 0, 0, 0, 0, 0, false, std::vector<Mylite_row>(),
-    std::vector<Mylite_index_root>() }
-};
+static std::vector<Mylite_table_definition> mylite_catalog;
 
 static MYSQL_SYSVAR_STR(
   catalog_file,
@@ -779,7 +770,6 @@ static int mylite_savepoint_release(THD *thd, void *sv)
 
 static int mylite_discover_table(handlerton *, THD *thd, TABLE_SHARE *share)
 {
-  std::string seed_sql;
   std::vector<uchar> frm_image;
 
   DBUG_ENTER("mylite_discover_table");
@@ -787,17 +777,13 @@ static int mylite_discover_table(handlerton *, THD *thd, TABLE_SHARE *share)
   if (!mylite_read_table_definition(share->db.str, share->db.length,
                                     share->table_name.str,
                                     share->table_name.length,
-                                    &seed_sql, &frm_image))
+                                    &frm_image) ||
+      frm_image.empty())
     DBUG_RETURN(HA_ERR_NO_SUCH_TABLE);
 
-  if (!frm_image.empty())
-    DBUG_RETURN(share->init_from_binary_frm_image(thd, false,
-                                                  frm_image.data(),
-                                                  frm_image.size()));
-
-  DBUG_RETURN(share->init_from_sql_statement_string(thd, false,
-                                                    seed_sql.c_str(),
-                                                    seed_sql.length()));
+  DBUG_RETURN(share->init_from_binary_frm_image(thd, false,
+                                                frm_image.data(),
+                                                frm_image.size()));
 }
 
 static int mylite_discover_table_names(handlerton *, const LEX_CSTRING *db,
@@ -838,7 +824,6 @@ static int mylite_discover_table_existence(handlerton *, const char *db,
 static bool mylite_read_table_definition(const char *db, size_t db_length,
                                          const char *table_name,
                                          size_t table_name_length,
-                                         std::string *seed_sql,
                                          std::vector<uchar> *frm_image)
 {
   std::lock_guard<std::mutex> guard(mylite_catalog_mutex);
@@ -851,7 +836,6 @@ static bool mylite_read_table_definition(const char *db, size_t db_length,
   if (!definition)
     return false;
 
-  *seed_sql= definition->seed_sql;
   *frm_image= definition->frm_image;
   return true;
 }
@@ -3053,14 +3037,7 @@ static bool mylite_catalog_read_only()
 static void mylite_clear_frm_definitions_locked()
 {
   mylite_reset_schema_catalog_locked();
-  for (std::vector<Mylite_table_definition>::iterator it=
-         mylite_catalog.begin(); it != mylite_catalog.end();)
-  {
-    if (it->seed_sql.empty())
-      it= mylite_catalog.erase(it);
-    else
-      ++it;
-  }
+  mylite_catalog.clear();
 }
 
 static void mylite_reset_schema_catalog_locked()
@@ -4351,11 +4328,6 @@ static bool mylite_parse_catalog_payload_locked(
   schemas->clear();
   loaded->clear();
   free_ranges->clear();
-  for (const Mylite_table_definition &definition : mylite_catalog)
-  {
-    if (!definition.seed_sql.empty())
-      loaded->push_back(definition);
-  }
 
   while (std::getline(input, line))
   {

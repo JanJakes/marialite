@@ -31,13 +31,13 @@ structured warning lookup for the last executed statement, plus the first
 prepared statement lifecycle with binary-safe column bytes and parameter
 binding for NULL, numeric, text, and BLOB values. The first static
 `MYLITE` storage-engine skeleton is registered in the embedded profile.
-The engine can discover the seed table `mylite.probe`, run a bounded `CREATE`,
-copy `ALTER`, `RENAME`, and `DROP` lifecycle without leaving durable `.frm`
-table-definition files, persist frm-backed table definitions in the primary
-`.mylite` file across fresh embedded processes, prove populated copy `ALTER`
-preserves supported rows, BLOB/TEXT payloads, rebuilt indexes, nullable keys,
-and autoincrement state, and recover the previous valid catalog generation
-when the latest append-only catalog payload is corrupted.
+The engine can discover user-created catalog-backed table definitions, run a
+bounded `CREATE`, copy `ALTER`, `RENAME`, and `DROP` lifecycle without leaving
+durable `.frm` table-definition files, persist frm-backed table definitions in
+the primary `.mylite` file across fresh embedded processes, prove populated
+copy `ALTER` preserves supported rows, BLOB/TEXT payloads, rebuilt indexes,
+nullable keys, and autoincrement state, and recover the previous valid catalog
+generation when the latest append-only catalog payload is corrupted.
 It can store simple non-BLOB rows, enforce supported primary and unique keys,
 serve basic ordered index access, and persist table-local autoincrement state
 in the `.mylite` payload. A grouped compatibility harness now runs the embedded
@@ -131,7 +131,8 @@ Aria storage engine, disables Aria-backed temporary tables, uses MyISAM as the
 isolated MariaDB comparison reference, and treats any Aria log/control file in
 MyLite runtime directories as an unexpected sidecar. Current bootstrap smokes
 record no observed runtime files, and the grouped sidecar scan reports no known
-inherited sidecars.
+inherited sidecars. New MyLite databases expose the default `mylite` schema
+without injecting the old hard-coded `mylite.probe` seed table.
 
 ## Implementation plan
 
@@ -189,7 +190,7 @@ inherited sidecars.
 | 49 | `system-schema-namespace-policy` | Done | Keep server-owned schema names from becoming ordinary MyLite catalog schemas before replacement system surfaces are designed. |
 | 50 | `foreign-server-cache-startup` | Done | Initialize the embedded foreign-server cache without probing missing `mysql.servers` system tables at startup. |
 | 51 | `aria-startup-sidecars` | Done | Omit Aria from the default MyLite embedded profile and remove the remaining inherited Aria log/control sidecar exception. |
-| 52 | `seed-probe-removal` | In progress | Remove the hard-coded `mylite.probe` seed table now that user-created catalog tables cover discovery. |
+| 52 | `seed-probe-removal` | Done | Remove the hard-coded `mylite.probe` seed table now that user-created catalog tables cover discovery. |
 
 ## Size and profile direction
 

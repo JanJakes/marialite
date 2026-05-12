@@ -194,8 +194,10 @@ The storage smoke now verifies:
 - `reserved_drop_mysql=rejected`,
 - `reserved_create_performance_schema=rejected`,
 - `reserved_create_sys=rejected`,
-- `reserved_seed_drop=rejected`,
-- `reserved_seed_replace=rejected`,
+- originally `reserved_seed_drop=rejected` and
+  `reserved_seed_replace=rejected`; after `seed-probe-removal`, the smoke
+  reports `reserved_default_schema_drop=rejected` and
+  `reserved_default_schema_replace=rejected`,
 - `reserved_schema_count=0`,
 - `FRM Artifacts=none`,
 - `Schema Directory Artifacts=none`.
