@@ -139,3 +139,43 @@ MariaDB-derived GPL-2.0-only project status.
   profiling statements produce feature-disabled errors rather than syntax
   errors. That is acceptable for a minsize attempt and is easier to maintain
   than parser surgery.
+
+## Implementation Results
+
+Implemented with `-DENABLED_PROFILING=OFF` in the MyLite minsize profile and a
+`SHOW PROFILES` disabled-feature smoke check.
+
+Verification:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+```
+
+Observed behavior:
+
+- `build/mariadb-minsize/mylite-build-report.txt` records
+  `ENABLED_PROFILING:BOOL=OFF`.
+- `build/mariadb-minsize/libmylite-open-close-report.txt` records
+  `exec_show_profiles_message=The 'SHOW PROFILES' feature is disabled; you need
+  MariaDB built with 'enable-profiling' to have it working`.
+- `libmariadbd.a` no longer defines `PROFILING`, `QUERY_PROFILE`, or
+  `PROF_MEASUREMENT`. It still defines the small disabled-feature
+  `fill_query_profile_statistics_info()` and
+  `make_profile_table_for_show()` entry points required by the existing SQL and
+  information-schema wiring.
+
+Measured size impact compared with the previous vector-function profile:
+
+| Artifact | Bytes | Delta |
+| --- | ---: | ---: |
+| `libmariadbd.a` | 32,696,392 | -166,334 |
+| `libmylite.a` | 93,752 | 0 |
+| `libmylite_embedded.a` | 303,480 | 0 |
+| `mylite-open-close-smoke` | 15,247,496 | -1,488 |
+| stripped `mylite-open-close-smoke` copy | 12,958,200 | 0 |
+
+The stripped linked smoke binary did not shrink. This slice is still useful for
+the default embedded archive and for removing per-session profiling runtime
+state from MyLite's minsize profile.

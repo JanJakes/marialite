@@ -27,13 +27,14 @@ The original comparison baseline was generated at `2026-05-12T00:33:29Z` from
 include the `type-plugin-size-profile`, `charset-small-profile`, and
 `oracle-parser-size-profile`, `static-archive-strip-profile`, and
 `small-builtin-plugin-profile`, `xml-function-size-profile`, and
-`gis-function-size-profile`, `executable-export-size-profile`, and
-`vector-function-size-profile` attempts, which
+`gis-function-size-profile`, `executable-export-size-profile`,
+`vector-function-size-profile`, and `profiling-size-profile` attempts, which
 remove the built-in `type_geom`, `type_inet`, `type_uuid`, `sequence`,
 `thread_pool_info`, `user_variables`, `userstat`, and `mhnsw` plugins, set
 `WITH_EXTRA_CHARSETS=none`, omit the Oracle SQL-mode parser, omit XML, GIS, and
-vector SQL functions, remove full-symbol exports from MyLite smoke
-executables, and strip the static archive in the MyLite minsize profile.
+vector SQL functions, disable MariaDB statement profiling, remove full-symbol
+exports from MyLite smoke executables, and strip the static archive in the
+MyLite minsize profile.
 
 This project does not yet have a final packaged production artifact such as a
 shared `libmylite.so` bundle. For now, the most useful size signals are:
@@ -41,7 +42,7 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 - the static embedded MariaDB archive used by MyLite,
 - the first-party MyLite wrapper archive,
 - the MyLite engine component archive,
-- stripped linked smoke binaries as a proxy for final linked footprint, and
+- stripped linked smoke binaries as an estimate of final linked footprint, and
 - dynamic system libraries only if a distribution bundle chooses to vendor
   them instead of relying on platform packages.
 
@@ -49,33 +50,33 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 32,862,726 | 31.34 | Main embedded MariaDB archive, 487 objects, stripped |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 32,696,392 | 31.18 | Main embedded MariaDB archive, 487 objects, stripped |
 | `build/mariadb-minsize/mylite/libmylite.a` | 93,752 | 0.09 | First-party public wrapper |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 303,480 | 0.29 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 15,248,984 | 14.54 | Unstripped linked proxy |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 15,247,496 | 14.54 | Unstripped linked smoke binary |
 | stripped `mylite-open-close-smoke` copy | 12,958,200 | 12.36 | `strip --strip-unneeded` on copied binary |
 
-The linked proxy has this section profile:
+The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 10,801,636 |
-| data | 2,098,984 |
-| bss | 298,560 |
-| total `size` decimal | 13,199,180 |
+| text | 10,809,748 |
+| data | 2,098,968 |
+| bss | 298,056 |
+| total `size` decimal | 13,206,772 |
 
-Largest linked sections in the open-close proxy:
+Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.rela.dyn` | 4,120,512 | Dynamic relocations from the current link shape |
-| `.text` | 3,469,004 | Executable code |
-| `.rodata` | 2,143,673 | Collation tables, parser tables, SQL metadata, constants |
+| `.rela.dyn` | 4,120,464 | Dynamic relocations from the current link shape |
+| `.text` | 3,479,084 | Executable code |
+| `.rodata` | 2,143,289 | Collation tables, parser tables, SQL metadata, constants |
 | `.data.rel.ro` | 1,298,120 | Relocated read-only data |
-| `.eh_frame` | 797,900 | Unwind metadata |
+| `.eh_frame` | 796,700 | Unwind metadata |
 | `.data` | 766,328 | Writable data |
-| `.bss` | 298,528 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 181,652 | Unwind table index |
+| `.bss` | 298,024 | Zero-initialized writable data |
+| `.eh_frame_hdr` | 181,444 | Unwind table index |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 11,340,944 bytes, or 10.82 MiB, before compression:
@@ -154,7 +155,7 @@ The current built-in plugins are:
 
 ## Measured reduction experiments
 
-| Experiment | Archive bytes | Archive delta | Stripped linked proxy | Linked delta | Result |
+| Experiment | Archive bytes | Archive delta | Stripped linked smoke | Linked delta | Result |
 | --- | ---: | ---: | ---: | ---: | --- |
 | Baseline | 43,405,432 | 0 | 19,331,904 | 0 | Passes current smokes |
 | `type-plugin-size-profile` | 39,941,598 | -3,463,834 | 18,935,800 | -396,104 | Passes current smokes |
@@ -166,6 +167,7 @@ The current built-in plugins are:
 | `gis-function-size-profile` after XML functions | 33,092,908 | -10,312,524 | 15,122,040 | -4,209,864 | Passes current smokes |
 | `executable-export-size-profile` after GIS functions | 33,092,908 | -10,312,524 | 12,959,352 | -6,372,552 | Passes current smokes |
 | `vector-function-size-profile` after executable exports | 32,862,726 | -10,542,706 | 12,958,200 | -6,373,704 | Passes current smokes |
+| `profiling-size-profile` after vector functions | 32,696,392 | -10,709,040 | 12,958,200 | -6,373,704 | Passes current smokes |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
 | `WITH_EXTRA_CHARSETS=none` before UCA fix | 40,820,782 | -2,584,650 | 16,836,664 | -2,495,240 | Segfaulted in open-close smoke |
@@ -184,15 +186,16 @@ by skipping generated collations whose base compiled charset is absent. The
 profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
-Stripping the current linked open-close proxy reduces it from 15,248,984 bytes
-to 12,958,200 bytes, saving 2,290,784 bytes, or 2.18 MiB. That remains the
+Stripping the current linked open-close smoke binary reduces it from
+15,247,496 bytes
+to 12,958,200 bytes, saving 2,289,296 bytes, or 2.18 MiB. That remains the
 lowest-risk packaging win for any copied executable or shared-library style
 artifact.
 
-The LTO build reduced the stripped linked proxy by 1.25 MiB, but the static
-archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings around
-MariaDB parser and server structures, including generated parser types. That is
-not a safe release lever today.
+The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
+static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings
+around MariaDB parser and server structures, including generated parser types.
+That is not a safe release lever today.
 
 The earlier plugin flags experiment did remove small built-ins such as `sequence`,
 `thread_pool_info`, and `user_variables`, but `type_geom`, `type_inet`,
@@ -201,49 +204,51 @@ small-plugin profiles supersede that partial result.
 
 The `type-plugin-size-profile` attempt then made `type_geom`, `type_inet`, and
 `type_uuid` non-mandatory and disabled them in the MyLite minsize profile. That
-reduced the static archive by 3,463,834 bytes and the stripped linked proxy by
+reduced the static archive by 3,463,834 bytes and the stripped linked smoke by
 396,104 bytes while current MyLite smokes still passed.
 
 The `charset-small-profile` attempt then set `WITH_EXTRA_CHARSETS=none` and
 fixed UCA 1400 registration for omitted base charsets. On top of the type
 plugin profile, it reduced the static archive by another 2,584,666 bytes and
-the stripped linked proxy by another 2,495,240 bytes while current MyLite smokes
-still passed.
+the stripped linked smoke binary by another 2,495,240 bytes while current MyLite
+smokes still passed.
 
 The `oracle-parser-size-profile` attempt then removed `yy_oracle.cc.o` from the
 embedded archive and linked a 1,664-byte unsupported-mode stub instead. On top
 of the charset-small profile, it reduced the static archive by another
-1,412,822 bytes and the stripped linked proxy by another 589,824 bytes while
-current MyLite smokes still passed. The open/close smoke now verifies that a
-statement parsed after `SET sql_mode=ORACLE` fails with `ER_NOT_SUPPORTED_YET`.
+1,412,822 bytes and the stripped linked smoke binary by another 589,824 bytes
+while current MyLite smokes still passed. The open/close smoke now verifies
+that a statement parsed after `SET sql_mode=ORACLE` fails with
+`ER_NOT_SUPPORTED_YET`.
 
 The `static-archive-strip-profile` attempt then ran `strip --strip-unneeded`
 and `ranlib` on `libmariadbd.a` after building the `mysqlserver` target. On top
 of the Oracle-parser profile, it reduced the static archive by another
-1,337,440 bytes. The stripped linked proxy was unchanged, but relinking current
-smokes against the stripped archive passed.
+1,337,440 bytes. The stripped linked smoke binary was unchanged, but relinking
+current smokes against the stripped archive passed.
 
 The `small-builtin-plugin-profile` attempt then disabled optional `sequence`,
 `thread_pool_info`, `user_variables`, and `userstat` built-ins while leaving
 mandatory `sql_sequence` support intact. On top of the static archive strip, it
 reduced the static archive by another 131,980 bytes and the stripped linked
-proxy by another 1,016 bytes.
+smoke binary by another 1,016 bytes.
 
 The `xml-function-size-profile` attempt then omitted `item_xmlfunc.cc` from the
 embedded source list and removed the `EXTRACTVALUE` and `UPDATEXML` native
 function builders in the minsize profile. On top of the small built-in plugin
 profile, it reduced the static archive by another 517,000 bytes and the
-stripped linked proxy by another 264,240 bytes. The linked open-close proxy no
-longer contains `Item_func_xml_extractvalue`, `Item_func_xml_update`, or
-`my_xpath_function` symbols, and the open/close smoke verifies both XML
-functions now fail through MariaDB's unknown-function path.
+stripped linked smoke binary by another 264,240 bytes. The linked open-close
+smoke binary no longer contains `Item_func_xml_extractvalue`,
+`Item_func_xml_update`, or `my_xpath_function` symbols, and the open/close
+smoke verifies both XML functions now fail through MariaDB's unknown-function
+path.
 
 The `gis-function-size-profile` attempt then omitted `item_geofunc.cc`,
 `gcalc_tools.cc`, and `gcalc_slicescan.cc` from the embedded source list and
 linked a small empty GIS registry/type-constructor shim instead. On top of the
 XML function profile, it reduced the static archive by another 864,782 bytes
-and the stripped linked proxy by another 463,440 bytes. The linked open-close
-proxy no longer contains `Item_func_geometry_from_text`,
+and the stripped linked smoke binary by another 463,440 bytes. The linked
+open-close smoke binary no longer contains `Item_func_geometry_from_text`,
 `Create_func_geometry_from_text`, or `Gcalc_function` symbols, and the
 open/close smoke verifies `ST_ASTEXT()` now fails through MariaDB's
 unknown-function path. The compatibility harness still verifies MyLite rejects
@@ -251,28 +256,36 @@ GEOMETRY columns and SPATIAL keys.
 
 The `executable-export-size-profile` attempt then removed `ENABLE_EXPORTS TRUE`
 from MyLite-owned smoke executables. On top of the GIS function profile, it left
-the static archive unchanged and reduced the stripped linked proxy by another
-2,162,688 bytes. The dynamic symbol count in `mylite-open-close-smoke` dropped
-from 28,646 to 488, and the link command no longer includes
-`-Wl,--export-dynamic`. This is a linked-artifact and size-proxy win, not a
-static archive reduction.
+the static archive unchanged and reduced the stripped linked smoke binary by
+another 2,162,688 bytes. The dynamic symbol count in
+`mylite-open-close-smoke` dropped from 28,646 to 488, and the link command no
+longer includes `-Wl,--export-dynamic`. This is a linked-artifact size win, not
+a static archive reduction.
 
 The `vector-function-size-profile` attempt then omitted `item_vectorfunc.cc`
 and `vector_mhnsw.cc` from the embedded source list, guarded vector native
 function builders, removed the mandatory `mhnsw` built-in plugin reference in
 the vector-disabled profile, and linked a small MHNSW unsupported-symbol stub.
 On top of the executable-export profile, it reduced the static archive by
-another 230,182 bytes and the stripped linked proxy by another 1,152 bytes. The
-archive no longer defines `builtin_maria_mhnsw_plugin`,
+another 230,182 bytes and the stripped linked smoke binary by another 1,152
+bytes. The archive no longer defines `builtin_maria_mhnsw_plugin`,
 `Item_func_vec_*`, `Create_func_vec_*`, `FVectorNode`, or `MHNSW_Share`
 symbols, and the open/close smoke verifies `VEC_FROMTEXT()` and
 `VEC_DISTANCE()` fail through MariaDB's unknown-function path.
+
+The `profiling-size-profile` attempt then set `ENABLED_PROFILING=OFF` in the
+minsize CMake profile and added a `SHOW PROFILES` disabled-feature smoke check.
+On top of the vector-function profile, it reduced the static archive by another
+166,334 bytes and left the stripped linked smoke binary unchanged. The archive
+no longer defines the full `PROFILING`, `QUERY_PROFILE`, or
+`PROF_MEASUREMENT` classes, while retaining small disabled-feature entry points
+for MariaDB's existing SQL and information-schema wiring.
 
 ## Decision matrix
 
 | Lever | Expected savings | Risk | Worth doing? | Reason |
 | --- | ---: | --- | --- | --- |
-| Strip copied release binaries | About 2.30 MiB on the current linked proxy | Low | Yes | Standard packaging step; does not change source behavior |
+| Strip copied release binaries | About 2.30 MiB on the current linked smoke binary | Low | Yes | Standard packaging step; does not change source behavior |
 | Strip release static archive with `strip --strip-unneeded` | 1.28 MiB beyond Oracle-parser profile | Medium | Applied as size attempt | Current smokes relink and pass; downstream static consumers may still need coverage |
 | Strip release static archive with `strip -g` | About 0.95 MiB on the current archive | Low | Fallback | Less aggressive alternative if `--strip-unneeded` breaks a consumer |
 | `WITH_EXTRA_CHARSETS=complex` | About 0.08 MiB | Low | No | Savings are too small to justify a compatibility profile |
@@ -284,6 +297,7 @@ symbols, and the open/close smoke verifies `VEC_FROMTEXT()` and
 | Remove GIS SQL functions | 0.82 MiB archive and 0.44 MiB stripped linked beyond XML profile | High compatibility | Applied as size attempt | Current smokes pass, but native GIS functions now fail as unknown functions in the minsize profile |
 | Remove unnecessary executable symbol exports | 0 archive, 2.06 MiB stripped linked beyond GIS profile | Low/medium | Applied as size attempt | Current smokes pass; this only applies to linked executables that are not dynamic-plugin hosts |
 | Remove vector SQL functions and MHNSW | 0.22 MiB archive, negligible stripped linked beyond executable-export profile | High compatibility | Applied as size attempt | Current smokes pass, but vector functions and MHNSW vector indexes are omitted from the minsize profile |
+| Disable statement profiling | 0.16 MiB archive, no stripped linked change beyond vector-function profile | Low/medium | Applied as size attempt | Current smokes pass; `SHOW PROFILE(S)` now report MariaDB's disabled-feature diagnostic |
 | Remove server-only SQL subsystems | Potentially large | High | Research later | The big bytes are entangled in `libsql_embedded.a`; needs slice-by-slice fork work |
 | `DISABLE_PSI_*` switches | 0 in this build | Low | No | No measured effect |
 | `-fno-asynchronous-unwind-tables` | 0 in this build | Low | No | Full rebuild produced identical archive and stripped linked sizes |
