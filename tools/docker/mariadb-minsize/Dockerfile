@@ -16,6 +16,7 @@ RUN apt-get update \
         libboost-dev \
         libcurl4-openssl-dev \
         libfmt-dev \
+        lld \
         libncurses-dev \
         libpcre2-dev \
         libssl-dev \

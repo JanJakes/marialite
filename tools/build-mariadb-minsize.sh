@@ -42,9 +42,15 @@ build_inside_container() {
 
   mkdir -p "${build_dir}"
 
+  local minsize_linker_flags
+  minsize_linker_flags="-fuse-ld=lld -Wl,-z,pack-relative-relocs -Wl,--pack-dyn-relocs=relr"
+
   local cmake_args=(
     -G Ninja
     -DCMAKE_BUILD_TYPE=MinSizeRel
+    "-DCMAKE_EXE_LINKER_FLAGS=${minsize_linker_flags}"
+    "-DCMAKE_MODULE_LINKER_FLAGS=${minsize_linker_flags}"
+    "-DCMAKE_SHARED_LINKER_FLAGS=${minsize_linker_flags}"
     -DBUILD_CONFIG=mysql_release
     -DENABLED_PROFILING=OFF
     -DFEATURE_SET=small
@@ -161,6 +167,7 @@ write_build_report() {
     flex --version | sed -n "1p"
     cc --version | sed -n "1p"
     c++ --version | sed -n "1p"
+    ld.lld --version | sed -n "1p"
     printf "\n"
 
     printf "## Artifact\n\n"
@@ -176,7 +183,7 @@ write_build_report() {
     printf "\n"
 
     printf "## Build Profile Cache Entries\n\n"
-    grep -E "^(AWS_SDK_EXTERNAL_PROJECT|BUILD_CONFIG|DISABLE_SHARED|ENABLED_PROFILING|FEATURE_SET|MYLITE_DISABLE_[A-Z0-9_]+|PLUGIN_[A-Z0-9_]+|UPDATE_SUBMODULES|USE_ARIA_FOR_TMP_TABLES|WITH_[A-Z0-9_]+|WITHOUT_DYNAMIC_PLUGINS):" \
+    grep -E "^(AWS_SDK_EXTERNAL_PROJECT|BUILD_CONFIG|CMAKE_(EXE|MODULE|SHARED)_LINKER_FLAGS|DISABLE_SHARED|ENABLED_PROFILING|FEATURE_SET|MYLITE_DISABLE_[A-Z0-9_]+|PLUGIN_[A-Z0-9_]+|UPDATE_SUBMODULES|USE_ARIA_FOR_TMP_TABLES|WITH_[A-Z0-9_]+|WITHOUT_DYNAMIC_PLUGINS):" \
       "${build_dir}/CMakeCache.txt" | sort
     printf "\n"
 

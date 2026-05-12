@@ -162,3 +162,42 @@ Verify:
   claiming identical savings across architectures.
 - This does not reduce `libmariadbd.a`; archive-size work must continue through
   SQL subsystem slicing.
+
+## Implementation Results
+
+Implemented by:
+
+- adding Ubuntu's `lld` package to `tools/docker/mariadb-minsize/Dockerfile`;
+- adding lld RELR flags to `CMAKE_EXE_LINKER_FLAGS`,
+  `CMAKE_MODULE_LINKER_FLAGS`, and `CMAKE_SHARED_LINKER_FLAGS` in
+  `tools/build-mariadb-minsize.sh`;
+- recording `ld.lld --version` and the CMake linker flags in
+  `mylite-build-report.txt`.
+
+Verification:
+
+```sh
+MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+```
+
+Observed behavior:
+
+- `build/mariadb-minsize/mylite-build-report.txt` records the lld RELR linker
+  flags for executable, module, and shared-library outputs.
+- `readelf -d build/mariadb-minsize/mylite/mylite-open-close-smoke` records
+  `RELR`, `RELRSZ`, and `RELRENT`.
+- `readelf -V build/mariadb-minsize/mylite/mylite-open-close-smoke` records
+  `GLIBC_ABI_DT_RELR`.
+- The compatibility harness reports `status=0` for all groups.
+
+Measured size impact compared with the previous procedure-analyse profile:
+
+| Artifact | Bytes | Delta |
+| --- | ---: | ---: |
+| `libmariadbd.a` | 32,359,184 | 0 |
+| `libmylite.a` | 93,752 | 0 |
+| `libmylite_embedded.a` | 303,480 | 0 |
+| `mylite-open-close-smoke` | 11,119,792 | -4,053,520 |
+| stripped `mylite-open-close-smoke` copy | 8,820,296 | -4,072,080 |
