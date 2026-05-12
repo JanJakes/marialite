@@ -56,7 +56,9 @@
 #include "sql_get_diagnostics.h"               // Sql_cmd_get_diagnostics
 #include "sql_cte.h"
 #include "sql_window.h"
+#ifndef MYLITE_DISABLE_WINDOW_FUNCTIONS
 #include "item_windowfunc.h"
+#endif
 #include "event_parse_data.h"
 #include "create_options.h"
 #include <myisam.h>
@@ -117,6 +119,12 @@ int yylex(void *yylval, void *yythd);
 
 #define my_yyabort_error(A)                      \
   do { my_error A; MYSQL_YYABORT; } while(0)
+
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+#define mylite_yyabort_window_functions()        \
+  my_yyabort_error((ER_NOT_SUPPORTED_YET, MYF(0), \
+                    "window functions in the MyLite minsize profile"))
+#endif
 
 #ifndef DBUG_OFF
 #define YYDEBUG 1
@@ -11348,15 +11356,22 @@ sum_expr:
 window_func_expr:
           window_func OVER_SYM window_name
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_window_func(thd, (Item_sum *) $1, $3);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
             if (unlikely(Select->add_window_func((Item_window_func *) $$)))
               MYSQL_YYABORT;
+#endif
           }
         |
           window_func OVER_SYM window_spec
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             LEX *lex= Lex;
             if (unlikely(Select->add_window_spec(thd, lex->win_ref,
                                                  Select->group_list,
@@ -11369,6 +11384,7 @@ window_func_expr:
               MYSQL_YYABORT;
             if (unlikely(Select->add_window_func((Item_window_func *) $$)))
               MYSQL_YYABORT;
+#endif
           }
         ;
 
@@ -11379,6 +11395,9 @@ window_func:
         |
           function_call_generic
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             Item* item = (Item*)$1;
             /* Only UDF aggregate here possible */
             if ((item == NULL) ||
@@ -11388,75 +11407,115 @@ window_func:
               thd->parse_error();
               MYSQL_YYABORT;
             }
+#endif
           }
         ;
 
 simple_window_func:
           ROW_NUMBER_SYM '(' ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_row_number(thd);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |
           RANK_SYM '(' ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_rank(thd);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |
           DENSE_RANK_SYM '(' ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_dense_rank(thd);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |
           PERCENT_RANK_SYM '(' ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_percent_rank(thd);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |
           CUME_DIST_SYM '(' ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_cume_dist(thd);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |
           NTILE_SYM '(' expr ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_ntile(thd, $3);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |
           FIRST_VALUE_SYM '(' expr ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_first_value(thd, $3);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |
           LAST_VALUE '(' expr ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_last_value(thd, $3);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |
           NTH_VALUE_SYM '(' expr ',' expr ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_nth_value(thd, $3, $5);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |
           LEAD_SYM '(' expr ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             /* No second argument defaults to 1. */
             Item* item_offset= new (thd->mem_root) Item_uint(thd, 1);
             if (unlikely(item_offset == NULL))
@@ -11464,17 +11523,25 @@ simple_window_func:
             $$= new (thd->mem_root) Item_sum_lead(thd, $3, item_offset);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |
           LEAD_SYM '(' expr ',' expr ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_lead(thd, $3, $5);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |
           LAG_SYM '(' expr ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             /* No second argument defaults to 1. */
             Item* item_offset= new (thd->mem_root) Item_uint(thd, 1);
             if (unlikely(item_offset == NULL))
@@ -11482,13 +11549,18 @@ simple_window_func:
             $$= new (thd->mem_root) Item_sum_lag(thd, $3, item_offset);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |
           LAG_SYM '(' expr ',' expr ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_lag(thd, $3, $5);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         ;
 
@@ -11498,6 +11570,9 @@ inverse_distribution_function:
           percentile_function OVER_SYM
           '(' opt_window_partition_clause ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             LEX *lex= Lex;
             if (unlikely(Select->add_window_spec(thd, lex->win_ref,
                                                  Select->group_list,
@@ -11510,6 +11585,7 @@ inverse_distribution_function:
               MYSQL_YYABORT;
             if (unlikely(Select->add_window_func((Item_window_func *) $$)))
               MYSQL_YYABORT;
+#endif
           }
         ;
 
@@ -11522,6 +11598,9 @@ percentile_function:
            }
         | MEDIAN_SYM '(' expr ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             Item *args= new (thd->mem_root) Item_decimal(thd, "0.5", 3,
                                                    thd->charset());
             if (unlikely(args == NULL) || unlikely(thd->is_error()))
@@ -11533,21 +11612,30 @@ percentile_function:
             $$= new (thd->mem_root) Item_sum_percentile_cont(thd, args);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         ;
 
 inverse_distribution_function_def:
           PERCENTILE_CONT_SYM '(' expr ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_percentile_cont(thd, $3);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         |  PERCENTILE_DISC_SYM '(' expr ')'
           {
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             $$= new (thd->mem_root) Item_sum_percentile_disc(thd, $3);
             if (unlikely($$ == NULL))
               MYSQL_YYABORT;
+#endif
           }
         ;
 
@@ -12595,12 +12683,16 @@ window_def_list:
 window_def:
           window_name AS window_spec
           { 
+#ifdef MYLITE_DISABLE_WINDOW_FUNCTIONS
+            mylite_yyabort_window_functions();
+#else
             LEX *lex= Lex;
             if (unlikely(Select->add_window_def(thd, $1, lex->win_ref,
                                                 Select->group_list,
                                                 Select->order_list,
                                                 lex->win_frame)))
               MYSQL_YYABORT;
+#endif
           }
         ;
 

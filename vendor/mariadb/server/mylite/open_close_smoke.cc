@@ -66,6 +66,8 @@ struct SmokeResult
   std::string exec_json_schema_valid_message;
   std::string exec_regex_like_rows;
   std::string exec_regex_messages;
+  std::string exec_window_aggregate_rows;
+  std::string exec_window_function_messages;
   std::string exec_binlog_replication_message;
   std::string exec_server_utility_standard_rows;
   std::string exec_server_utility_messages;
@@ -182,6 +184,8 @@ static bool check_json_schema_valid_unsupported(const SmokeOptions &options,
                                                 SmokeResult *result);
 static bool check_regex_functions_unsupported(const SmokeOptions &options,
                                               SmokeResult *result);
+static bool check_window_functions_unsupported(const SmokeOptions &options,
+                                               SmokeResult *result);
 static bool check_binlog_replication_unsupported(const SmokeOptions &options,
                                                  SmokeResult *result);
 static bool check_server_utility_functions_unsupported(
@@ -382,6 +386,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "regex_functions_unsupported";
   ok= check_regex_functions_unsupported(options, result) && ok;
+
+  result->phase= "window_functions_unsupported";
+  ok= check_window_functions_unsupported(options, result) && ok;
 
   result->phase= "binlog_replication_unsupported";
   ok= check_binlog_replication_unsupported(options, result) && ok;
@@ -1121,6 +1128,64 @@ static bool check_regex_functions_unsupported(const SmokeOptions &options,
 
     rc= mylite_close(db);
     ok= record_result(result, "regex_function_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_window_functions_unsupported(const SmokeOptions &options,
+                                               SmokeResult *result)
+{
+  struct UnsupportedWindow
+  {
+    const char *label;
+    const char *sql;
+    const char *name;
+  };
+
+  static const UnsupportedWindow statements[] = {
+    {"window_row_number", "SELECT ROW_NUMBER() OVER ()", "window functions"},
+    {"window_sum_over", "SELECT SUM(1) OVER ()", "window functions"},
+    {"window_named_clause",
+     "SELECT x FROM (SELECT 1 AS x) AS t WINDOW w AS (ORDER BY x)",
+     "window functions"},
+  };
+
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "window_function_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    ExecCapture aggregate_capture;
+    ok= exec_query_capture(db, "SELECT COUNT(*), SUM(1)",
+                           "window_plain_aggregate", &aggregate_capture,
+                           result) && ok;
+    result->exec_window_aggregate_rows=
+      join_strings(aggregate_capture.rows, ",");
+    if (result->exec_window_aggregate_rows != "1:1")
+      ok= false;
+
+    std::vector<std::string> messages;
+    for (size_t i= 0; i < sizeof(statements) / sizeof(statements[0]); ++i)
+    {
+      char *errmsg= nullptr;
+      rc= mylite_exec(db, statements[i].sql, nullptr, nullptr, &errmsg);
+      std::string message= errmsg ? errmsg : mylite_errmsg(db);
+      if (errmsg)
+        mylite_free(errmsg);
+      messages.push_back(std::string(statements[i].label) + "=" + message);
+
+      ok= record_result(result, statements[i].label, MYLITE_ERROR, rc,
+                        db) && ok;
+      if (mylite_mariadb_errno(db) != ER_NOT_SUPPORTED_YET ||
+          std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+          message.find(statements[i].name) == std::string::npos)
+        ok= false;
+    }
+    result->exec_window_function_messages= join_strings(messages, " | ");
+
+    rc= mylite_close(db);
+    ok= record_result(result, "window_function_close", MYLITE_OK, rc,
                       nullptr) && ok;
   }
   return ok;
@@ -3037,6 +3102,12 @@ static void write_report(const SmokeOptions &options,
     report << "exec_regex_like_rows=" << result.exec_regex_like_rows << "\n";
   if (!result.exec_regex_messages.empty())
     report << "exec_regex_messages=" << result.exec_regex_messages << "\n";
+  if (!result.exec_window_aggregate_rows.empty())
+    report << "exec_window_aggregate_rows="
+           << result.exec_window_aggregate_rows << "\n";
+  if (!result.exec_window_function_messages.empty())
+    report << "exec_window_function_messages="
+           << result.exec_window_function_messages << "\n";
   if (!result.exec_binlog_replication_message.empty())
     report << "exec_binlog_replication_message="
            << result.exec_binlog_replication_message << "\n";
