@@ -1593,7 +1593,11 @@ int plugin_init(int *argc, char **argv, int flags)
   I_List_iterator<i_string> opt_plugin_load_list_iter(opt_plugin_load_list);
   char plugin_table_engine_name_buf[NAME_CHAR_LEN + 1];
   LEX_CSTRING plugin_table_engine_name= { plugin_table_engine_name_buf, 0 };
-  LEX_CSTRING MyISAM= { STRING_WITH_LEN("MyISAM") };
+#ifdef MYLITE_DISABLE_LEGACY_STORAGE_ENGINES
+  LEX_CSTRING bootstrap_storage_engine= { STRING_WITH_LEN("MYLITE") };
+#else
+  LEX_CSTRING bootstrap_storage_engine= { STRING_WITH_LEN("MyISAM") };
+#endif
   DBUG_ENTER("plugin_init");
 
   if (initialized)
@@ -1687,10 +1691,12 @@ int plugin_init(int *argc, char **argv, int flags)
   }
 
   /*
-    First, we initialize only MyISAM - that should almost always succeed
-    (almost always, because plugins can be loaded outside of the server, too).
+    First, we initialize a mandatory storage engine - that should almost always
+    succeed (almost always, because plugins can be loaded outside of the server,
+    too).
   */
-  plugin_ptr= plugin_find_internal(&MyISAM, MYSQL_STORAGE_ENGINE_PLUGIN);
+  plugin_ptr= plugin_find_internal(&bootstrap_storage_engine,
+                                   MYSQL_STORAGE_ENGINE_PLUGIN);
   DBUG_ASSERT(plugin_ptr || !mysql_mandatory_plugins[0]);
   if (plugin_ptr)
   {

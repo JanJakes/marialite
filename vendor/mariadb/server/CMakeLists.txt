@@ -478,6 +478,11 @@ SET(PYTHON_SHEBANG "/usr/bin/env python3" CACHE STRING "python shebang")
 MARK_AS_ADVANCED(PYTHON_SHEBANG)
 
 # Add storage engines and plugins.
+OPTION(MYLITE_DISABLE_LEGACY_STORAGE_ENGINES
+  "Disable durable legacy storage engines in the MyLite minsize profile" OFF)
+IF(MYLITE_DISABLE_LEGACY_STORAGE_ENGINES)
+  ADD_DEFINITIONS(-DMYLITE_DISABLE_LEGACY_STORAGE_ENGINES)
+ENDIF()
 CONFIGURE_PLUGINS()
 
 ADD_SUBDIRECTORY(include)
@@ -647,12 +652,11 @@ IF(NOT WITHOUT_SERVER)
    mariadbd
    my_print_defaults
    my_safe_process
-   myisam_ftdump
-   myisamchk
-   myisamlog
-   myisampack
    perror
    replace)
+  IF(TARGET myisamchk)
+    ADD_DEPENDENCIES(minbuild myisam_ftdump myisamchk myisamlog myisampack)
+  ENDIF()
   IF(WIN32)
     ADD_DEPENDENCIES(minbuild echo mariadb-install-db my_safe_kill mariadb-upgrade-service)
   ENDIF()

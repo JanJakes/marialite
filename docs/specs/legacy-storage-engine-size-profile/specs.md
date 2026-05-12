@@ -2,14 +2,14 @@
 
 ## Problem Statement
 
-The MyLite minsize profile still builds MariaDB's `CSV`, `MyISAM`, and
-`MRG_MyISAM` storage engines as mandatory built-ins. These engines create
-engine-specific table files outside MyLite's primary `.mylite` file model and
-are not part of the target embedded single-file product shape.
+The MyLite minsize profile still exposes MariaDB's `CSV`, `MyISAM`, and
+`MRG_MyISAM` storage engines as user-selectable table engines. These engines
+create engine-specific table files outside MyLite's primary `.mylite` file
+model and are not part of the target embedded single-file product shape.
 
-This slice gates those durable legacy table engines out of the MyLite minsize
-profile and verifies that explicit attempts to create such tables fail through
-MariaDB's unknown-storage-engine path.
+This slice gates those durable legacy table engines out of the user-selectable
+MyLite minsize profile and verifies that explicit attempts to create such
+tables fail through MariaDB's unknown-storage-engine path.
 
 The slice intentionally does not remove the `HEAP`/`MEMORY` engine. `HEAP` is
 in-memory, does not create durable table sidecars, and is referenced by SQL
@@ -31,11 +31,17 @@ MariaDB source references:
   RECOMPILE_FOR_EMBEDDED)`.
 - `vendor/mariadb/server/storage/csv/CMakeLists.txt` registers `csv` with
   `MYSQL_ADD_PLUGIN(csv ... STORAGE_ENGINE MANDATORY)`.
-- `build/mariadb-minsize/sql/sql_builtin.cc` currently includes
+- Before this slice, `build/mariadb-minsize/sql/sql_builtin.cc` included
   `builtin_maria_csv_plugin`, `builtin_maria_myisam_plugin`, and
   `builtin_maria_myisammrg_plugin` in `mysql_mandatory_plugins`.
 - `vendor/mariadb/server/sql/handler.cc` and `vendor/mariadb/server/sql/table.cc`
   report `ER_UNKNOWN_STORAGE_ENGINE` when a named engine cannot be resolved.
+- `vendor/mariadb/server/sql/sql_class.h` defines the inherited disk temporary
+  table engine as `myisam_hton` when Aria temporary tables are disabled.
+- `vendor/mariadb/server/sql/sql_select.cc` creates inherited disk temporary
+  tables through MyISAM helper APIs in that profile.
+- `vendor/mariadb/server/sql/handler.cc` makes storage engines with
+  `HTON_NOT_USER_SELECTABLE` unavailable through name resolution.
 
 MariaDB documentation references:
 
@@ -71,10 +77,19 @@ Add a MyLite-owned CMake option:
 MYLITE_DISABLE_LEGACY_STORAGE_ENGINES=ON
 ```
 
-When enabled, the `csv`, `myisam`, and `myisammrg` storage-engine CMake files
-return before registering their mandatory plugins. Add the option before
+When enabled, the `csv` and `myisammrg` storage-engine CMake files return
+before registering their mandatory plugins. Add the option before
 `CONFIGURE_PLUGINS()` so all storage-engine subdirectories see a single cache
 entry.
+
+Keep MyISAM compiled and initialized because MariaDB still uses `myisam_hton`
+for inherited internal disk temporary tables when Aria temporary tables are
+disabled. In the MyLite minsize profile, mark the MyISAM handlerton with
+`HTON_NOT_USER_SELECTABLE` so `ENGINE=MyISAM` resolves like an unavailable
+storage engine for user DDL. Skip MyISAM command-line utilities in this profile.
+
+Set MyLite's embedded runtime default storage engine to `MYLITE` and its
+user-created temporary-table default to `MEMORY`.
 
 Enable the option in `tools/build-mariadb-minsize.sh`.
 
@@ -89,10 +104,14 @@ and expects `ER_UNKNOWN_STORAGE_ENGINE` with SQLSTATE `42000`.
 ## Affected MariaDB Subsystems
 
 - Build/plugin registration: `cmake/plugin.cmake` generated built-in plugin
-  lists should no longer include these engines in the MyLite minsize profile.
+  lists should no longer include CSV or MRG_MyISAM in the MyLite minsize
+  profile.
+- MyISAM registration: MyISAM remains built in for inherited internal disk
+  temporary tables but is not user-selectable.
 - SQL DDL engine resolution: explicit legacy engine names should fail before
   table creation.
-- Storage engines: durable CSV, MyISAM, and MERGE table handlers are omitted.
+- Storage engines: durable CSV and MERGE table handlers are omitted; durable
+  user-created MyISAM tables are blocked by name resolution.
 
 ## DDL Metadata Routing Impact
 
@@ -104,8 +123,12 @@ DDL.
 ## Single-File and Embedded-Lifecycle Impact
 
 This moves the minsize profile closer to the MyLite product model because CSV,
-MyISAM, and MERGE table files are no longer available as accidental durable
-sidecar storage under the embedded runtime.
+MyISAM, and MERGE table files are no longer available as accidental
+user-created durable sidecar storage under the embedded runtime.
+
+Inherited MyISAM temporary spill remains available under MariaDB's temporary
+directory lifecycle. Replacing that path with a MyLite-owned temporary spill
+engine is separate storage-engine work.
 
 Opening, closing, recovery, and the primary `.mylite` file format are otherwise
 unchanged.
@@ -120,10 +143,14 @@ unsupported.
 
 ## Binary-Size Impact
 
-Expected archive reduction is up to about 751 KiB before secondary effects.
-Linked runtime impact is unknown until measured; the engines may already be
-mostly unreferenced in the open/close smoke after executable export reduction
-and RELR packing.
+Expected archive reduction is limited to CSV, MRG_MyISAM, and MyISAM utilities
+because MyISAM itself must stay linked for internal disk temporary tables.
+Measured clean-build reduction after the RELR profile:
+
+```text
+libmariadbd.a: -252,074 bytes
+stripped linked smoke: -33,440 bytes
+```
 
 ## License, Trademark, and Dependency Impact
 
@@ -145,11 +172,10 @@ Verify:
 
 - `mylite-build-report.txt` records
   `MYLITE_DISABLE_LEGACY_STORAGE_ENGINES:BOOL=ON`.
-- `libmariadbd.a` no longer defines
-  `builtin_maria_csv_plugin`, `builtin_maria_myisam_plugin`, or
+- `libmariadbd.a` no longer defines `builtin_maria_csv_plugin` or
   `builtin_maria_myisammrg_plugin`.
-- `libmariadbd.a` still defines `builtin_maria_heap_plugin` and
-  `builtin_maria_mylite_plugin`.
+- `libmariadbd.a` still defines `builtin_maria_heap_plugin`,
+  `builtin_maria_myisam_plugin`, and `builtin_maria_mylite_plugin`.
 - The open/close smoke report records unknown-engine diagnostics for CSV,
   MyISAM, and MRG_MyISAM.
 - The compatibility harness still passes all groups and reports no unexpected
@@ -157,7 +183,9 @@ Verify:
 
 ## Acceptance Criteria
 
-- The minsize profile omits CSV, MyISAM, and MRG_MyISAM built-ins.
+- The minsize profile omits CSV and MRG_MyISAM built-ins.
+- MyISAM remains built in only for inherited internal temporary table paths and
+  is not user-selectable.
 - MyLite DDL attempts for the omitted engines fail explicitly and leave no
   MyLite table behind.
 - Existing lifecycle, storage, and MariaDB comparison smokes pass.
@@ -166,9 +194,10 @@ Verify:
 
 ## Risks and Unresolved Questions
 
-- Some inherited MariaDB code may assume MyISAM is available for maintenance,
-  repair, or server-oriented metadata paths. The current smoke suite exercises
-  only MyLite-targeted embedded flows.
+- Some inherited MariaDB code still assumes MyISAM is available for internal
+  temporary tables, maintenance, repair, or server-oriented metadata paths.
+  This slice preserves the internal temporary-table path and blocks the user
+  DDL path.
 - `HEAP`/`MEMORY` remains built in. Removing it would be a separate higher-risk
   temp-table slice.
 - This is a minsize compatibility tradeoff. A broader compatibility profile may

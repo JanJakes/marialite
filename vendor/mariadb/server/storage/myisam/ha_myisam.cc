@@ -2610,6 +2610,9 @@ static int myisam_init(void *p)
   hton->panic= myisam_panic;
   hton->update_optimizer_costs= myisam_update_optimizer_costs;
   hton->flags= HTON_CAN_RECREATE | HTON_SUPPORT_LOG_TABLES;
+#ifdef MYLITE_DISABLE_LEGACY_STORAGE_ENGINES
+  hton->flags|= HTON_NOT_USER_SELECTABLE;
+#endif
   hton->tablefile_extensions= ha_myisam_exts;
   mi_killed= mi_killed_in_mariadb;
 

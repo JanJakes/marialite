@@ -1161,6 +1161,8 @@ std::vector<std::string> build_server_args(const std::string &runtime_dir)
     "--datadir=" + runtime_dir + "/datadir",
     "--tmpdir=" + runtime_dir + "/tmp",
     "--mylite-catalog-file=" + runtime.filename,
+    "--default-storage-engine=MYLITE",
+    "--default-tmp-storage-engine=MEMORY",
     std::string("--lc-messages-dir=") + default_lc_messages_dir(),
     "--skip-grant-tables",
     "--skip-networking",

@@ -13,6 +13,10 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1335 USA
 
+IF(MYLITE_DISABLE_LEGACY_STORAGE_ENGINES)
+  RETURN()
+ENDIF()
+
 SET(MYISAMMRG_SOURCES  myrg_close.c myrg_create.c myrg_delete.c myrg_extra.c myrg_info.c
 				ha_myisammrg.cc
 				myrg_locking.c myrg_open.c myrg_panic.c myrg_queue.c myrg_range.c

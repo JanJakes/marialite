@@ -136,7 +136,7 @@ run_comparison_group() {
     "${abs_build_dir}/sql/share" \
     "${reference_root}" \
     "" \
-    "MyISAM" \
+    "MEMORY" \
     "${reference_report}" \
     "${reference_fingerprint}" \
     "${reference_log}" || status=1

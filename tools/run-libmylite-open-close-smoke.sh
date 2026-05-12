@@ -68,6 +68,11 @@ run_inside_container() {
   rm -f "${uri_log}"
   rm -f "${uri_readonly_log}"
   rm -f "${readonly_log}"
+  rm -f "${report}"
+  rm -f "${exclusive_report}"
+  rm -f "${uri_report}"
+  rm -f "${uri_readonly_report}"
+  rm -f "${readonly_report}"
 
   local exclusive_status=0
   "${smoke}" \

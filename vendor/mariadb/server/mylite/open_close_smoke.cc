@@ -60,6 +60,9 @@ struct SmokeResult
   std::string exec_show_profiles_message;
   std::string exec_help_message;
   std::string exec_procedure_analyse_message;
+  std::string exec_csv_engine_message;
+  std::string exec_myisam_engine_message;
+  std::string exec_mrg_myisam_engine_message;
   std::string exec_callback_abort_message;
   std::string exec_dml_rows;
   std::string exec_duplicate_key_message;
@@ -149,6 +152,8 @@ static bool check_help_unsupported(const SmokeOptions &options,
                                    SmokeResult *result);
 static bool check_procedure_analyse_unsupported(const SmokeOptions &options,
                                                 SmokeResult *result);
+static bool check_legacy_storage_engines_unsupported(
+  const SmokeOptions &options, SmokeResult *result);
 static bool check_exec_callback_abort(const SmokeOptions &options,
                                       SmokeResult *result);
 static bool check_exec_dml_persistence(const SmokeOptions &options,
@@ -318,6 +323,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "procedure_analyse_unsupported";
   ok= check_procedure_analyse_unsupported(options, result) && ok;
+
+  result->phase= "legacy_storage_engines_unsupported";
+  ok= check_legacy_storage_engines_unsupported(options, result) && ok;
 
   result->phase= "exec_callback_abort";
   ok= check_exec_callback_abort(options, result) && ok;
@@ -905,6 +913,61 @@ static bool check_procedure_analyse_unsupported(const SmokeOptions &options,
 
     rc= mylite_close(db);
     ok= record_result(result, "procedure_analyse_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_legacy_storage_engines_unsupported(
+  const SmokeOptions &options, SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "legacy_engines_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    ok= exec_statement(db, "SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'",
+                       "legacy_engines_sql_mode", result) && ok;
+
+    struct EngineCase
+    {
+      const char *name;
+      const char *label;
+      std::string *message;
+    };
+
+    EngineCase engines[]=
+    {
+      { "CSV", "csv", &result->exec_csv_engine_message },
+      { "MyISAM", "myisam", &result->exec_myisam_engine_message },
+      { "MRG_MyISAM", "mrg_myisam",
+        &result->exec_mrg_myisam_engine_message }
+    };
+
+    for (EngineCase &engine : engines)
+    {
+      const std::string sql= std::string("CREATE TABLE mylite.") +
+        engine.label + "_engine_rows (id INT) ENGINE=" + engine.name;
+      char *errmsg= nullptr;
+      rc= mylite_exec(db, sql.c_str(), nullptr, nullptr, &errmsg);
+      if (errmsg)
+      {
+        *engine.message= errmsg;
+        mylite_free(errmsg);
+      }
+
+      const std::string case_label= std::string(engine.label) +
+        "_engine_create";
+      ok= record_result(result, case_label.c_str(), MYLITE_ERROR, rc, db) &&
+        ok;
+      if (mylite_mariadb_errno(db) != ER_UNKNOWN_STORAGE_ENGINE ||
+          std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+          engine.message->find(engine.name) == std::string::npos)
+        ok= false;
+    }
+
+    rc= mylite_close(db);
+    ok= record_result(result, "legacy_engines_close", MYLITE_OK, rc,
                       nullptr) && ok;
   }
   return ok;
@@ -2136,6 +2199,15 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_procedure_analyse_message.empty())
     report << "exec_procedure_analyse_message="
            << result.exec_procedure_analyse_message << "\n";
+  if (!result.exec_csv_engine_message.empty())
+    report << "exec_csv_engine_message="
+           << result.exec_csv_engine_message << "\n";
+  if (!result.exec_myisam_engine_message.empty())
+    report << "exec_myisam_engine_message="
+           << result.exec_myisam_engine_message << "\n";
+  if (!result.exec_mrg_myisam_engine_message.empty())
+    report << "exec_mrg_myisam_engine_message="
+           << result.exec_mrg_myisam_engine_message << "\n";
   if (!result.exec_callback_abort_message.empty())
     report << "exec_callback_abort_message="
            << result.exec_callback_abort_message << "\n";
