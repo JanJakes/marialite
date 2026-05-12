@@ -73,6 +73,11 @@ Expected linked-runtime savings are bounded by the live portions of
 effects. Static archive savings should be close to the 138 KiB removed object
 file, minus the replacement stub.
 
+Measured on `build/mariadb-minsize-spatial-core`, this reduced
+`libmysqld/libmariadbd.a` from 33,284,948 bytes to 33,144,206 bytes, saving
+140,742 bytes. The stripped `mylite-open-close-smoke` copy dropped from
+6,568,840 bytes to 6,532,968 bytes, saving 35,872 bytes.
+
 ## DDL Metadata Routing Impact
 
 No MyLite catalog-format change. MyLite must continue rejecting GEOMETRY
@@ -120,6 +125,33 @@ Measure:
 - GIS SQL functions remain rejected as unknown functions.
 - MyLite GEOMETRY and SPATIAL DDL remain rejected.
 - Size deltas are recorded in `docs/research/production-size-analysis.md`.
+
+## Verification Result
+
+Verified with:
+
+```sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-spatial-core MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-spatial-core MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-spatial-core MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+git diff --check
+bash -n tools/build-mariadb-minsize.sh tools/run-libmylite-open-close-smoke.sh tools/run-compatibility-test-harness.sh
+```
+
+Measured artifacts:
+
+| Artifact | Bytes |
+| --- | ---: |
+| `libmysqld/libmariadbd.a` | 33,144,206 |
+| `mylite/libmylite.a` | 122,792 |
+| `storage/mylite/libmylite_embedded.a` | 388,440 |
+| `mylite/mylite-open-close-smoke` | 8,961,760 |
+| stripped `mylite-open-close-smoke` copy | 6,532,968 |
+
+`spatial.cc.o` is absent from `libmariadbd.a`. The linked smoke retains only
+the spatial-core stub symbols required by `sql_type_geom.cc`:
+`Geometry::construct`, `Geometry::get_key_image_itMBR`, `Geometry::as_wkt`, and
+`Geometry::ci_collection`.
 
 ## Risks
 
