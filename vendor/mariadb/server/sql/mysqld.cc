@@ -5650,8 +5650,10 @@ static int init_server_components()
       unireg_abort(1);
   }
 
+#if !defined(MYLITE_DISABLE_BINLOG_CACHE_DIR) || !defined(EMBEDDED_LIBRARY)
   if (unlikely(init_binlog_cache_dir()))
     unireg_abort(1);
+#endif
 
 #ifdef HAVE_REPLICATION
   binlog_space_limit= internal_binlog_space_limit;
