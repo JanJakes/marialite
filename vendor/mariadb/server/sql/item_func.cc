@@ -7098,6 +7098,7 @@ void Cursor_ref::print_func(String *str, const LEX_CSTRING &func_name)
 
 sp_cursor *Cursor_ref::get_open_cursor_or_error()
 {
+#ifndef MYLITE_DISABLE_PLSQL_CURSOR_ATTRIBUTES
   THD *thd= current_thd;
   sp_cursor *c= thd->spcont->get_cursor(m_cursor_offset);
   DBUG_ASSERT(c);
@@ -7108,9 +7109,14 @@ sp_cursor *Cursor_ref::get_open_cursor_or_error()
     return NULL;
   }
   return c;
+#else
+  DBUG_ASSERT(0);
+  return NULL;
+#endif
 }
 
 
+#ifndef MYLITE_DISABLE_PLSQL_CURSOR_ATTRIBUTES
 bool Item_func_cursor_isopen::val_bool()
 {
   sp_cursor *c= current_thd->spcont->get_cursor(m_cursor_offset);
@@ -7138,6 +7144,7 @@ longlong Item_func_cursor_rowcount::val_int()
   sp_cursor *c= get_open_cursor_or_error();
   return !(null_value= !c) ? c->row_count() : 0;
 }
+#endif
 
 /*****************************************************************************
   SEQUENCE functions

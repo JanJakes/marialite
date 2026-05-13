@@ -67,6 +67,8 @@ run_inside_container() {
   mkdir -p "${runtime_dir}"
 
   local smoke="${abs_build_dir}/mylite/mylite-open-close-smoke"
+  assert_no_plsql_cursor_attribute_symbols "${smoke}"
+
   local smoke_log="${abs_build_dir}/libmylite-open-close-output.log"
   local exclusive_log="${abs_build_dir}/libmylite-open-close-exclusive-output.log"
   local uri_log="${abs_build_dir}/libmylite-open-close-uri-output.log"
@@ -169,6 +171,22 @@ append_observed_files() {
       printf "none\n"
     fi
   } >> "${report}"
+}
+
+assert_no_plsql_cursor_attribute_symbols() {
+  local binary="$1"
+  local symbols
+  symbols="$(
+    nm --defined-only -C "${binary}" 2>/dev/null \
+      | grep -E "Item_func_cursor_(isopen|found|notfound|rowcount)|Item_func_cursor_bool_attr" \
+      || true
+  )"
+  if [[ -n "${symbols}" ]]; then
+    printf "unexpected PL/SQL cursor attribute symbols in %s:\n%s\n" \
+      "${binary}" "${symbols}" >&2
+    return 1
+  fi
+  printf "libmylite PL/SQL cursor attribute symbols: none\n"
 }
 
 main "$@"

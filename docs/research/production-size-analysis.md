@@ -51,6 +51,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `MYLITE_DISABLE_JSON_FUNCTIONS=ON`
 - `MYLITE_DISABLE_JSON_TABLE=ON`
 - `MYLITE_DISABLE_SQL_DIAGNOSTICS_STATEMENTS=ON`
+- `MYLITE_DISABLE_PLSQL_CURSOR_ATTRIBUTES=ON`
 - `MYLITE_DISABLE_STORED_FUNCTION_LOOKUP=ON`
 - `MYLITE_DISABLE_SYSTEM_VERSIONING=ON`
 - `MYLITE_DISABLE_FOREIGN_SERVER_CACHE=ON`
@@ -132,7 +133,8 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `system-versioning-size-profile`, `rpl-utility-server-size-profile`, and
 `dynamic-column-size-profile`, `routine-information-schema-size-profile`,
 `show-static-info-size-profile`, `processlist-size-profile`, and
-`stored-function-lookup-size-profile`.
+`stored-function-lookup-size-profile`, and
+`plsql-cursor-attribute-size-profile`.
 Together these remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
@@ -213,7 +215,8 @@ Schema tables empty without scanning `mysql.proc`, omit static `SHOW AUTHORS`,
 `SHOW CONTRIBUTORS`, and `SHOW PRIVILEGES` metadata surfaces, replace the
 process-list row producers with unsupported or empty embedded behavior, and
 replace unknown stored-function lookup with a missing-function diagnostic
-instead of constructing `Item_func_sp`, and
+instead of constructing `Item_func_sp`, and omit PL/SQL cursor-attribute item
+runtime while Oracle mode and stored routines remain unsupported, and
 replace the foreign-server metadata cache with no-op embedded stubs so the
 `mysql.servers` cache implementation is omitted, and replace proxy protocol
 network-listener support
@@ -262,40 +265,40 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-stored-function-lookup`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-plsql-cursor-attributes`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 27,524,742 | 26.25 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 27,455,348 | 26.18 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
 | `build/mariadb-minsize/mylite/libmylite.a` | 122,808 | 0.12 | First-party public wrapper with explicit `MYLITE_API` exports |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,456 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,322,008 | 6.98 | Unstripped linked smoke binary, hidden default visibility, lld RELR, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, ordinary JSON SQL function implementation, SQL diagnostics statement runtime, no stored-function lookup item construction, system-versioned table predicate item runtime, row-replication type-conversion implementation, dynamic-column execution, stored routine Information Schema scan path, static `SHOW AUTHORS` / `SHOW CONTRIBUTORS` / `SHOW PRIVILEGES` result tables, process-list row rendering and Information Schema row population, full foreign-server metadata cache implementation, proxy protocol network-listener support, full EXPLAIN/ANALYZE plan-output runtime, vector type handler, event parser data validation, XA transaction implementation, trigger sidecar runtime, view sidecar runtime, table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
-| stripped `mylite-open-close-smoke` copy | 5,254,144 | 5.01 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,305,640 | 6.97 | Unstripped linked smoke binary, hidden default visibility, lld RELR, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, ordinary JSON SQL function implementation, SQL diagnostics statement runtime, no stored-function lookup item construction, no PL/SQL cursor-attribute item runtime, system-versioned table predicate item runtime, row-replication type-conversion implementation, dynamic-column execution, stored routine Information Schema scan path, static `SHOW AUTHORS` / `SHOW CONTRIBUTORS` / `SHOW PRIVILEGES` result tables, process-list row rendering and Information Schema row population, full foreign-server metadata cache implementation, proxy protocol network-listener support, full EXPLAIN/ANALYZE plan-output runtime, vector type handler, event parser data validation, XA transaction implementation, trigger sidecar runtime, view sidecar runtime, table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 5,242,360 | 5.00 | `strip --strip-unneeded` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 4,169,613 |
-| data | 1,081,264 |
-| bss | 227,689 |
-| total `size` decimal | 5,478,566 |
+| text | 4,166,841 |
+| data | 1,072,152 |
+| bss | 227,121 |
+| total `size` decimal | 5,466,114 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,537,540 | Executable code |
+| `.text` | 2,536,140 | Executable code |
 | `.rodata` | 937,195 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.data.rel.ro` | 921,248 | Relocated read-only data |
-| `.eh_frame` | 472,596 | Unwind metadata |
-| `.data` | 146,688 | Writable data |
+| `.data.rel.ro` | 912,232 | Relocated read-only data |
+| `.eh_frame` | 471,860 | Unwind metadata |
+| `.data` | 146,624 | Writable data |
 | `.bss` | 224,889 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 100,348 | Unwind table index |
-| `.rela.dyn` | 42,624 | Remaining unpacked dynamic relocations |
-| `.gcc_except_table` | 36,136 | Exception metadata |
-| `.relr.dyn` | 16,288 | Packed relative relocations |
+| `.eh_frame_hdr` | 100,164 | Unwind table index |
+| `.rela.dyn` | 42,408 | Remaining unpacked dynamic relocations |
+| `.gcc_except_table` | 36,036 | Exception metadata |
+| `.relr.dyn` | 16,152 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 5,081,640 bytes, or 4.85 MiB, before compression:
@@ -444,6 +447,7 @@ The current built-in plugins are:
 | `show-static-info-size-profile` after routine Information Schema | 27,609,300 | -15,796,132 | 5,272,912 | -14,058,992 | Passes current smokes and harness; omits static `SHOW AUTHORS`, `SHOW CONTRIBUTORS`, and `SHOW PRIVILEGES` result tables |
 | `processlist-size-profile` after static SHOW info | 27,568,066 | -15,837,366 | 5,269,864 | -14,062,040 | Passes current smokes and harness; rejects `SHOW PROCESSLIST` and returns empty `INFORMATION_SCHEMA.PROCESSLIST` rows |
 | `stored-function-lookup-size-profile` after process list | 27,524,742 | -15,880,690 | 5,254,144 | -14,077,760 | Passes current smokes and harness; rejects unknown stored-function lookup without constructing `Item_func_sp`; stored-program parser/runtime remains |
+| `plsql-cursor-attribute-size-profile` after stored-function lookup | 27,455,348 | -15,950,084 | 5,242,360 | -14,089,544 | Passes current smokes and harness; omits PL/SQL cursor attribute item runtime while Oracle mode and stored routines remain unsupported |
 | `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Opt-in experiment only; open/close smoke passes, but storage/catalog harness fails because schema-table queries need disk temp tables |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -467,7 +471,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-7,322,008 bytes to 5,254,144 bytes, saving 2,067,864 bytes, or 1.97 MiB. That
+7,305,640 bytes to 5,242,360 bytes, saving 2,063,280 bytes, or 1.97 MiB. That
 remains the lowest-risk packaging win for any copied executable or
 shared-library style artifact.
 
@@ -941,6 +945,22 @@ symbols; it does still contain `sp_head`, `sp_instr`, and related
 stored-program parser/runtime symbols, so full stored-program removal remains
 a separate high-risk slice.
 
+The `plsql-cursor-attribute-size-profile` attempt then removed PL/SQL cursor
+attribute item runtime from the aggressive embedded profile while Oracle mode
+and stored routines remain unsupported. On top of the stored-function lookup
+profile, it reduced the static archive by 69,394 bytes, the unstripped
+open-close smoke by 16,368 bytes, the stripped open-close smoke by 11,784
+bytes, the unstripped compatibility smoke by 17,664 bytes, and the stripped
+compatibility smoke by 12,696 bytes. `item_func.cc.o` dropped from 1,435,608
+bytes to 1,373,056 bytes, and `sql_lex.cc.o` from 663,624 bytes to 660,112
+bytes. The linked open-close smoke no longer contains
+`Item_func_cursor_isopen`, `Item_func_cursor_found`,
+`Item_func_cursor_notfound`, `Item_func_cursor_rowcount`, or
+`Item_func_cursor_bool_attr` symbols. Because Oracle mode is disabled in this
+profile, ordinary `cursor%FOUND` text tokenizes as modulo in default SQL mode
+and reports MariaDB's unknown-column diagnostic; the direct regression guard is
+the linked-symbol check in `tools/run-libmylite-open-close-smoke.sh`.
+
 The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
 static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings
 around MariaDB parser and server structures, including generated parser types.
@@ -1295,6 +1315,7 @@ MyISAM-compatible storage.
 | Omit static `SHOW` server-info commands | 0.03 MiB archive, 0.015 MiB stripped linked beyond routine Information Schema | Low embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; `SHOW AUTHORS`, `SHOW CONTRIBUTORS`, and `SHOW PRIVILEGES` are static server-information/help surfaces with low embedded value |
 | Omit process-list row rendering | 0.04 MiB archive, 0.003 MiB stripped linked beyond static SHOW info | Low/medium embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; `SHOW PROCESSLIST` is daemon administration, while `INFORMATION_SCHEMA.PROCESSLIST` remains registered but empty to preserve MariaDB's schema-table enum contract |
 | Omit stored-function lookup fallback | 0.04 MiB archive, 0.015 MiB stripped linked beyond process list | Medium compatibility while routines are unsupported | Applied as aggressive embedded-size attempt | Current smokes and harness pass; unknown functions fail without constructing `Item_func_sp`, but full stored-program parser/runtime remains |
+| Omit PL/SQL cursor attribute item runtime | 0.07 MiB archive, 0.011 MiB stripped linked beyond stored-function lookup | Medium compatibility while Oracle mode and routines are unsupported | Applied as aggressive embedded-size attempt | Current smokes and harness pass; exact cursor attribute item symbols are absent, but broader stored-program parser/runtime remains |
 | Disable statement profiling | 0.16 MiB archive, no stripped linked change beyond vector-function profile | Low/medium | Applied as size attempt | Current smokes pass; `SHOW PROFILE(S)` now report MariaDB's disabled-feature diagnostic |
 | Remove SQL `HELP` command implementation | 0.17 MiB archive, 0.06 MiB stripped linked beyond profiling profile | Low/medium | Applied as size attempt | Current smokes pass; `HELP` now reports a stable unsupported-command diagnostic |
 | Remove `PROCEDURE ANALYSE()` implementation | 0.15 MiB archive, no stripped linked change beyond HELP profile | Low/medium | Applied as size attempt | Current smokes pass; `PROCEDURE ANALYSE()` now reports a stable unsupported-feature diagnostic |
@@ -1532,6 +1553,10 @@ Take these now:
    while stored routine DDL remains unsupported. Unknown SQL functions now fail
    without allocating stored-function items or probing routine metadata, and
    native built-in functions still resolve through the ordinary builder path.
+58. Keep PL/SQL cursor attribute item runtime omitted in the aggressive
+   embedded profile while Oracle mode and stored routines remain unsupported.
+   The win is small but coherent, and the smoke script now guards against
+   reintroducing the exact cursor attribute item symbols.
 
 Do not take these now:
 
@@ -1567,8 +1592,9 @@ Research next if size becomes a release blocker:
    slices, not as broad dead-code removal.
 5. Investigate stored-program parser/runtime removal as a separate high-risk
    slice. The routine Information Schema path and stored-function lookup
-   fallback are gone, but `sp_head`, `sp_instr`, `sp_rcontext`, and stored
-   program parser state remain coupled to the core SQL layer.
+   fallback are gone, and PL/SQL cursor attribute item runtime is gone, but
+   `sp_head`, `sp_instr`, `sp_rcontext`, and stored program parser state remain
+   coupled to the core SQL layer.
 6. Investigate remaining Information Schema and `SHOW` table population paths
    for surfaces that are already unsupported in MyLite, especially
    server/plugin/process metadata that should not read inherited sidecar

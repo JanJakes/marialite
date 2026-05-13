@@ -109,6 +109,7 @@ struct SmokeResult
   std::string exec_static_show_info_messages;
   std::string exec_processlist_metadata_messages;
   std::string exec_stored_function_lookup_messages;
+  std::string exec_plsql_cursor_attribute_message;
   std::string exec_procedure_analyse_message;
   std::string exec_routine_information_schema_rows;
   std::string exec_table_admin_messages;
@@ -258,6 +259,8 @@ static bool check_static_show_info_unsupported(const SmokeOptions &options,
 static bool check_processlist_metadata_unsupported(const SmokeOptions &options,
                                                    SmokeResult *result);
 static bool check_stored_function_lookup_unsupported(
+  const SmokeOptions &options, SmokeResult *result);
+static bool check_plsql_cursor_attributes_unsupported(
   const SmokeOptions &options, SmokeResult *result);
 static bool check_procedure_analyse_unsupported(const SmokeOptions &options,
                                                 SmokeResult *result);
@@ -518,6 +521,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "stored_function_lookup_unsupported";
   ok= check_stored_function_lookup_unsupported(options, result) && ok;
+
+  result->phase= "plsql_cursor_attributes_unsupported";
+  ok= check_plsql_cursor_attributes_unsupported(options, result) && ok;
 
   result->phase= "procedure_analyse_unsupported";
   ok= check_procedure_analyse_unsupported(options, result) && ok;
@@ -2583,6 +2589,37 @@ static bool check_stored_function_lookup_unsupported(
   return ok;
 }
 
+static bool check_plsql_cursor_attributes_unsupported(
+  const SmokeOptions &options, SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "plsql_cursor_attributes_open", MYLITE_OK,
+                         rc, db);
+  if (db)
+  {
+    char *errmsg= nullptr;
+    rc= mylite_exec(db, "SELECT mylite_cursor%FOUND", nullptr, nullptr,
+                    &errmsg);
+    std::string message= errmsg ? errmsg : mylite_errmsg(db);
+    if (errmsg)
+      mylite_free(errmsg);
+
+    result->exec_plsql_cursor_attribute_message= message;
+    ok= record_result(result, "plsql_cursor_attributes_select",
+                      MYLITE_ERROR, rc, db) && ok;
+    if (mylite_mariadb_errno(db) != ER_BAD_FIELD_ERROR ||
+        std::strcmp(mylite_sqlstate(db), "42S22") != 0 ||
+        message.find("mylite_cursor") == std::string::npos)
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "plsql_cursor_attributes_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
 static bool check_procedure_analyse_unsupported(const SmokeOptions &options,
                                                 SmokeResult *result)
 {
@@ -4295,6 +4332,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_stored_function_lookup_messages.empty())
     report << "exec_stored_function_lookup_messages="
            << result.exec_stored_function_lookup_messages << "\n";
+  if (!result.exec_plsql_cursor_attribute_message.empty())
+    report << "exec_plsql_cursor_attribute_message="
+           << result.exec_plsql_cursor_attribute_message << "\n";
   if (!result.exec_procedure_analyse_message.empty())
     report << "exec_procedure_analyse_message="
            << result.exec_procedure_analyse_message << "\n";

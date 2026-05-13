@@ -7340,6 +7340,12 @@ bool LEX::sp_for_loop_intrange_condition_test(THD *thd,
 bool LEX::sp_for_loop_cursor_condition_test(THD *thd,
                                             const Lex_for_loop_st &loop)
 {
+#ifdef MYLITE_DISABLE_PLSQL_CURSOR_ATTRIBUTES
+  (void) thd;
+  (void) loop;
+  my_error(ER_NOT_SUPPORTED_YET, MYF(0), "stored-program cursor loops");
+  return true;
+#else
   const LEX_CSTRING *cursor_name;
   Item *expr;
   spcont->set_for_loop(loop);
@@ -7354,6 +7360,7 @@ bool LEX::sp_for_loop_cursor_condition_test(THD *thd,
   if (thd->lex->sp_while_loop_expression(thd, expr, empty_clex_str))
     return true;
   return thd->lex->sphead->restore_lex(thd);
+#endif
 }
 
 
@@ -8388,6 +8395,13 @@ Item *LEX::make_item_colon_ident_ident(THD *thd,
 Item *LEX::make_item_plsql_cursor_attr(THD *thd, const LEX_CSTRING *name,
                                        plsql_cursor_attr_t attr)
 {
+#ifdef MYLITE_DISABLE_PLSQL_CURSOR_ATTRIBUTES
+  (void) thd;
+  (void) name;
+  (void) attr;
+  my_error(ER_NOT_SUPPORTED_YET, MYF(0), "PL/SQL cursor attributes");
+  return NULL;
+#else
   uint offset;
   if (unlikely(!spcont || !spcont->find_cursor(name, &offset, false)))
   {
@@ -8406,6 +8420,7 @@ Item *LEX::make_item_plsql_cursor_attr(THD *thd, const LEX_CSTRING *name,
   }
   DBUG_ASSERT(0);
   return NULL;
+#endif
 }
 
 
