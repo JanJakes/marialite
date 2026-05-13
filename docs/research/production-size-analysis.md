@@ -51,6 +51,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `MYLITE_DISABLE_JSON_FUNCTIONS=ON`
 - `MYLITE_DISABLE_JSON_TABLE=ON`
 - `MYLITE_DISABLE_JSON_TYPE=ON`
+- `MYLITE_DISABLE_SQL_DIGEST=ON`
 - `MYLITE_DISABLE_SQL_DIAGNOSTICS_STATEMENTS=ON`
 - `MYLITE_DISABLE_PLSQL_CURSOR_ATTRIBUTES=ON`
 - `MYLITE_DISABLE_STORED_FUNCTION_LOOKUP=ON`
@@ -150,7 +151,8 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `error-message-size-profile`, `eh-frame-header-size-profile`,
 `fulltext-match-size-profile`, `sql-handler-size-profile`,
 `select-outfile-size-profile`, `no-myisam-temp-spill-size-profile`, the
-disabled server-option table row trim, and `json-type-size-profile`.
+disabled server-option table row trim, `json-type-size-profile`, and
+`sql-digest-size-profile`.
 Together these remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
@@ -222,7 +224,9 @@ logging with embedded stubs so the full `backup.cc` object can be omitted, and
 replace `JSON_TABLE` table-function execution with an unsupported embedded stub,
 replace ordinary JSON scalar function registration and JSON aggregate runtime
 with an aggressive-profile JSON-function stub, reject the retained `JSON`
-data-type alias while omitting JSON type handlers, and replace SQL
+data-type alias while omitting JSON type handlers, omit SQL statement digest
+normalization and the parser digest token table while reporting
+`max_digest_length=0`, and replace SQL
 `GET DIAGNOSTICS`, `SIGNAL`, and
 `RESIGNAL` statement runtime with unsupported embedded stubs while retaining
 the internal diagnostics area and MyLite C API diagnostics, omit
@@ -286,7 +290,8 @@ temporary tables and explicit unsupported diagnostics for disk-spill paths,
 and remove option-table rows for binlog, replication, and dynamic plugin
 loading options whose owning subsystems are already disabled in the minsize
 profile, and reject the `JSON` data-type alias plus parser-backed JSON
-aggregates while omitting the retained JSON type handlers.
+aggregates while omitting the retained JSON type handlers, and omit SQL
+statement digest normalization plus the parser digest token table.
 
 This project does not yet have a final packaged production artifact such as a
 shared `libmylite.so` bundle. For now, the most useful size signals are:
@@ -301,39 +306,39 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-json-type`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-sql-digest`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 25,577,556 | 24.39 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 25,523,714 | 24.34 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
 | `build/mariadb-minsize/mylite/libmylite.a` | 122,792 | 0.12 | First-party public wrapper with explicit `MYLITE_API` exports |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,456 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 6,639,904 | 6.33 | Unstripped linked smoke binary, hidden default visibility, lld RELR, no `.eh_frame_hdr`, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, no `JSON_TABLE` table-function implementation, no ordinary JSON SQL function implementation, no retained JSON data-type implementation, SQL diagnostics statement runtime, no stored-function lookup item construction, no full stored-program runtime objects, compact server error-message catalog, no SQL `MATCH ... AGAINST` runtime, no SQL `HANDLER` command implementation, no `SELECT ... INTO OUTFILE` / `DUMPFILE` host-file export runtime, no MyISAM temporary-table spill engine, no PL/SQL cursor-attribute item runtime, no status metadata publication arrays or registry, no long system-variable help comments, no command-line option help prose, no disabled binlog/replication/plugin-loading option table rows, no general or slow query-log handlers, system-versioned table predicate item runtime, row-replication type-conversion implementation, dynamic-column execution, stored routine Information Schema scan path, static `SHOW AUTHORS` / `SHOW CONTRIBUTORS` / `SHOW PRIVILEGES` result tables, process-list row rendering and Information Schema row population, full foreign-server metadata cache implementation, proxy protocol network-listener support, full EXPLAIN/ANALYZE plan-output runtime, vector type handler, event parser data validation, XA transaction implementation, trigger sidecar runtime, view sidecar runtime, table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
-| stripped `mylite-open-close-smoke` copy | 4,676,440 | 4.46 | `llvm-strip` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 6,620,632 | 6.31 | Unstripped linked smoke binary, hidden default visibility, lld RELR, no `.eh_frame_hdr`, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, no `JSON_TABLE` table-function implementation, no ordinary JSON SQL function implementation, no retained JSON data-type implementation, no SQL statement digest normalizer or parser digest token table, SQL diagnostics statement runtime, no stored-function lookup item construction, no full stored-program runtime objects, compact server error-message catalog, no SQL `MATCH ... AGAINST` runtime, no SQL `HANDLER` command implementation, no `SELECT ... INTO OUTFILE` / `DUMPFILE` host-file export runtime, no MyISAM temporary-table spill engine, no PL/SQL cursor-attribute item runtime, no status metadata publication arrays or registry, no long system-variable help comments, no command-line option help prose, no disabled binlog/replication/plugin-loading option table rows, no general or slow query-log handlers, system-versioned table predicate item runtime, row-replication type-conversion implementation, dynamic-column execution, stored routine Information Schema scan path, static `SHOW AUTHORS` / `SHOW CONTRIBUTORS` / `SHOW PRIVILEGES` result tables, process-list row rendering and Information Schema row population, full foreign-server metadata cache implementation, proxy protocol network-listener support, full EXPLAIN/ANALYZE plan-output runtime, vector type handler, event parser data validation, XA transaction implementation, trigger sidecar runtime, view sidecar runtime, table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 4,657,704 | 4.44 | `llvm-strip` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 3,673,308 |
-| data | 1,000,120 |
-| bss | 227,321 |
-| total `size` decimal | 4,900,749 |
+| text | 3,671,036 |
+| data | 983,624 |
+| bss | 225,465 |
+| total `size` decimal | 4,880,125 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,335,220 | Executable code |
-| `.rodata` | 775,283 | Parser tables, SQL metadata, constants, retained Unicode data |
+| `.text` | 2,334,068 | Executable code |
+| `.rodata` | 774,643 | Parser tables, SQL metadata, constants, retained Unicode data |
 | `.data.rel.ro` | 852,448 | Relocated read-only data |
-| `.eh_frame` | 445,376 | Unwind metadata |
-| `.data` | 135,352 | Writable data |
+| `.eh_frame` | 445,136 | Unwind metadata |
+| `.data` | 118,856 | Writable data |
 | `.bss` | 223,625 | Zero-initialized writable data |
 | `.rela.dyn` | 40,992 | Remaining unpacked dynamic relocations |
-| `.gcc_except_table` | 34,796 | Exception metadata |
-| `.relr.dyn` | 15,048 | Packed relative relocations |
+| `.gcc_except_table` | 34,812 | Exception metadata |
+| `.relr.dyn` | 14,792 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 5,081,640 bytes, or 4.85 MiB, before compression:
@@ -495,6 +500,7 @@ The current built-in plugins are:
 | `no-myisam-temp-spill-size-profile` after SELECT OUTFILE | 25,994,786 | -17,410,646 | 4,708,544 | -14,623,360 | Passes current smokes and harness; omits the mandatory MyISAM temp-spill engine, bounds schema-table long-text metadata for MEMORY temp tables, and rejects disk temporary-table spill explicitly |
 | disabled server-option table row trim after no MyISAM temp spill | 25,991,050 | -17,414,382 | 4,706,032 | -14,625,872 | Passes current smokes and harness; removes parser rows for binlog, replication, and dynamic plugin-loading command-line options whose subsystems are already disabled |
 | `json-type-size-profile` after disabled server-option rows | 25,577,556 | -17,827,876 | 4,676,440 | -14,655,464 | Passes current smokes and harness; rejects the `JSON` data-type alias and parser-backed JSON aggregates, omits JSON type handlers, and keeps generic JSON parser/writer helpers used by retained subsystems |
+| `sql-digest-size-profile` after JSON type | 25,523,714 | -17,881,718 | 4,657,704 | -14,674,200 | Passes current smokes and harness; replaces SQL statement digest normalization with no-op embedded stubs, omits the parser digest token table, and reports `max_digest_length=0` |
 | older `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Superseded opt-in attempt; open/close smoke passed, but storage/catalog harness failed before schema-table MEMORY compatibility work |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -518,7 +524,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-6,639,904 bytes to 4,676,440 bytes, saving 1,963,464 bytes, or 1.87 MiB. That
+6,620,632 bytes to 4,657,704 bytes, saving 1,962,928 bytes, or 1.87 MiB. That
 remains the lowest-risk packaging win for any copied executable or
 shared-library style artifact.
 
@@ -900,6 +906,16 @@ contains `sql_type_json.cc.o` or `mylite_json_function_stub.cc.o`; it keeps
 only a tiny `mylite_json_type_stub.cc.o` comparator fallback. The open/close
 smoke verifies `CREATE TABLE mylite.json_type_rejected (j JSON)` reports an
 explicit unsupported diagnostic.
+
+The `sql-digest-size-profile` attempt then removed MariaDB's SQL statement
+digest normalizer from the aggressive embedded profile. On top of the JSON
+type profile, it reduced the static archive by 53,842 bytes, the unstripped
+open-close smoke by 19,272 bytes, and the stripped open-close smoke by 18,736
+bytes. The linked `llvm-size` total dropped by 20,624 bytes. The removed
+`lex_token_array` accounts for 16,496 bytes of `.data`, and the linked smoke
+no longer defines the digest token or digest text helper symbols. The
+open/close smoke verifies `SHOW VARIABLES LIKE 'max_digest_length'` returns
+`0`.
 
 The `diagnostics-statement-size-profile` attempt then removed SQL
 programmatic diagnostics statement runtime from the aggressive embedded
@@ -1473,6 +1489,7 @@ plain multi-row storage assertions.
 | Remove retained `VECTOR` type handler | 0.14 MiB archive, 0.007 MiB stripped linked beyond EXPLAIN runtime | High compatibility | Applied as aggressive size attempt | Current smokes and harness pass; `VECTOR` columns now fail as an unknown data type in the minsize profile |
 | Omit ordinary JSON SQL functions | 0.63 MiB archive, 0.13 MiB stripped linked beyond VECTOR type | High compatibility | Applied as aggressive size attempt | Current smokes and harness pass; `JSON_VALID()` and `JSON_EXTRACT()` are unknown, JSON aggregates are unsupported, and retained JSON type validation uses a tiny internal stub |
 | Omit retained JSON type alias | 0.39 MiB archive, 0.03 MiB stripped linked beyond disabled server-option rows | High SQL compatibility | Applied as aggressive size attempt | Current smokes and harness pass; `JSON` columns and JSON aggregates are rejected while `LONGTEXT` remains available |
+| Omit SQL statement digest normalizer | 0.05 MiB archive, 0.02 MiB stripped linked beyond JSON type | Low/medium embedded observability | Applied as aggressive embedded-size attempt | Current smokes and harness pass; Performance Schema-style digest text is omitted and `max_digest_length=0`, while query text execution and diagnostics remain |
 | Omit SQL diagnostics statements | 0.11 MiB archive, 0.006 MiB stripped linked beyond JSON functions | Medium compatibility | Applied as aggressive size attempt | Current smokes and harness pass; `GET DIAGNOSTICS`, `SIGNAL`, and `RESIGNAL` are unsupported, but internal diagnostics and MyLite C API warning access remain |
 | Omit system-versioning item runtime | 0.11 MiB archive, 0.002 MiB stripped linked beyond diagnostics statements | High compatibility | Applied as aggressive size attempt | Current smokes and harness pass; MyLite temporal table metadata is now explicitly rejected, and the tiny remaining methods live in `sql_select.cc` to avoid a separate stub object |
 | Omit row-replication conversion utilities | 0.02 MiB archive, 0.006 MiB stripped linked beyond system versioning | Low embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; replication conversion is unsupported, but retained field/type vtables and RTTI keep the win small |
@@ -1701,90 +1718,94 @@ Take these now:
    JSON type-handler object and keeps the aggressive profile coherent after
    ordinary JSON functions are already unsupported. `LONGTEXT` remains
    available as the underlying storage-compatible text type.
-51. Keep SQL diagnostics statements omitted only in the most aggressive size
+51. Keep SQL statement digest normalization omitted in the aggressive embedded
+   profile. It is server observability, not storage behavior; query text
+   execution and diagnostics remain, while Performance Schema-style digest
+   aggregation is unavailable.
+52. Keep SQL diagnostics statements omitted only in the most aggressive size
    profile. The archive saving is real but linked-runtime saving is small, and
    `SIGNAL` can be useful outside stored routines. MyLite's public diagnostics
    API keeps the embedded use case covered.
-52. Keep system-versioning runtime omitted in the aggressive embedded profile
+53. Keep system-versioning runtime omitted in the aggressive embedded profile
    while MyLite rejects temporal table metadata. The linked saving is tiny, but
    the archive saving is real and the rejection prevents accidental table
    definitions whose history and period semantics MyLite cannot recover.
-53. Keep row-replication conversion utilities omitted in the aggressive
+54. Keep row-replication conversion utilities omitted in the aggressive
    embedded profile. The win is small because retained field/type vtables and
    RTTI dominate the object, but the omitted behavior is replication-only and
    the stub fails closed.
-54. Keep dynamic columns omitted in the aggressive embedded profile. The win is
+55. Keep dynamic columns omitted in the aggressive embedded profile. The win is
    larger than the surrounding late-stage feature stubs, and dynamic-column BLOB
    packing is not part of MyLite's single-file storage model. Re-enable only if
    MariaDB dynamic-column SQL/client-helper compatibility becomes a product
    requirement.
-55. Keep routine Information Schema scans omitted while stored routine DDL
+56. Keep routine Information Schema scans omitted while stored routine DDL
    remains unsupported. The win is small, but the behavior is coherent:
    `ROUTINES`, `PARAMETERS`, `SHOW PROCEDURE STATUS`, and
    `SHOW FUNCTION STATUS` return empty results instead of rooting a
    `mysql.proc` scan path that cannot find MyLite-owned routine metadata.
-56. Keep static `SHOW AUTHORS`, `SHOW CONTRIBUTORS`, and `SHOW PRIVILEGES`
+57. Keep static `SHOW AUTHORS`, `SHOW CONTRIBUTORS`, and `SHOW PRIVILEGES`
    omitted in the aggressive embedded profile. The win is small but clean, and
    these commands expose static server information/help text rather than
    application data or storage behavior.
-57. Keep process-list row rendering omitted in the aggressive embedded profile.
+58. Keep process-list row rendering omitted in the aggressive embedded profile.
    `SHOW PROCESSLIST` is a daemon administration surface, and the empty
    `INFORMATION_SCHEMA.PROCESSLIST` behavior preserves MariaDB's schema-table
    indexing contract with a small linked-size win.
-58. Keep stored-function lookup omitted in the aggressive embedded profile
+59. Keep stored-function lookup omitted in the aggressive embedded profile
    while stored routine DDL remains unsupported. Unknown SQL functions now fail
    without allocating stored-function items or probing routine metadata, and
    native built-in functions still resolve through the ordinary builder path.
-59. Keep PL/SQL cursor attribute item runtime omitted in the aggressive
+60. Keep PL/SQL cursor attribute item runtime omitted in the aggressive
    embedded profile while Oracle mode and stored routines remain unsupported.
    The win is small but coherent, and the smoke script now guards against
    reintroducing the exact cursor attribute item symbols.
-60. Keep status metadata publication omitted in the aggressive embedded
+61. Keep status metadata publication omitted in the aggressive embedded
    profile. `SHOW STATUS` is daemon observability rather than storage behavior;
    returning empty result sets keeps MariaDB metadata shape stable while
    avoiding status publication arrays and registry code.
-61. Keep system-variable help text omitted in the aggressive embedded profile.
+62. Keep system-variable help text omitted in the aggressive embedded profile.
    It is a clean `.rodata` win after wrapping declaration-site comment
    arguments, and embedded applications normally need variable names, values,
    defaults, and validation rather than server help prose.
-62. Keep command-line option help text omitted in the aggressive embedded
+63. Keep command-line option help text omitted in the aggressive embedded
    profile. The win is small but clean, and the embedded library needs option
    parsing metadata rather than inherited `mariadbd --help` descriptions.
-63. Keep general and slow query logging omitted in the aggressive embedded
+64. Keep general and slow query logging omitted in the aggressive embedded
    profile. The size win is modest, but the behavior is server-observability
    sidecar state; embedded error logging remains available for diagnostics.
-64. Keep the stored-program runtime objects omitted in the aggressive embedded
+65. Keep the stored-program runtime objects omitted in the aggressive embedded
    profile while MyLite has no routine, trigger, event, or package catalog
    design. This is a meaningful linked-runtime win after query-log trimming,
    and the replacement stub keeps unsupported behavior explicit instead of
    leaving partial inherited `mysql.proc` behavior.
-65. Keep the compact server error-message catalog in the aggressive embedded
+66. Keep the compact server error-message catalog in the aggressive embedded
    profile. It is a clean linked `.rodata` and relocated-data win when paired
    with explicit retained-message coverage, and errno/SQLSTATE compatibility
    remains unchanged. Full prose can stay available in non-aggressive builds.
-66. Keep linked `.eh_frame_hdr` omitted only in the aggressive minsize profile.
+67. Keep linked `.eh_frame_hdr` omitted only in the aggressive minsize profile.
    It saves about 95 KiB from the current stripped linked smoke without
    changing the static archive, but it is a debugging/unwind lookup tradeoff.
-67. Keep SQL `MATCH ... AGAINST` omitted only in the aggressive minsize
+68. Keep SQL `MATCH ... AGAINST` omitted only in the aggressive minsize
    profile while MyLite has no full-text storage implementation. The win is
    small, but it removes a SQL surface that could not execute successfully
    against MyLite tables anyway.
-68. Keep SQL `HANDLER` commands omitted only in the aggressive minsize profile.
+69. Keep SQL `HANDLER` commands omitted only in the aggressive minsize profile.
    The win is small, but direct engine-cursor SQL does not fit the public
    MyLite API and can be represented later as explicit first-party cursor
    handles if needed.
-69. Keep `SELECT ... INTO OUTFILE/DUMPFILE` omitted in the aggressive embedded
+70. Keep `SELECT ... INTO OUTFILE/DUMPFILE` omitted in the aggressive embedded
    profile. The win is small, but host-file export is outside MyLite's
    file-owned lifecycle, and API callers can export rows themselves while
    `SELECT ... INTO` variables remain supported.
-70. Keep MyISAM temp-spill omitted in the aggressive embedded profile. The
+71. Keep MyISAM temp-spill omitted in the aggressive embedded profile. The
    size win is now covered by the harness, but disk temporary-table spill is
    explicitly unsupported until MyLite has a storage-owned replacement.
-71. Keep the disabled server-option row trim in the aggressive embedded
+72. Keep the disabled server-option row trim in the aggressive embedded
    profile. The win is tiny but clean because it only removes binlog,
    replication, and dynamic plugin-loading command-line options after those
    subsystems are already disabled.
-72. Investigate direct MyLite dispatch next. Replacing internal `MYSQL *`,
+73. Investigate direct MyLite dispatch next. Replacing internal `MYSQL *`,
    `MYSQL_RES *`, and `MYSQL_STMT *` usage is architecturally aligned with the
    public API, but the real size win requires splitting embedded bootstrap from
    inherited client C API result capture and preserving prepared-statement

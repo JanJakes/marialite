@@ -1880,8 +1880,10 @@ dispatch_command_return dispatch_command(enum enum_server_command command, THD *
   case COM_QUERY:
   {
     DBUG_ASSERT(thd->m_digest == NULL);
+#ifndef MYLITE_DISABLE_SQL_DIGEST
     thd->m_digest= & thd->m_digest_state;
     thd->m_digest->reset(thd->m_token_array, max_digest_length);
+#endif
 
     if (unlikely(alloc_query(thd, packet, packet_length)))
       break;					// fatal error is set
@@ -1977,7 +1979,9 @@ dispatch_command_return dispatch_command(enum enum_server_command command, THD *
                         (char *) thd->security_ctx->host_or_ip);
 
       /* PSI begin */
+#ifndef MYLITE_DISABLE_SQL_DIGEST
       thd->m_digest= & thd->m_digest_state;
+#endif
 
       thd->m_statement_psi= MYSQL_START_STATEMENT(&thd->m_statement_state,
                                                   com_statement_info[command].m_key,
@@ -10447,6 +10451,7 @@ bool parse_sql(THD *thd, Parser_state *parser_state,
   parser_state->m_digest_psi= NULL;
   parser_state->m_lip.m_digest= NULL;
 
+#ifndef MYLITE_DISABLE_SQL_DIGEST
   if (do_pfs_digest)
   {
     /* Start Digest */
@@ -10464,6 +10469,7 @@ bool parse_sql(THD *thd, Parser_state *parser_state,
       parser_state->m_lip.m_digest->m_digest_storage.m_charset_number= thd->charset()->number;
     }
   }
+#endif
 
   /* Parse the query. */
 

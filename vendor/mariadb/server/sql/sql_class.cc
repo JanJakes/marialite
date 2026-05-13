@@ -951,12 +951,14 @@ THD::THD(my_thread_id id, bool is_wsrep_applier)
   lock_info.mysql_thd= (void *)this;
 
   m_token_array= NULL;
+#ifndef MYLITE_DISABLE_SQL_DIGEST
   if (max_digest_length > 0)
   {
     m_token_array= (unsigned char*) my_malloc(PSI_INSTRUMENT_ME,
                                               max_digest_length,
                                               MYF(MY_WME|MY_THREAD_SPECIFIC));
   }
+#endif
 
   m_binlog_invoker= INVOKER_NONE;
   invoker.init();

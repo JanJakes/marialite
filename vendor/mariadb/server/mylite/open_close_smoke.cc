@@ -116,6 +116,7 @@ struct SmokeResult
   std::string exec_static_show_info_messages;
   std::string exec_status_metadata_rows;
   std::string exec_sysvar_help_text_rows;
+  std::string exec_sql_digest_rows;
   std::string exec_query_log_profile_rows;
   std::string exec_query_log_profile_messages;
   std::string exec_processlist_metadata_messages;
@@ -2755,6 +2756,11 @@ static bool check_sysvar_help_text_profile(const SmokeOptions &options,
                            "sysvar_help_text_show_variables", &variables,
                            result) && ok;
 
+    ExecCapture max_digest_length;
+    ok= exec_query_capture(db, "SHOW VARIABLES LIKE 'max_digest_length'",
+                           "sql_digest_max_digest_length",
+                           &max_digest_length, result) && ok;
+
     ExecCapture comments;
     ok= exec_query_capture(
           db,
@@ -2767,9 +2773,13 @@ static bool check_sysvar_help_text_profile(const SmokeOptions &options,
       "variables=" + join_strings(variables.rows, ",") +
       ",comments=" + std::to_string(comments.rows.size()) + ":" +
       join_strings(comments.rows, ",");
+    result->exec_sql_digest_rows=
+      "max_digest_length=" + join_strings(max_digest_length.rows, ",");
 
     if (variables.rows.empty() ||
         variables.rows[0].find("version:") != 0 ||
+        max_digest_length.rows.size() != 1 ||
+        max_digest_length.rows[0] != "max_digest_length:0" ||
         comments.rows.size() != 1 ||
         !comments.rows[0].empty())
       ok= false;
@@ -4753,6 +4763,8 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_sysvar_help_text_rows.empty())
     report << "exec_sysvar_help_text_rows="
            << result.exec_sysvar_help_text_rows << "\n";
+  if (!result.exec_sql_digest_rows.empty())
+    report << "exec_sql_digest_rows=" << result.exec_sql_digest_rows << "\n";
   if (!result.exec_query_log_profile_rows.empty())
     report << "exec_query_log_profile_rows="
            << result.exec_query_log_profile_rows << "\n";

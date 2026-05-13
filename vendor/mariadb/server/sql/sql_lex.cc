@@ -1176,18 +1176,22 @@ void Lex_input_stream::body_utf8_append_escape(THD *thd,
 
 void Lex_input_stream::add_digest_token(uint token, LEX_YYSTYPE yylval)
 {
+#ifndef MYLITE_DISABLE_SQL_DIGEST
   if (m_digest != NULL)
   {
     m_digest= digest_add_token(m_digest, token, yylval);
   }
+#endif
 }
 
 void Lex_input_stream::reduce_digest_token(uint token_left, uint token_right)
 {
+#ifndef MYLITE_DISABLE_SQL_DIGEST
   if (m_digest != NULL)
   {
     m_digest= digest_reduce_token(m_digest, token_left, token_right);
   }
+#endif
 }
 
 /**

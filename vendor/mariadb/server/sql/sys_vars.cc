@@ -1930,7 +1930,13 @@ static Sys_var_uint Sys_max_digest_length(
        "max_digest_length", MYLITE_SYSVAR_HELP_TEXT("Maximum length considered for digest text"),
        READ_ONLY GLOBAL_VAR(max_digest_length),
        CMD_LINE(REQUIRED_ARG),
-       VALID_RANGE(0, 1024 * 1024), DEFAULT(1024), BLOCK_SIZE(1));
+       VALID_RANGE(0, 1024 * 1024),
+#ifdef MYLITE_DISABLE_SQL_DIGEST
+       DEFAULT(0),
+#else
+       DEFAULT(1024),
+#endif
+       BLOCK_SIZE(1));
 
 static bool check_max_delayed_threads(sys_var *self, THD *thd, set_var *var)
 {
