@@ -32,7 +32,7 @@
 
 struct mylite_db
 {
-  MYSQL *mysql= nullptr;
+  MYLITE_EMBEDDED_DIRECT_SESSION *session= nullptr;
   std::string filename;
   std::string runtime_dir;
   int errcode= MYLITE_OK;
@@ -277,10 +277,10 @@ extern "C" int mylite_close(mylite_db *db)
                      "database handle has active statements");
   }
 
-  if (db->mysql)
+  if (db->session)
   {
-    mysql_close(db->mysql);
-    db->mysql= nullptr;
+    mylite_embedded_direct_session_close(db->session);
+    db->session= nullptr;
   }
 
   if (db->runtime_ref)
@@ -309,7 +309,7 @@ extern "C" int mylite_exec(mylite_db *db, const char *sql,
     set_error(db, MYLITE_MISUSE, 0, "HY000", "SQL string is required");
     return return_error_with_message(db, errmsg);
   }
-  if (!db->mysql)
+  if (!db->session)
   {
     set_error(db, MYLITE_MISUSE, 0, "HY000",
               "database handle is not open");
@@ -317,7 +317,7 @@ extern "C" int mylite_exec(mylite_db *db, const char *sql,
   }
 
   MYLITE_EMBEDDED_DIRECT_RESULT result;
-  if (mylite_embedded_direct_query(db->mysql, sql,
+  if (mylite_embedded_direct_query(db->session, sql,
                                    static_cast<unsigned long>(
                                        std::strlen(sql)),
                                    &result) != 0)
@@ -353,7 +353,7 @@ extern "C" void mylite_free(void *ptr)
 
 extern "C" long long mylite_changes(mylite_db *db)
 {
-  if (!db || !db->mysql)
+  if (!db || !db->session)
     return -1;
 
   const my_ulonglong rows= db->affected_rows;
@@ -366,12 +366,12 @@ extern "C" long long mylite_changes(mylite_db *db)
 
 extern "C" unsigned long long mylite_last_insert_id(mylite_db *db)
 {
-  return db && db->mysql ? static_cast<unsigned long long>(db->insert_id) : 0;
+  return db && db->session ? static_cast<unsigned long long>(db->insert_id) : 0;
 }
 
 extern "C" unsigned mylite_warning_count(mylite_db *db)
 {
-  return db && db->mysql ? db->warning_count : 0;
+  return db && db->session ? db->warning_count : 0;
 }
 
 extern "C" int mylite_warning(mylite_db *db, unsigned index,
@@ -390,7 +390,7 @@ extern "C" int mylite_warning(mylite_db *db, unsigned index,
   if (!level || !code || !message)
     return set_error(db, MYLITE_MISUSE, 0, "HY000",
                      "warning output pointers are required");
-  if (!db->mysql)
+  if (!db->session)
     return set_error(db, MYLITE_MISUSE, 0, "HY000",
                      "database handle is not open");
 
@@ -398,7 +398,7 @@ extern "C" int mylite_warning(mylite_db *db, unsigned index,
   const std::string query= "SHOW WARNINGS LIMIT " + std::to_string(index) +
                            ", 1";
   MYLITE_EMBEDDED_DIRECT_RESULT result;
-  if (mylite_embedded_direct_query(db->mysql, query.c_str(),
+  if (mylite_embedded_direct_query(db->session, query.c_str(),
                                    static_cast<unsigned long>(query.length()),
                                    &result) != 0)
   {
@@ -463,7 +463,7 @@ extern "C" int mylite_prepare(mylite_db *db, const char *sql,
   if (!sql)
     return set_error(db, MYLITE_MISUSE, 0, "HY000",
                      "SQL string is required");
-  if (!db->mysql)
+  if (!db->session)
     return set_error(db, MYLITE_MISUSE, 0, "HY000",
                      "database handle is not open");
 
@@ -484,7 +484,7 @@ extern "C" int mylite_prepare(mylite_db *db, const char *sql,
   if (!sql)
     return set_error(db, MYLITE_MISUSE, 0, "HY000",
                      "SQL string is required");
-  if (!db->mysql)
+  if (!db->session)
     return set_error(db, MYLITE_MISUSE, 0, "HY000",
                      "database handle is not open");
 
@@ -493,7 +493,8 @@ extern "C" int mylite_prepare(mylite_db *db, const char *sql,
     return set_error(db, MYLITE_MISUSE, 0, "HY000",
                      "SQL string is too long");
 
-  MYSQL_STMT *mysql_stmt= mysql_stmt_init(db->mysql);
+  MYSQL *mysql= mylite_embedded_direct_session_mysql(db->session);
+  MYSQL_STMT *mysql_stmt= mysql_stmt_init(mysql);
   if (!mysql_stmt)
     return set_error(db, MYLITE_NOMEM, 0, "HY001", "mysql_stmt_init failed");
 
@@ -1246,11 +1247,12 @@ bool start_runtime(const std::string &filename,
   char embedded_group[]= "embedded";
   char *groups[]= { server_group, embedded_group, nullptr };
 
-  if (mysql_server_init(static_cast<int>(runtime.server_argv.size()),
-                        runtime.server_argv.data(), groups) != 0)
+  if (mylite_embedded_direct_server_init(
+          static_cast<int>(runtime.server_argv.size()),
+          runtime.server_argv.data(), groups) != 0)
   {
-    mysql_server_end();
-    *message= "mysql_server_init failed";
+    mylite_embedded_direct_server_end();
+    *message= "embedded direct server init failed";
     runtime= RuntimeState();
     return false;
   }
@@ -1308,7 +1310,7 @@ void rebuild_server_argv()
 void stop_runtime()
 {
   if (runtime.started)
-    mysql_server_end();
+    mylite_embedded_direct_server_end();
   runtime= RuntimeState();
 }
 
@@ -1320,22 +1322,9 @@ void stop_runtime_at_exit()
 
 int connect_handle(mylite_db *db)
 {
-  MYSQL *mysql= mysql_init(nullptr);
-  if (!mysql)
-    return set_error(db, MYLITE_NOMEM, 0, "HY000", "mysql_init failed");
-
-  if (!mysql_real_connect(mysql, nullptr, "root", nullptr, nullptr, 0, nullptr,
-                          0))
-  {
-    const unsigned error= mysql_errno(mysql);
-    const std::string sqlstate= mysql_sqlstate(mysql);
-    const std::string message= std::string("mysql_real_connect failed: ") +
-                               mysql_error(mysql);
-    mysql_close(mysql);
-    return set_error(db, MYLITE_ERROR, error, sqlstate.c_str(), message);
-  }
-
-  db->mysql= mysql;
+  if (mylite_embedded_direct_session_open(&db->session) != 0)
+    return set_error(db, MYLITE_ERROR, 0, "HY000",
+                     "embedded direct session open failed");
   return MYLITE_OK;
 }
 

@@ -414,6 +414,86 @@ reconfigured and stripped the same archive at the same time; the source changes
 were unaffected, and verification was rerun sequentially after deleting the
 generated build directory.
 
+## Stage 2A Direct Session Results
+
+Stage 2A replaces `libmylite`'s owned `MYSQL *` connection with an opaque
+`MYLITE_EMBEDDED_DIRECT_SESSION` while preserving the existing embedded result
+capture and the prepared-statement compatibility route when that API is
+enabled. This is not the full Stage 2 prepared-statement bridge: the aggressive
+minsize profile currently disables the public prepared-statement API, so the
+measured win comes from removing inherited connect/query client C API roots
+from linked `libmylite` consumers.
+
+Implemented changes:
+
+- added direct embedded server start/stop wrappers over `init_embedded_server()`
+  and `end_embedded_server()`;
+- added direct embedded session open/close wrappers that allocate the minimal
+  embedded `MYSQL` shell needed by MariaDB `THD` setup;
+- routed `mylite_open()`, `mylite_close()`, `mylite_exec()`,
+  `mylite_warning()`, statement-effect accessors, and runtime startup through
+  the direct session bridge;
+- left prepared statements on the session's internal `MYSQL` handle when
+  `MYLITE_DISABLE_PREPARED_STATEMENT_API` is off, so non-minsize builds keep
+  the current compatibility path;
+- added `MYLITE_DISABLE_EMBEDDED_MYSQL_C_API` to the minsize build profile.
+
+Measured against `build/mariadb-minsize-lld-o2`:
+
+| Artifact | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| `libmysqld/libmariadbd.a` | 22,437,702 | 22,444,096 | +6,394 |
+| `mylite/libmylite.a` | 76,680 | 75,696 | -984 |
+| unstripped `mylite-open-close-smoke` | 5,855,640 | 5,844,824 | -10,816 |
+| stripped `mylite-open-close-smoke` | 3,990,440 | 3,982,696 | -7,744 |
+| `size` decimal total | 4,203,300 | 4,194,990 | -8,310 |
+| PHP-shaped shared probe, unstripped | 5,729,736 | 5,409,056 | -320,680 |
+| PHP-shaped shared probe, stripped | 3,881,776 | 3,650,336 | -231,440 |
+| PHP-shaped shared probe, sectionless | 3,879,416 | 3,647,976 | -231,440 |
+
+The new lowest measured PHP-shaped floor is 3,647,976 bytes
+(3.48 MiB / 3.65 MB) for a section-header-stripped shared probe.
+
+Linked symbol checks on `mylite-open-close-smoke` no longer show retained
+`mysql_server_init`, `mysql_server_end`, `mysql_init`, `mysql_real_connect`,
+`mysql_close`, `mysql_real_query`, `mysql_store_result`, `mysql_fetch_row`,
+`mysql_free_result`, `mysql_stmt_*`, `free_old_query`, `net_clear_error`,
+`embedded_methods`, or `emb_advanced_command` symbols. Only the tiny inherited
+`mysql_client_plugin_init` and `mysql_client_plugin_deinit` stubs remain from
+the checked client symbol set.
+
+Verification:
+
+```sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-direct-session \
+  MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-direct-session \
+  MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-direct-session \
+  MYLITE_BUILD_JOBS=8 tools/run-embedded-bootstrap-smoke.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-direct-session \
+  MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-direct-session \
+  MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+bash -n tools/build-mariadb-minsize.sh \
+  tools/run-libmylite-open-close-smoke.sh \
+  tools/run-embedded-bootstrap-smoke.sh \
+  tools/run-storage-engine-smoke.sh \
+  tools/run-compatibility-test-harness.sh
+git diff --check
+```
+
+All commands passed.
+
+The prepared-enabled compatibility branch also compiled with:
+
+```sh
+docker run --rm -v "$PWD":/work -w /work \
+  mylite-mariadb-minsize:ubuntu-24.04 \
+  cmake --build build/mariadb-minsize-default-verify \
+    --target mylite/libmylite.a --parallel 8
+```
+
 ## Risks And Unresolved Questions
 
 - `lib_sql.cc` mixes bootstrap, THD creation, `MYSQL` result capture, and C API

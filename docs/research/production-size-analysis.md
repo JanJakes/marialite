@@ -87,6 +87,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `MYLITE_DISABLE_MYSQL500_COLLATIONS=ON`
 - `MYLITE_DISABLE_EMBEDDED_CLIENT_FALLBACKS=ON`
 - `MYLITE_DISABLE_EMBEDDED_DEFAULT_FILES=ON`
+- `MYLITE_DISABLE_EMBEDDED_MYSQL_C_API=ON`
 - `MYLITE_DISABLE_AUTH_PROTOCOL=ON`
 - `MYLITE_DISABLE_SERVER_ACCOUNT_SQL=ON`
 - `MYLITE_DISABLE_SQL_HANDLER_COMMAND=ON`
@@ -174,7 +175,8 @@ disabled server-option table row trim, `json-type-size-profile`, and
 `embedded-default-files-size-profile`, and
 `auth-protocol-size-profile`, `binlog-sysvar-size-profile`,
 `binlog-cache-dir-size-profile`, `binlog-object-init-size-profile`, and
-`direct-mylite-dispatch-size-profile`, and
+`direct-mylite-dispatch-size-profile`,
+`direct-mylite-session-size-profile`, and
 `sformat-function-size-profile`, `sql-embedded-no-exceptions-profile`, and
 `server-account-sql-profile`, `lld-o2-link-profile`, the opt-in
 `clang-pic-size-profile`, and the opt-in `section-header-strip-profile`. The
@@ -198,8 +200,10 @@ engine non-user-selectable while retaining it for internal disk temporary
 tables, compile minsize objects into per-function/per-data sections and link
 runtime-style artifacts with `--gc-sections`, omit inherited embedded client
 remote/default-option/plugin fallback paths, omit SQL-language prepared
-statement commands, omit the public MyLite prepared-statement implementation
-and binary `COM_STMT_*` dispatch in the no-prepared experiment, omit the
+statement commands, route `libmylite` through a direct embedded session instead
+of the inherited `mysql_server_init` / `mysql_real_connect` / `mysql_close`
+client path, omit the public MyLite prepared-statement implementation and
+binary `COM_STMT_*` dispatch in the no-prepared experiment, omit the
 network authentication protocol plugins and `COM_CHANGE_USER` handshake in the
 aggressive embedded profile, omit the
 `JSON_SCHEMA_VALID()`
@@ -361,67 +365,67 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-lld-o2`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-direct-session`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 22,437,702 | 21.40 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
-| `build/mariadb-minsize/mylite/libmylite.a` | 76,680 | 0.07 | First-party public wrapper with explicit `MYLITE_API` exports |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 22,444,096 | 21.40 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/mylite/libmylite.a` | 75,696 | 0.07 | First-party public wrapper with explicit `MYLITE_API` exports |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,456 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 5,855,640 | 5.58 | Unstripped linked smoke binary, hidden default visibility, lld `-O2`, lld RELR, no `.eh_frame_hdr`, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no C++ exceptions in the retained `sql_embedded` target, direct MyLite one-shot query/warning result dispatch, explicit unsupported diagnostics for server account/grant SQL, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, no `JSON_TABLE` table-function implementation, no ordinary JSON SQL function implementation, no retained JSON data-type implementation, no SQL statement digest normalizer or parser digest token table, no legacy MySQL 5.0 utf8mb3/ucs2 collation implementation, no embedded client remote/default-option/plugin fallback paths, no embedded option-file loading after `--no-defaults`, no network authentication protocol plugin or `COM_CHANGE_USER` handshake, no SQL-language prepared-statement commands, no public prepared-statement implementation or binary `COM_STMT_*` dispatch, no `SHOW CREATE` runtime formatting, no inherited tpool runtime link, no fmtlib-backed `SFORMAT()` runtime, SQL diagnostics statement runtime, no stored-function lookup item construction, no full stored-program runtime objects, compact server error-message catalog, no SQL `MATCH ... AGAINST` runtime, no SQL `HANDLER` command implementation, no `SELECT ... INTO OUTFILE` / `DUMPFILE` host-file export runtime, no MyISAM temporary-table spill engine, no PL/SQL cursor-attribute item runtime, no status metadata publication arrays or registry, no long system-variable help comments, no command-line option help prose, no disabled binlog/replication/plugin-loading option table rows, no disabled binlog/replication system-variable registration, no inherited binlog cache-directory setup, no inherited binlog object init/cleanup, no general or slow query-log handlers, system-versioned table predicate item runtime, row-replication type-conversion implementation, dynamic-column execution, stored routine Information Schema scan path, static `SHOW AUTHORS` / `SHOW CONTRIBUTORS` / `SHOW PRIVILEGES` result tables, process-list row rendering and Information Schema row population, full foreign-server metadata cache implementation, proxy protocol network-listener support, full EXPLAIN/ANALYZE plan-output runtime, vector type handler, event parser data validation, XA transaction implementation, trigger sidecar runtime, view sidecar runtime, table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
-| stripped `mylite-open-close-smoke` copy | 3,990,440 | 3.81 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 5,844,824 | 5.57 | Unstripped linked smoke binary, hidden default visibility, lld `-O2`, lld RELR, no `.eh_frame_hdr`, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no C++ exceptions in the retained `sql_embedded` target, direct MyLite one-shot query/warning result dispatch, direct MyLite session ownership instead of inherited `mysql_server_init` / `mysql_real_connect` / `mysql_close` roots, explicit unsupported diagnostics for server account/grant SQL, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, no `JSON_TABLE` table-function implementation, no ordinary JSON SQL function implementation, no retained JSON data-type implementation, no SQL statement digest normalizer or parser digest token table, no legacy MySQL 5.0 utf8mb3/ucs2 collation implementation, no embedded client remote/default-option/plugin fallback paths, no embedded option-file loading after `--no-defaults`, no network authentication protocol plugin or `COM_CHANGE_USER` handshake, no SQL-language prepared-statement commands, no public prepared-statement implementation or binary `COM_STMT_*` dispatch, no `SHOW CREATE` runtime formatting, no inherited tpool runtime link, no fmtlib-backed `SFORMAT()` runtime, SQL diagnostics statement runtime, no stored-function lookup item construction, no full stored-program runtime objects, compact server error-message catalog, no SQL `MATCH ... AGAINST` runtime, no SQL `HANDLER` command implementation, no `SELECT ... INTO OUTFILE` / `DUMPFILE` host-file export runtime, no MyISAM temporary-table spill engine, no PL/SQL cursor-attribute item runtime, no status metadata publication arrays or registry, no long system-variable help comments, no command-line option help prose, no disabled binlog/replication/plugin-loading option table rows, no disabled binlog/replication system-variable registration, no inherited binlog cache-directory setup, no inherited binlog object init/cleanup, no general or slow query-log handlers, system-versioned table predicate item runtime, row-replication type-conversion implementation, dynamic-column execution, stored routine Information Schema scan path, static `SHOW AUTHORS` / `SHOW CONTRIBUTORS` / `SHOW PRIVILEGES` result tables, process-list row rendering and Information Schema row population, full foreign-server metadata cache implementation, proxy protocol network-listener support, full EXPLAIN/ANALYZE plan-output runtime, vector type handler, event parser data validation, XA transaction implementation, trigger sidecar runtime, view sidecar runtime, table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 3,982,696 | 3.80 | `strip --strip-unneeded` on copied binary |
 
-A one-off minimal consumer linked against the same archives and calling only
-`mylite_open()` and `mylite_close()` measured 5,729,976 bytes unstripped and
-3,881,912 bytes after `strip --strip-unneeded`. That is 108,528 bytes smaller
-than the stripped open-close smoke proxy, so the smoke binary currently
-overstates the linked MyLite/MariaDB payload by about 0.10 MiB before adding
-any host extension code.
+A one-off minimal executable consumer was measured before the direct-session
+slice, but has not been rerun on this exact build. The closer PHP-shaped
+shared-object probe below is the better signal for extension-style packaging.
 
 A one-off shared-object probe, closer to a PHP extension linkage shape, exports
 one default-visible wrapper that calls `mylite_open()` and `mylite_close()`.
 Linked against the same static archives with the current minsize link flags and
-an export version script, it measured 5,729,736 bytes unstripped and
-3,881,776 bytes after `strip --strip-unneeded`. Its dynamic dependencies are
-still only `libstdc++`, `libm`, `libgcc_s`, and `libc`.
+an export version script, it measured 5,409,056 bytes unstripped and
+3,650,336 bytes after `strip --strip-unneeded`. Its dynamic dependencies are
+`libstdc++`, `libgcc_s`, `libm`, `libc`, and the platform loader.
 
-An opt-in Clang/PIC build with the same lld `-O2` link optimization measured a
-lower PHP-shaped shared-object probe: 6,034,584 bytes unstripped and
-3,783,264 bytes stripped. That is 98,512 bytes smaller than the current GCC
-shared-object probe. The tradeoff is that the
-Clang/PIC static archive is 4,386,070 bytes larger, so this is a candidate for
-final linked packaging, not a static archive-size win.
+An opt-in Clang/PIC build with the same lld `-O2` link optimization previously
+measured a PHP-shaped shared-object probe at 6,034,584 bytes unstripped and
+3,783,264 bytes stripped. The new GCC direct-session shared probe is 132,928
+bytes smaller than that older Clang/PIC probe, so Clang/PIC needs to be rerun
+on top of direct sessions before it can be treated as the current floor. The
+known tradeoff from the previous run is that the Clang/PIC static archive grew
+by 4,386,070 bytes, so it remains a final-linked packaging candidate rather
+than a static archive-size win.
 
 Stripping section headers from copied release artifacts with
 `strip --strip-unneeded --strip-section-headers` reduces the current GCC
-PHP-shaped shared-object probe to 3,879,416 bytes and the Clang/PIC probe to
-3,780,864 bytes. `dlopen()`/`dlsym()` probes passed for both shared objects.
-This is an absolute-floor packaging candidate because it makes post-link
-inspection and debugging worse.
+PHP-shaped shared-object probe to 3,647,976 bytes. The older Clang/PIC
+sectionless probe was 3,780,864 bytes before direct sessions. `dlopen()` /
+`dlsym()` probes passed for the sectionless shared objects when tested. This is
+an absolute-floor packaging candidate because it makes post-link inspection and
+debugging worse.
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 3,012,979 |
-| data | 974,184 |
-| bss | 216,137 |
-| total `size` decimal | 4,203,300 |
+| text | 3,006,989 |
+| data | 972,520 |
+| bss | 215,481 |
+| total `size` decimal | 4,194,990 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,152,772 | Executable code |
-| `.rodata` | 755,931 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.data.rel.ro` | 847,488 | Relocated read-only data |
-| `.eh_frame` | 20,736 | Unwind metadata |
-| `.data` | 115,216 | Writable data |
-| `.bss` | 214,089 | Zero-initialized writable data |
+| `.text` | 2,147,508 | Executable code |
+| `.rodata` | 755,419 | Parser tables, SQL metadata, constants, retained Unicode data |
+| `.data.rel.ro` | 846,048 | Relocated read-only data |
+| `.eh_frame` | 20,728 | Unwind metadata |
+| `.data` | 115,056 | Writable data |
+| `.bss` | 214,057 | Zero-initialized writable data |
 | `.rela.dyn` | 40,080 | Remaining unpacked dynamic relocations |
-| `.relr.dyn` | 14,664 | Packed relative relocations |
-| `.gcc_except_table` | 6,804 | Exception metadata |
+| `.relr.dyn` | 14,632 | Packed relative relocations |
+| `.gcc_except_table` | 6,784 | Exception metadata |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 5,081,640 bytes, or 4.85 MiB, before compression:
@@ -600,8 +604,9 @@ The current built-in plugins are:
 | `sql-embedded-no-exceptions-profile` after SFORMAT | 22,437,126 | -20,968,306 | 3,993,848 | -15,338,056 | Passes current smokes and harness; compiles only `sql_embedded` with `-fno-exceptions` while keeping first-party MyLite API and storage code exception-capable |
 | `server-account-sql-profile` after SQL exceptions | 22,437,702 | -20,967,730 | 3,995,560 | -15,336,344 | Passes current smokes and harness; rejects server user/grant SQL explicitly instead of inheriting silent embedded no-access-check success; grows the stripped linked smoke by 1,712 bytes and the PHP-shaped shared probe by 208 bytes |
 | `lld-o2-link-profile` after server account SQL | 22,437,702 | -20,967,730 | 3,990,440 | -15,341,464 | Passes current smokes and harness; adds lld `-O2` to runtime-style linker flags, reducing the stripped linked smoke by 5,120 bytes and the PHP-shaped shared probe by 4,480 bytes |
-| opt-in `clang-pic-size-profile` after lld `-O2` | 26,823,772 | -16,581,660 | 3,875,264 | -15,456,640 | Open-close smoke passes with lld `-O2`; earlier Clang/PIC profile passed current smokes and harness; the stripped PHP-shaped shared probe with lld `-O2` is 3,783,264 bytes, 98,512 bytes smaller than the current GCC probe, while the static archive grows by 4,386,070 bytes |
-| opt-in `section-header-strip-profile` on Clang/PIC/lld `-O2` artifacts | n/a | n/a | 3,872,792 | -15,459,112 | Passes sectionless executable smoke and shared-object `dlopen()` probes; the sectionless PHP-shaped shared probe is 3,780,864 bytes, 2,400 bytes smaller than the normal stripped Clang/PIC/lld `-O2` probe |
+| `direct-mylite-session-size-profile` after lld `-O2` | 22,444,096 | -20,961,336 | 3,982,696 | -15,349,208 | Passes current smokes and harness; replaces `libmylite`'s owned `MYSQL *` connection with an opaque direct embedded session, removes inherited connect/query client C API roots from minsize linked consumers, and reduces the stripped PHP-shaped shared probe to 3,650,336 bytes or 3,647,976 bytes with section headers stripped |
+| opt-in `clang-pic-size-profile` after lld `-O2` | 26,823,772 | -16,581,660 | 3,875,264 | -15,456,640 | Open-close smoke passes with lld `-O2`; earlier Clang/PIC profile passed current smokes and harness; this predates direct sessions, so the stripped PHP-shaped shared probe at 3,783,264 bytes is no longer lower than the current GCC direct-session probe |
+| opt-in `section-header-strip-profile` on direct-session artifacts | n/a | n/a | n/a | n/a | Passes sectionless shared-object `dlopen()` probes when tested; the current sectionless PHP-shaped shared probe is 3,647,976 bytes, 2,360 bytes smaller than the normally stripped direct-session probe |
 | opt-in `charset-registry-size-profile` after SQL digest | 25,523,738 | -17,881,694 | 4,658,664 | -14,673,240 | Passes current smokes and harness with `MYLITE_CHARSET_REGISTRY_SIZE=1152`; reduces `llvm-size` total by 47,180 bytes and `all_charsets` from 32,768 to 9,216 bytes, but stripped linked size grows by 960 bytes, so it is not a default bundle-size win |
 | older `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Superseded opt-in attempt; open/close smoke passed, but storage/catalog harness failed before schema-table MEMORY compatibility work |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
@@ -629,7 +634,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-5,855,640 bytes to 3,990,440 bytes, saving 1,865,200 bytes, or 1.78 MiB. That
+5,844,824 bytes to 3,982,696 bytes, saving 1,862,128 bytes, or 1.78 MiB. That
 remains the lowest-risk packaging win for any copied executable or
 shared-library style artifact.
 
@@ -1766,24 +1771,38 @@ shared lld flags. This is a small link-only win: it leaves the static
 reduces the stripped PHP-shaped shared probe by 4,480 bytes. Build-id and
 RELRO remain enabled.
 
+The `direct-mylite-session-size-profile` then replaced `libmylite`'s owned
+`MYSQL *` connection with an opaque direct embedded session. On top of
+`lld-o2-link-profile`, it grew the static archive by 6,394 bytes, reduced
+`mylite/libmylite.a` by 984 bytes, reduced the unstripped open-close smoke by
+10,816 bytes, reduced the stripped open-close smoke by 7,744 bytes, and
+reduced the stripped PHP-shaped shared probe by 231,440 bytes. The linked smoke
+no longer retains `mysql_server_init`, `mysql_server_end`, `mysql_init`,
+`mysql_real_connect`, `mysql_close`, `mysql_real_query`,
+`mysql_store_result`, `mysql_fetch_row`, `mysql_free_result`, `mysql_stmt_*`,
+`free_old_query`, `net_clear_error`, `embedded_methods`, or
+`emb_advanced_command` from the checked client symbol set. This is a meaningful
+extension-shaped size win because it removes inherited client C API connect and
+query roots from minsize linked consumers, while keeping the full direct
+prepared-statement bridge as separate future work.
+
 The opt-in `clang-pic-size-profile` then tested Clang/Clang++ 18 with
 `-DWITH_PIC=ON` and `-ftls-model=global-dynamic`. A Clang build without PIC
 passed the executable smoke but could not link the PHP-shaped shared probe
 because thread-local symbols used local-exec TLS relocations. The PIC build
-passes current smokes and links the shared probe. With lld `-O2`, it grows the
-static archive by 4,386,070 bytes but reduces the stripped open-close smoke by
-115,176 bytes and the stripped PHP-shaped shared probe by 98,512 bytes versus
-the current GCC profile. Treat this as a final-linked packaging candidate, not
-as a static archive-size win.
+passed current smokes and linked the shared probe before direct sessions. With
+lld `-O2`, it grew the static archive by 4,386,070 bytes and produced a
+3,783,264-byte stripped PHP-shaped shared probe. The current GCC direct-session
+probe is smaller, so Clang/PIC needs to be rerun on top of direct sessions
+before it can be treated as a current floor candidate.
 
 The opt-in `section-header-strip-profile` then tested
 `strip --strip-unneeded --strip-section-headers` on copied executable and
-shared-object artifacts. With lld `-O2`, it reduces the current GCC stripped
-PHP-shaped shared probe by 2,360 bytes and the Clang/PIC stripped PHP-shaped
-shared probe by 2,400 bytes. Sectionless open-close smoke executables still run, and
-sectionless shared objects still pass `dlopen()`, `dlsym()`, and a real
-`mylite_open()` / `mylite_close()` call. This is an absolute-floor packaging
-option only; it removes section-header metadata needed by post-link tooling.
+shared-object artifacts. On the direct-session PHP-shaped shared probe, it
+reduces the stripped artifact by 2,360 bytes to 3,647,976 bytes. Sectionless
+open-close smoke executables and shared objects have passed runtime probes in
+the tested profiles. This is an absolute-floor packaging option only; it
+removes section-header metadata needed by post-link tooling.
 
 ## Decision matrix
 
@@ -1793,7 +1812,7 @@ option only; it removes section-header metadata needed by post-link tooling.
 | Strip release static archive with `strip --strip-unneeded` | 1.28 MiB beyond Oracle-parser profile | Medium | Applied as size attempt | Current smokes relink and pass; downstream static consumers may still need coverage |
 | Strip release static archive with `strip -g` | About 0.95 MiB on the current archive | Low | Fallback | Less aggressive alternative if `--strip-unneeded` breaks a consumer |
 | Link runtime artifacts with lld `-O2` | About 0.004 MiB on the current stripped shared-object probe | Low | Applied as size attempt | Current smokes and harness pass; this keeps build-id and RELRO |
-| Build PHP-shaped artifacts with Clang/PIC | About 0.09 MiB on the current stripped shared-object probe | Medium packaging/toolchain | Candidate | Current smokes pass and the shared-object probe links, but the static archive grows and x86-64 still needs measurement |
+| Build PHP-shaped artifacts with Clang/PIC | Unknown after direct sessions; older run was 0.13 MiB larger than current GCC direct-session shared probe | Medium packaging/toolchain | Re-test only if final packaging needs every byte | Previous smokes passed and the shared-object probe linked, but the static archive grew and the old Clang/PIC floor is now higher than the current GCC direct-session floor |
 | Strip section headers from copied release artifacts | About 0.002 MiB on the current stripped shared-object probe | Medium packaging/debugging | Candidate for absolute floor | Runtime `dlopen()` and smoke probes pass, but post-link inspection and debugging are worse |
 | `WITH_EXTRA_CHARSETS=complex` | About 0.08 MiB | Low | No | Savings are too small to justify a compatibility profile |
 | `WITH_EXTRA_CHARSETS=none` / `charset-small-profile` | 2.46 MiB archive and 2.38 MiB stripped linked beyond type-plugin profile | High compatibility | Applied as size attempt | Current smokes pass after the UCA 1400 null-base fix, but non-default charsets are omitted |
@@ -1813,7 +1832,7 @@ option only; it removes section-header metadata needed by post-link tooling.
 | Omit disabled binlog/replication sysvars | 0.09 MiB archive, 0.01 MiB stripped linked beyond auth protocol | Low/medium variable-introspection compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; this removes configuration knobs for disabled binlog/relay/replication files while keeping common harmless variables |
 | Skip inherited binlog cache-dir setup | negligible archive, 0.001 MiB stripped linked beyond binlog sysvars | Low embedded startup compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; removes a daemon binlog cache directory probe/delete step that has no no-binlog MyLite role |
 | Skip inherited binlog object init/cleanup | negligible archive and stripped linked saving beyond binlog cache-dir setup | Low embedded startup compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; removes `mysql_bin_log` instrumentation and synchronization setup that is unused when binlogging is compiled to no-op behavior |
-| Direct MyLite one-shot query/warning dispatch | +0.002 MiB archive, 0.001 MiB stripped linked beyond binlog object init | Medium embedded result-lifetime risk | Applied as Stage 1 direct-dispatch attempt | Current smokes and harness pass; keeps SQL execution unchanged, but still reuses embedded `MYSQL *` and `MYSQL_DATA`, so the material win waits for later client C API root removal |
+| Direct MyLite session dispatch | +0.006 MiB archive, 0.007 MiB stripped linked smoke, 0.221 MiB stripped PHP-shaped shared probe beyond lld `-O2` | Medium embedded session-lifetime risk | Applied as Stage 2A direct-dispatch attempt | Current smokes and harness pass; minsize linked consumers no longer retain inherited connect/query client C API roots, while the full direct prepared-statement bridge remains future work for prepared-enabled builds |
 | Omit legacy MySQL 5.0 collations | 0.008 MiB archive, 0.003 MiB stripped linked beyond SQL digest | Medium compatibility | Applied as aggressive size attempt | Current smokes and harness pass; explicit `utf8mb3_general_mysql500_ci` and `ucs2_general_mysql500_ci` metadata are rejected in the aggressive profile |
 | Omit embedded client fallback paths | 0.010 MiB archive, 0.025 MiB stripped linked beyond MySQL 5.0 collations | Medium embedded C API compatibility | Applied as aggressive size attempt | Current smokes and harness pass; local embedded `mysql_real_connect()` still works, but remote-host fallback, option-file defaults, client plugin loading, connection attributes, and OS username fallback are unavailable in the aggressive profile |
 | Omit SQL-language prepared-statement commands | 0.011 MiB archive, 0.002 MiB stripped linked beyond embedded client fallbacks | Medium SQL compatibility | Applied as aggressive size attempt | Current smokes and harness pass; public MyLite prepared statements and binary `COM_STMT_*` internals remain, but SQL text `PREPARE`, `EXECUTE`, `EXECUTE IMMEDIATE`, and `DEALLOCATE PREPARE` are unsupported in the aggressive profile |
@@ -2168,12 +2187,12 @@ Take these now:
 81. Keep embedded option-file loading bypassed in the aggressive profile. The
    win is small, but controlled `--no-defaults` startup is the correct embedded
    shape for `libmylite` and avoids host configuration surprises.
-82. Keep direct MyLite one-shot query/warning dispatch as Stage 1 groundwork if
-   the direct-dispatch slice continues. The measured linked-size win is only
-   1,520 stripped bytes and the archive grows slightly, but the direction is
-   architecturally aligned with the public API. The real size win still requires
-   splitting embedded bootstrap from inherited client C API result capture and
-   preserving prepared-statement semantics without SQL interpolation.
+82. Keep direct MyLite session dispatch in the aggressive minsize profile. The
+   stripped open-close smoke win is only 7,744 bytes, but the PHP-shaped shared
+   probe drops by 231,440 bytes because inherited connect/query client C API
+   roots are no longer retained by `libmylite` consumers. The remaining direct
+   work is the harder prepared-statement bridge for prepared-enabled builds,
+   not SQL string interpolation.
 
 Do not take these now:
 
@@ -2218,6 +2237,13 @@ Research next if size becomes a release blocker:
    loading options; additional rows need a startup/default-initialization audit
    because `handle_options()` still uses the retained table for parsing and
    defaults.
+7. Re-test Clang/PIC on top of direct sessions only when final packaging is
+   being measured. The older Clang/PIC shared probe is now larger than the GCC
+   direct-session probe, but the combination has not been measured.
+8. Finish the direct prepared-statement bridge if prepared API support is
+   restored in the minsize profile. That is the remaining way to remove the
+   inherited prepared C API compatibility route without changing bound
+   parameter semantics.
 
 The best next decisions are deeper SQL-layer reductions as deliberate
 compatibility work. Apart from RELR packing and section GC for linked runtime

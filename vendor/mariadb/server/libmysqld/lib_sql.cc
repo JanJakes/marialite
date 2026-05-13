@@ -43,9 +43,24 @@ C_MODE_START
 
 extern unsigned int mysql_server_last_errno;
 extern char mysql_server_last_error[MYSQL_ERRMSG_SIZE];
+int init_embedded_server(int argc, char **argv, char **groups);
+void end_embedded_server();
 static my_bool emb_read_query_result(MYSQL *mysql);
 static void free_embedded_thd(MYSQL *mysql);
+static void embedded_free_rows(MYSQL_DATA *data);
+static void embedded_init_error_cleanup();
+static void mylite_embedded_direct_free_old_query(MYSQL *mysql);
+static void mylite_embedded_direct_net_clear_error(NET *net);
+static my_bool mylite_embedded_direct_command(MYSQL *mysql,
+                                              enum enum_server_command command,
+                                              const uchar *arg,
+                                              ulong arg_length);
+static void mylite_embedded_direct_get_error(MYSQL *mysql, MYSQL_DATA *data);
+static my_bool mylite_embedded_direct_read_query_result(MYSQL *mysql);
+static int mylite_embedded_direct_check_connection(MYSQL *mysql);
 static bool embedded_print_errors= 0;
+static my_bool mylite_direct_client_init= 0;
+static my_bool mylite_direct_org_my_init_done= 0;
 
 extern "C" void unireg_clear(int exit_code)
 {
@@ -103,6 +118,15 @@ void embedded_get_error(MYSQL *mysql, MYSQL_DATA *data)
   memcpy(net->sqlstate, ei->sqlstate, sizeof(net->sqlstate));
   mysql->server_status= ei->server_status;
   my_free(data);
+}
+
+static void embedded_free_rows(MYSQL_DATA *data)
+{
+  if (data)
+  {
+    free_root(&data->alloc, MYF(0));
+    my_free(data);
+  }
 }
 
 static my_bool
@@ -192,14 +216,14 @@ static void emb_flush_use_result(MYSQL *mysql, my_bool)
   THD *thd= (THD*) mysql->thd;
   if (thd->cur_data)
   {
-    free_rows(thd->cur_data);
+    embedded_free_rows(thd->cur_data);
     thd->cur_data= 0;
   }
   else if (thd->first_data)
   {
     MYSQL_DATA *data= thd->first_data;
     thd->first_data= data->embedded_info->next;
-    free_rows(data);
+    embedded_free_rows(data);
   }
 }
 
@@ -353,12 +377,138 @@ void mylite_embedded_direct_result_free(
 {
   if (!result)
     return;
-  free_rows(result->data);
+  embedded_free_rows(result->data);
   mylite_embedded_direct_result_init(result);
 }
 
 
-int mylite_embedded_direct_query(MYSQL *mysql, const char *query,
+struct st_mylite_embedded_direct_session
+{
+  MYSQL mysql;
+};
+
+
+int mylite_embedded_direct_server_init(int argc, char **argv, char **groups)
+{
+  int result= 0;
+  if (!mylite_direct_client_init)
+  {
+    mylite_direct_client_init= 1;
+    mylite_direct_org_my_init_done= my_init_done;
+    if (my_init())
+    {
+      mylite_direct_client_init= 0;
+      return 1;
+    }
+    init_client_errs();
+#if defined(SIGPIPE) && !defined(_WIN32)
+    (void) signal(SIGPIPE, SIG_IGN);
+#endif
+    result= init_embedded_server(argc, argv, groups);
+    if (result)
+      mylite_embedded_direct_server_end();
+  }
+  else
+    result= (int) my_thread_init();
+  return result;
+}
+
+
+void mylite_embedded_direct_server_end(void)
+{
+  if (!mylite_direct_client_init)
+    return;
+
+  finish_client_errs();
+  end_embedded_server();
+  if (!mylite_direct_org_my_init_done)
+    my_end(0);
+  mylite_direct_client_init= mylite_direct_org_my_init_done= 0;
+}
+
+
+int mylite_embedded_direct_session_open(
+    MYLITE_EMBEDDED_DIRECT_SESSION **out_session)
+{
+  if (!out_session)
+    return 1;
+  *out_session= 0;
+
+  if (my_thread_init())
+    return 1;
+
+  MYLITE_EMBEDDED_DIRECT_SESSION *session=
+    (MYLITE_EMBEDDED_DIRECT_SESSION*) my_malloc(PSI_NOT_INSTRUMENTED,
+                                                sizeof(*session),
+                                                MYF(MY_WME | MY_ZEROFILL));
+  if (!session)
+    return 1;
+
+  MYSQL *mysql= &session->mysql;
+  ulong client_flag= CLIENT_CAPABILITIES;
+  client_flag&= ~(CLIENT_COMPRESS | CLIENT_PLUGIN_AUTH);
+  mysql->charset= default_client_charset_info;
+  mysql->options.methods_to_use= MYSQL_OPT_GUESS_CONNECTION;
+  mysql->options.report_data_truncation= TRUE;
+  strmake_buf(mysql->net.sqlstate, "00000");
+  mysql->user= my_strdup(PSI_NOT_INSTRUMENTED, "root", MYF(0));
+  mysql->info_buffer= (char*) my_malloc(PSI_NOT_INSTRUMENTED,
+                                        MYSQL_ERRMSG_SIZE, MYF(0));
+  if (!mysql->user || !mysql->info_buffer)
+    goto error;
+
+  mysql->thd= create_embedded_thd(client_flag);
+  if (!mysql->thd)
+    goto error;
+
+#ifndef MYLITE_DISABLE_PREPARED_STATEMENT_API
+  mysql->methods= &embedded_methods;
+#endif
+  init_embedded_mysql(mysql, client_flag);
+  if (mylite_embedded_direct_check_connection(mysql))
+    goto error;
+
+  mysql->server_status= SERVER_STATUS_AUTOCOMMIT;
+  *out_session= session;
+  return 0;
+
+error:
+  mylite_embedded_direct_session_close(session);
+  return 1;
+}
+
+
+void mylite_embedded_direct_session_close(
+    MYLITE_EMBEDDED_DIRECT_SESSION *session)
+{
+  if (!session)
+    return;
+
+  MYSQL *mysql= &session->mysql;
+  my_free(mysql->info_buffer);
+  mysql->info_buffer= 0;
+  my_free(mysql->user);
+  mysql->user= 0;
+  if (mysql->thd)
+  {
+    free_embedded_thd(mysql);
+    mysql->thd= 0;
+  }
+  if (mysql->fields)
+    free_root(&mysql->field_alloc, MYF(0));
+  my_free(session);
+}
+
+
+MYSQL *mylite_embedded_direct_session_mysql(
+    MYLITE_EMBEDDED_DIRECT_SESSION *session)
+{
+  return session ? &session->mysql : 0;
+}
+
+
+int mylite_embedded_direct_query(MYLITE_EMBEDDED_DIRECT_SESSION *session,
+                                 const char *query,
                                  unsigned long length,
                                  MYLITE_EMBEDDED_DIRECT_RESULT *result)
 {
@@ -366,6 +516,7 @@ int mylite_embedded_direct_query(MYSQL *mysql, const char *query,
     return 1;
 
   mylite_embedded_direct_result_init(result);
+  MYSQL *mysql= mylite_embedded_direct_session_mysql(session);
   if (!mysql || !query)
   {
     result->last_errno= 0;
@@ -374,9 +525,9 @@ int mylite_embedded_direct_query(MYSQL *mysql, const char *query,
     return 1;
   }
 
-  if (emb_advanced_command(mysql, COM_QUERY, 0, 0, (const uchar*) query,
-                           length, 1, 0) ||
-      emb_read_query_result(mysql))
+  if (mylite_embedded_direct_command(mysql, COM_QUERY, (const uchar*) query,
+                                     length) ||
+      mylite_embedded_direct_read_query_result(mysql))
   {
     NET *net= &mysql->net;
     result->affected_rows= mysql->affected_rows;
@@ -421,6 +572,158 @@ int mylite_embedded_direct_query(MYSQL *mysql, const char *query,
   mysql->fields= 0;
   mysql->status= MYSQL_STATUS_READY;
   return 0;
+}
+
+
+static void mylite_embedded_direct_free_old_query(MYSQL *mysql)
+{
+  if (mysql->fields)
+    free_root(&mysql->field_alloc, MYF(0));
+  init_alloc_root(PSI_NOT_INSTRUMENTED, &mysql->field_alloc, 8192, 0, MYF(0));
+  mysql->fields= 0;
+  mysql->field_count= 0;
+  mysql->warning_count= 0;
+  mysql->info= 0;
+}
+
+
+static void mylite_embedded_direct_net_clear_error(NET *net)
+{
+  net->last_errno= 0;
+  net->last_error[0]= 0;
+  strmake_buf(net->sqlstate, "00000");
+}
+
+
+static my_bool mylite_embedded_direct_command(MYSQL *mysql,
+                                              enum enum_server_command command,
+                                              const uchar *arg,
+                                              ulong arg_length)
+{
+  my_bool result= 1;
+  THD *thd= (THD*) mysql->thd;
+  THD *old_current_thd= current_thd;
+  NET *net= &mysql->net;
+
+  if (thd && thd->killed != NOT_KILLED)
+  {
+    if (thd->killed < KILL_CONNECTION)
+      thd->killed= NOT_KILLED;
+    else
+      thd= 0;
+  }
+
+  if (!thd)
+  {
+    net->last_errno= CR_SERVER_GONE_ERROR;
+    strmake_buf(net->sqlstate, "HY000");
+    strmake_buf(net->last_error, "embedded session is not available");
+    return 1;
+  }
+
+  thd->clear_data_list();
+  if (mysql->status != MYSQL_STATUS_READY)
+  {
+    net->last_errno= CR_COMMANDS_OUT_OF_SYNC;
+    strmake_buf(net->sqlstate, "HY000");
+    strmake_buf(net->last_error, "commands out of sync");
+    return 1;
+  }
+
+  thd->clear_error(1);
+  mysql->affected_rows= ~(my_ulonglong) 0;
+  mysql->field_count= 0;
+  mylite_embedded_direct_net_clear_error(net);
+  thd->current_stmt= 0;
+  thd->thread_stack= (char*) &thd;
+  thd->store_globals();
+  mylite_embedded_direct_free_old_query(mysql);
+
+  thd->extra_length= arg_length;
+  thd->extra_data= (char*) arg;
+  result= dispatch_command(command, thd, (char*) arg, arg_length);
+  thd->cur_data= 0;
+  thd->mysys_var= 0;
+
+  thd->reset_globals();
+  if (old_current_thd)
+    old_current_thd->store_globals();
+  return result;
+}
+
+
+static void mylite_embedded_direct_get_error(MYSQL *mysql, MYSQL_DATA *data)
+{
+  NET *net= &mysql->net;
+  struct embedded_query_result *ei= data->embedded_info;
+  net->last_errno= ei->last_errno;
+  strmake_buf(net->last_error, ei->info);
+  memcpy(net->sqlstate, ei->sqlstate, sizeof(net->sqlstate));
+  mysql->server_status= ei->server_status;
+  my_free(data);
+}
+
+
+static my_bool mylite_embedded_direct_read_query_result(MYSQL *mysql)
+{
+  THD *thd= (THD*) mysql->thd;
+  MYSQL_DATA *res= thd->first_data;
+  DBUG_ASSERT(!thd->cur_data);
+  thd->first_data= res->embedded_info->next;
+  if (res->embedded_info->last_errno &&
+      !res->embedded_info->fields_list)
+  {
+    mylite_embedded_direct_get_error(mysql, res);
+    return 1;
+  }
+
+  mysql->warning_count= res->embedded_info->warning_count;
+  mysql->server_status= res->embedded_info->server_status;
+  mysql->field_count= res->fields;
+  if (!(mysql->fields= res->embedded_info->fields_list))
+  {
+    mysql->affected_rows= res->embedded_info->affected_rows;
+    mysql->insert_id= res->embedded_info->insert_id;
+  }
+  mylite_embedded_direct_net_clear_error(&mysql->net);
+  mysql->info= 0;
+
+  if (res->embedded_info->info[0])
+  {
+    strmake(mysql->info_buffer, res->embedded_info->info,
+            MYSQL_ERRMSG_SIZE - 1);
+    mysql->info= mysql->info_buffer;
+  }
+
+  if (res->embedded_info->fields_list)
+  {
+    mysql->status= MYSQL_STATUS_GET_RESULT;
+    thd->cur_data= res;
+  }
+  else
+    my_free(res);
+
+  return 0;
+}
+
+
+static int mylite_embedded_direct_check_connection(MYSQL *mysql)
+{
+  THD *thd= (THD*) mysql->thd;
+  mysql->server_capabilities= mysql->client_flag;
+
+  thd_init_client_charset(thd, mysql->charset->number);
+  thd->update_charset();
+  Security_context *sctx= thd->security_ctx;
+  sctx->host_or_ip= sctx->host= (char*) my_localhost;
+  strmake_buf(sctx->priv_host, (char*) my_localhost);
+  strmake_buf(sctx->priv_user, mysql->user);
+  sctx->user= my_strdup(PSI_NOT_INSTRUMENTED, mysql->user, MYF(0));
+  sctx->proxy_user[0]= 0;
+  sctx->master_access= GLOBAL_ACLS;
+  my_ok(thd);
+  thd->protocol->end_statement();
+  return mylite_embedded_direct_read_query_result(mysql);
 }
 
 
@@ -517,7 +820,7 @@ int emb_unbuffered_fetch(MYSQL *mysql, char **row)
     {
       thd->cur_data= thd->first_data;
       thd->first_data= data->embedded_info->next;
-      free_rows(data);
+      embedded_free_rows(data);
     }
   }
   else
@@ -710,7 +1013,7 @@ int init_embedded_server(int argc, char **argv, char **groups)
 
   if (init_common_variables())
   {
-    mysql_server_end();
+    embedded_init_error_cleanup();
     return 1;
   }
 
@@ -732,7 +1035,7 @@ int init_embedded_server(int argc, char **argv, char **groups)
   umask(((~my_umask) & 0666));
   if (init_server_components())
   {
-    mysql_server_end();
+    embedded_init_error_cleanup();
     return 1;
   }
 
@@ -749,7 +1052,7 @@ int init_embedded_server(int argc, char **argv, char **groups)
 #endif
   if (acl_error || my_tz_init((THD *)0, default_tz_name, opt_bootstrap))
   {
-    mysql_server_end();
+    embedded_init_error_cleanup();
     return 1;
   }
 
@@ -775,14 +1078,14 @@ int init_embedded_server(int argc, char **argv, char **groups)
   {
     if (read_init_file(opt_init_file))
     {
-      mysql_server_end();
+      embedded_init_error_cleanup();
       return 1;
     }
   }
 
   if (ddl_log_execute_recovery() > 0)
   {
-    mysql_server_end();
+    embedded_init_error_cleanup();
     return 1;
   }
   mysql_embedded_init= 1;
@@ -799,6 +1102,16 @@ void end_embedded_server()
     clean_up_mutexes();
     mysql_embedded_init= 0;
   }
+}
+
+
+static void embedded_init_error_cleanup()
+{
+#ifdef MYLITE_DISABLE_EMBEDDED_MYSQL_C_API
+  end_embedded_server();
+#else
+  mysql_server_end();
+#endif
 }
 
 
@@ -1009,10 +1322,10 @@ void THD::clear_data_list()
   {
     MYSQL_DATA *data= first_data;
     first_data= data->embedded_info->next;
-    free_rows(data);
+    embedded_free_rows(data);
   }
   data_tail= &first_data;
-  free_rows(cur_data);
+  embedded_free_rows(cur_data);
   cur_data= 0;
 }
 

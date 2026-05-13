@@ -23,15 +23,27 @@ typedef struct st_mylite_embedded_direct_result
   char message[MYSQL_ERRMSG_SIZE];
 } MYLITE_EMBEDDED_DIRECT_RESULT;
 
+typedef struct st_mylite_embedded_direct_session
+  MYLITE_EMBEDDED_DIRECT_SESSION;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+int mylite_embedded_direct_server_init(int argc, char **argv, char **groups);
+void mylite_embedded_direct_server_end(void);
+int mylite_embedded_direct_session_open(
+    MYLITE_EMBEDDED_DIRECT_SESSION **session);
+void mylite_embedded_direct_session_close(
+    MYLITE_EMBEDDED_DIRECT_SESSION *session);
+MYSQL *mylite_embedded_direct_session_mysql(
+    MYLITE_EMBEDDED_DIRECT_SESSION *session);
 void mylite_embedded_direct_result_init(
     MYLITE_EMBEDDED_DIRECT_RESULT *result);
 void mylite_embedded_direct_result_free(
     MYLITE_EMBEDDED_DIRECT_RESULT *result);
-int mylite_embedded_direct_query(MYSQL *mysql, const char *query,
+int mylite_embedded_direct_query(MYLITE_EMBEDDED_DIRECT_SESSION *session,
+                                 const char *query,
                                  unsigned long length,
                                  MYLITE_EMBEDDED_DIRECT_RESULT *result);
 
