@@ -374,6 +374,13 @@ than the stripped open-close smoke proxy, so the smoke binary currently
 overstates the linked MyLite/MariaDB payload by about 0.10 MiB before adding
 any host extension code.
 
+A one-off shared-object probe, closer to a PHP extension linkage shape, exports
+one default-visible wrapper that calls `mylite_open()` and `mylite_close()`.
+Linked against the same static archives with the current minsize link flags and
+an export version script, it measured 5,733,936 bytes unstripped and
+3,886,048 bytes after `strip --strip-unneeded`. Its dynamic dependencies are
+still only `libstdc++`, `libm`, `libgcc_s`, and `libc`.
+
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
@@ -588,6 +595,8 @@ The current built-in plugins are:
 | early `-ffunction-sections -fdata-sections` plus `--gc-sections` before export removal | 48,305,352 | +4,899,920 | 19,331,816 | -88 | Superseded by `section-gc-size-profile` after executable exports were removed |
 | CMake LTO | 342,480,510 | +299,075,078 | 18,016,192 | -1,315,712 | Reject for now due archive bloat and ODR warnings |
 | GCC skinny LTO with bfd after SFORMAT | 25,909,746 | -17,495,686 | 4,452,104 | -14,879,800 | Reject; non-fat GCC LTO cannot link with lld, and the bfd variant loses no stripped bytes while growing archive and unstripped runtime artifacts |
+| `-z max-page-size=4096` / `-z noseparate-code` after SQL exceptions | n/a | n/a | 3,993,848 | unchanged | Reject; a link-only relink changes segment alignment but does not reduce stripped file size |
+| `-z norelro` after SQL exceptions | n/a | n/a | 3,993,640 | -208 from current | Reject; 208 bytes is not worth dropping RELRO hardening |
 
 The two original `WITH_EXTRA_CHARSETS=none` builds both completed and linked,
 but `mylite-open-close-smoke --mode=exclusive` exited with signal 139. The
