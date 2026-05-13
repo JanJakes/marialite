@@ -255,7 +255,10 @@ extern void (*proc_info_hook)(void *, const PSI_stage_info *, PSI_stage_info *,
                               const char *, const char *, const unsigned int);
 
 /* charsets */
-#define MY_ALL_CHARSETS_SIZE 4096
+#ifndef MYLITE_CHARSET_REGISTRY_SIZE
+#define MYLITE_CHARSET_REGISTRY_SIZE 4096
+#endif
+#define MY_ALL_CHARSETS_SIZE MYLITE_CHARSET_REGISTRY_SIZE
 extern MYSQL_PLUGIN_IMPORT CHARSET_INFO *default_charset_info;
 extern MYSQL_PLUGIN_IMPORT CHARSET_INFO *all_charsets[MY_ALL_CHARSETS_SIZE];
 extern struct charset_info_st compiled_charsets[];

@@ -27,6 +27,7 @@ main() {
     --workdir /work \
     --env "MYLITE_MARIADB_BUILD_DIR=${build_dir}" \
     --env "MYLITE_BUILD_JOBS=${MYLITE_BUILD_JOBS:-}" \
+    --env "MYLITE_CHARSET_REGISTRY_SIZE=${MYLITE_CHARSET_REGISTRY_SIZE:-4096}" \
     --env "MYLITE_DISABLE_EH_FRAME_HEADER=${MYLITE_DISABLE_EH_FRAME_HEADER:-ON}" \
     --env "MYLITE_DISABLE_MYISAM_TEMP_SPILL=${MYLITE_DISABLE_MYISAM_TEMP_SPILL:-ON}" \
     "${image}" \
@@ -69,6 +70,9 @@ build_inside_container() {
 
   local disable_myisam_temp_spill
   disable_myisam_temp_spill="${MYLITE_DISABLE_MYISAM_TEMP_SPILL:-ON}"
+
+  local charset_registry_size
+  charset_registry_size="${MYLITE_CHARSET_REGISTRY_SIZE:-4096}"
 
   local minsize_linker_flags
   minsize_linker_flags="-fuse-ld=lld -Wl,-z,pack-relative-relocs -Wl,--pack-dyn-relocs=relr"
@@ -123,6 +127,7 @@ build_inside_container() {
     -DWITH_PROTECT_STATEMENT_MEMROOT=OFF
     -DWITH_EXTRA_CHARSETS=none
     -DDEFAULT_COLLATION=utf8mb4_general_ci
+    "-DMYLITE_CHARSET_REGISTRY_SIZE=${charset_registry_size}"
     -DMYLITE_DISABLE_ARIA=ON
     -DMYLITE_DISABLE_BACKUP_STAGE=ON
     -DMYLITE_DISABLE_BINLOG_CORE=ON

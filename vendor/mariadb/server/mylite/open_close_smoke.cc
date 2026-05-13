@@ -53,6 +53,7 @@ struct SmokeResult
   std::string exec_scalar_rows;
   std::string exec_compact_error_fallback_message;
   std::string exec_collation_rows;
+  std::string exec_charset_registry_rows;
   std::string exec_uca_collation_message;
   std::string exec_general1400_collation_message;
   std::string exec_locale_profile_rows;
@@ -964,6 +965,21 @@ static bool check_collation_profile(const SmokeOptions &options,
     result->exec_collation_rows= join_strings(capture.rows, ",");
     if (result->exec_collation_rows != "utf8mb4_general_ci:1")
       ok= false;
+
+#ifdef MYLITE_REDUCED_CHARSET_REGISTRY
+    ExecCapture registry;
+    const std::string registry_sql=
+      "SELECT COUNT(*) FROM information_schema.COLLATIONS WHERE ID >= " +
+      std::to_string(MYLITE_CHARSET_REGISTRY_SIZE);
+    ok= exec_query_capture(db, registry_sql.c_str(),
+                           "charset_registry_high_collation_ids",
+                           &registry, result) && ok;
+    result->exec_charset_registry_rows=
+      "registry_size=" + std::to_string(MYLITE_CHARSET_REGISTRY_SIZE) +
+      ",collations_ge_size=" + join_strings(registry.rows, ",");
+    if (registry.rows.size() != 1 || registry.rows[0] != "0")
+      ok= false;
+#endif
 
     char *errmsg= nullptr;
     rc= mylite_exec(db,
@@ -4578,6 +4594,9 @@ static void write_report(const SmokeOptions &options,
            << result.exec_compact_error_fallback_message << "\n";
   if (!result.exec_collation_rows.empty())
     report << "exec_collation_rows=" << result.exec_collation_rows << "\n";
+  if (!result.exec_charset_registry_rows.empty())
+    report << "exec_charset_registry_rows="
+           << result.exec_charset_registry_rows << "\n";
   if (!result.exec_uca_collation_message.empty())
     report << "exec_uca_collation_message="
            << result.exec_uca_collation_message << "\n";

@@ -24,6 +24,7 @@ main() {
     --workdir /work \
     --env "MYLITE_MARIADB_BUILD_DIR=${MYLITE_MARIADB_BUILD_DIR:-build/mariadb-minsize}" \
     --env "MYLITE_BUILD_JOBS=${MYLITE_BUILD_JOBS:-}" \
+    --env "MYLITE_CHARSET_REGISTRY_SIZE=${MYLITE_CHARSET_REGISTRY_SIZE:-4096}" \
     "${image}" \
     /work/tools/run-compatibility-test-harness.sh --inside-container
 }
