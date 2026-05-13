@@ -71,6 +71,7 @@ run_inside_container() {
   assert_no_status_metadata_symbols "${smoke}"
   assert_no_option_help_text_strings "${smoke}"
   assert_no_query_log_symbols "${smoke}"
+  assert_no_fulltext_match_symbols "${smoke}"
   assert_no_full_stored_program_objects "${abs_build_dir}/libmysqld/libmariadbd.a"
 
   local smoke_log="${abs_build_dir}/libmylite-open-close-output.log"
@@ -242,6 +243,22 @@ assert_no_query_log_symbols() {
     return 1
   fi
   printf "libmylite query log symbols: none\n"
+}
+
+assert_no_fulltext_match_symbols() {
+  local binary="$1"
+  local symbols
+  symbols="$(
+    nm --defined-only -C "${binary}" 2>/dev/null \
+      | grep -E "Item_func_match::(init_search|fix_fields|fix_index|eq|val_real|print)" \
+      || true
+  )"
+  if [[ -n "${symbols}" ]]; then
+    printf "unexpected fulltext MATCH symbols in %s:\n%s\n" \
+      "${binary}" "${symbols}" >&2
+    return 1
+  fi
+  printf "libmylite fulltext MATCH symbols: none\n"
 }
 
 assert_no_full_stored_program_objects() {

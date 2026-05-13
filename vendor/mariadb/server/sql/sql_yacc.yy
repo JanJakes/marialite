@@ -126,6 +126,12 @@ int yylex(void *yylval, void *yythd);
                     "window functions in the MyLite minsize profile"))
 #endif
 
+#ifdef MYLITE_DISABLE_FULLTEXT_MATCH
+#define mylite_yyabort_fulltext_match()          \
+  my_yyabort_error((ER_NOT_SUPPORTED_YET, MYF(0), \
+                    "MATCH AGAINST in the MyLite minsize profile"))
+#endif
+
 #ifdef MYLITE_DISABLE_SQL_CRYPTO_FUNCTIONS
 #define mylite_yyabort_sql_crypto_functions()    \
   my_yyabort_error((ER_NOT_SUPPORTED_YET, MYF(0), \
@@ -10256,6 +10262,9 @@ column_default_non_parenthesized_expr:
           }
         | MATCH ident_list_arg AGAINST '(' bit_expr fulltext_options ')'
           {
+#ifdef MYLITE_DISABLE_FULLTEXT_MATCH
+            mylite_yyabort_fulltext_match();
+#else
             $2->push_front($5, thd->mem_root);
             Item_func_match *i1= new (thd->mem_root) Item_func_match(thd, *$2,
                                                                      $6);
@@ -10263,6 +10272,7 @@ column_default_non_parenthesized_expr:
               MYSQL_YYABORT;
             Select->add_ftfunc_to_list(thd, i1);
             $$= i1;
+#endif
           }
         | CAST_SYM '(' expr AS cast_type ')'
           {

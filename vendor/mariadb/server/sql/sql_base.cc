@@ -9633,6 +9633,10 @@ my_bool mysql_rm_tmp_tables(void)
 
 int setup_ftfuncs(SELECT_LEX *select_lex)
 {
+#ifdef MYLITE_DISABLE_FULLTEXT_MATCH
+  DBUG_ASSERT(select_lex->ftfunc_list->elements == 0);
+  return 0;
+#else
   List_iterator<Item_func_match> li(*(select_lex->ftfunc_list)),
                                  lj(*(select_lex->ftfunc_list));
   Item_func_match *ftf, *ftf2;
@@ -9650,11 +9654,13 @@ int setup_ftfuncs(SELECT_LEX *select_lex)
   }
 
   return 0;
+#endif
 }
 
 
 void cleanup_ftfuncs(SELECT_LEX *select_lex)
 {
+#ifndef MYLITE_DISABLE_FULLTEXT_MATCH
   List_iterator<Item_func_match> li(*(select_lex->ftfunc_list)),
                                  lj(*(select_lex->ftfunc_list));
   Item_func_match *ftf;
@@ -9663,11 +9669,18 @@ void cleanup_ftfuncs(SELECT_LEX *select_lex)
   {
     ftf->cleanup();
   }
+#else
+  DBUG_ASSERT(select_lex->ftfunc_list->elements == 0);
+#endif
 }
 
 
 int init_ftfuncs(THD *thd, SELECT_LEX *select_lex, bool no_order)
 {
+#ifdef MYLITE_DISABLE_FULLTEXT_MATCH
+  DBUG_ASSERT(select_lex->ftfunc_list->elements == 0);
+  return 0;
+#else
   if (select_lex->ftfunc_list->elements)
   {
     List_iterator<Item_func_match> li(*(select_lex->ftfunc_list));
@@ -9684,6 +9697,7 @@ int init_ftfuncs(THD *thd, SELECT_LEX *select_lex, bool no_order)
 	return 1;
   }
   return 0;
+#endif
 }
 
 

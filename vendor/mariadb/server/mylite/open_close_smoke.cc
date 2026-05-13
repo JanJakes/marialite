@@ -80,6 +80,7 @@ struct SmokeResult
   std::string exec_explain_runtime_messages;
   std::string exec_regex_like_rows;
   std::string exec_regex_messages;
+  std::string exec_fulltext_match_message;
   std::string exec_window_aggregate_rows;
   std::string exec_window_function_messages;
   std::string exec_binlog_replication_message;
@@ -231,6 +232,8 @@ static bool check_explain_runtime_unsupported(const SmokeOptions &options,
                                               SmokeResult *result);
 static bool check_regex_functions_unsupported(const SmokeOptions &options,
                                               SmokeResult *result);
+static bool check_fulltext_match_unsupported(const SmokeOptions &options,
+                                             SmokeResult *result);
 static bool check_window_functions_unsupported(const SmokeOptions &options,
                                                SmokeResult *result);
 static bool check_binlog_replication_unsupported(const SmokeOptions &options,
@@ -482,6 +485,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "regex_functions_unsupported";
   ok= check_regex_functions_unsupported(options, result) && ok;
+
+  result->phase= "fulltext_match_unsupported";
+  ok= check_fulltext_match_unsupported(options, result) && ok;
 
   result->phase= "window_functions_unsupported";
   ok= check_window_functions_unsupported(options, result) && ok;
@@ -1696,6 +1702,39 @@ static bool check_regex_functions_unsupported(const SmokeOptions &options,
 
     rc= mylite_close(db);
     ok= record_result(result, "regex_function_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_fulltext_match_unsupported(const SmokeOptions &options,
+                                             SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "fulltext_match_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    char *errmsg= nullptr;
+    rc= mylite_exec(db,
+                    "SELECT MATCH(body) AGAINST ('mylite') "
+                    "FROM (SELECT 'mylite' AS body) AS t",
+                    nullptr, nullptr, &errmsg);
+    if (errmsg)
+    {
+      result->exec_fulltext_match_message= errmsg;
+      mylite_free(errmsg);
+    }
+    ok= record_result(result, "fulltext_match_select", MYLITE_ERROR, rc,
+                      db) && ok;
+    if (mylite_mariadb_errno(db) != ER_NOT_SUPPORTED_YET ||
+        std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+        result->exec_fulltext_match_message.find("MATCH AGAINST") ==
+          std::string::npos)
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "fulltext_match_close", MYLITE_OK, rc,
                       nullptr) && ok;
   }
   return ok;
@@ -4461,6 +4500,9 @@ static void write_report(const SmokeOptions &options,
     report << "exec_regex_like_rows=" << result.exec_regex_like_rows << "\n";
   if (!result.exec_regex_messages.empty())
     report << "exec_regex_messages=" << result.exec_regex_messages << "\n";
+  if (!result.exec_fulltext_match_message.empty())
+    report << "exec_fulltext_match_message="
+           << result.exec_fulltext_match_message << "\n";
   if (!result.exec_window_aggregate_rows.empty())
     report << "exec_window_aggregate_rows="
            << result.exec_window_aggregate_rows << "\n";

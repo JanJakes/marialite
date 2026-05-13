@@ -6235,6 +6235,7 @@ void Item_func_get_system_var::cleanup()
    1 OOM error
 */
 
+#ifndef MYLITE_DISABLE_FULLTEXT_MATCH
 bool Item_func_match::init_search(THD *thd, bool no_order)
 {
   DBUG_ENTER("Item_func_match::init_search");
@@ -6550,6 +6551,7 @@ void Item_func_match::print(String *str, enum_query_type query_type)
     str->append(STRING_WITH_LEN(" with query expansion"));
   str->append(STRING_WITH_LEN("))"));
 }
+#endif
 
 
 class Func_handler_bit_xor_int_to_ulonglong:
