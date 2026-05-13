@@ -20,6 +20,7 @@
 
 #include <mysql.h>
 #include <mysqld_error.h>
+#include "mylite_direct_dispatch.h"
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -40,6 +41,10 @@ struct mylite_db
   std::string sqlstate= "00000";
   std::string errmsg= "not an error";
   std::string warning_message;
+  my_ulonglong affected_rows= ~(my_ulonglong) 0;
+  my_ulonglong insert_id= 0;
+  unsigned server_status= 0;
+  unsigned warning_count= 0;
   bool runtime_ref= false;
   unsigned open_statements= 0;
 };
@@ -66,11 +71,10 @@ struct PreparedParameter
   unsigned long length= 0;
 };
 
-struct MysqlEffectSnapshot
+struct DirectEffectSnapshot
 {
   my_ulonglong affected_rows= 0;
   my_ulonglong insert_id= 0;
-  unsigned field_count= 0;
   unsigned server_status= 0;
   unsigned warning_count= 0;
 };
@@ -149,7 +153,10 @@ void rebuild_server_argv();
 void stop_runtime();
 void stop_runtime_at_exit();
 int connect_handle(mylite_db *db);
-int execute_result_callback(mylite_db *db, MYSQL_RES *result,
+void set_effects_from_direct_result(
+    mylite_db *db, const MYLITE_EMBEDDED_DIRECT_RESULT &result);
+int execute_result_callback(mylite_db *db,
+                            const MYLITE_EMBEDDED_DIRECT_RESULT &result,
                             mylite_exec_callback callback, void *ctx);
 #ifndef MYLITE_DISABLE_PREPARED_STATEMENT_API
 int execute_prepared_statement(mylite_stmt *stmt);
@@ -168,14 +175,17 @@ void free_statement_metadata(mylite_stmt *stmt);
 int set_error_from_stmt(mylite_stmt *stmt);
 int set_error_from_mysql_stmt(mylite_db *db, MYSQL_STMT *stmt);
 #endif
-int set_error_from_mysql(mylite_db *db);
+int set_error_from_direct_result(
+    mylite_db *db, const MYLITE_EMBEDDED_DIRECT_RESULT &result);
 int return_error_with_message(mylite_db *db, char **errmsg);
 int return_standalone_error(int code, const char *message, char **errmsg);
 char *duplicate_message(const std::string &message);
 int classify_mariadb_error(unsigned error, const char *sqlstate,
                            const char *message);
-MysqlEffectSnapshot snapshot_mysql_effects(MYSQL *mysql);
-void restore_mysql_effects(MYSQL *mysql, const MysqlEffectSnapshot &snapshot);
+DirectEffectSnapshot snapshot_direct_effects(const mylite_db *db);
+void restore_direct_effects(mylite_db *db,
+                            const DirectEffectSnapshot &snapshot);
+unsigned long direct_value_length(const char *value);
 unsigned map_warning_level_name(const char *level, size_t length);
 #ifndef MYLITE_DISABLE_PREPARED_STATEMENT_API
 bool valid_column(const mylite_stmt *stmt, unsigned column);
@@ -306,34 +316,29 @@ extern "C" int mylite_exec(mylite_db *db, const char *sql,
     return return_error_with_message(db, errmsg);
   }
 
-  clear_error(db);
-  if (mysql_real_query(db->mysql, sql,
-                       static_cast<unsigned long>(std::strlen(sql))) != 0)
+  MYLITE_EMBEDDED_DIRECT_RESULT result;
+  if (mylite_embedded_direct_query(db->mysql, sql,
+                                   static_cast<unsigned long>(
+                                       std::strlen(sql)),
+                                   &result) != 0)
   {
-    set_error_from_mysql(db);
+    set_effects_from_direct_result(db, result);
+    set_error_from_direct_result(db, result);
+    mylite_embedded_direct_result_free(&result);
     return return_error_with_message(db, errmsg);
   }
 
-  const unsigned field_count= mysql_field_count(db->mysql);
-  if (field_count == 0)
+  set_effects_from_direct_result(db, result);
+  if (result.field_count == 0)
   {
+    mylite_embedded_direct_result_free(&result);
     clear_error(db);
     return MYLITE_OK;
   }
 
-  MYSQL_RES *result= mysql_store_result(db->mysql);
-  if (!result)
-  {
-    if (mysql_errno(db->mysql) != 0)
-      set_error_from_mysql(db);
-    else
-      set_error(db, MYLITE_ERROR, 0, "HY000", "mysql_store_result failed");
-    return return_error_with_message(db, errmsg);
-  }
-
   const int callback_result= execute_result_callback(db, result, callback,
                                                      ctx);
-  mysql_free_result(result);
+  mylite_embedded_direct_result_free(&result);
   if (callback_result != MYLITE_OK)
     return return_error_with_message(db, errmsg);
 
@@ -351,7 +356,7 @@ extern "C" long long mylite_changes(mylite_db *db)
   if (!db || !db->mysql)
     return -1;
 
-  const my_ulonglong rows= mysql_affected_rows(db->mysql);
+  const my_ulonglong rows= db->affected_rows;
   if (rows == ~static_cast<my_ulonglong>(0))
     return -1;
   if (rows > static_cast<my_ulonglong>(LLONG_MAX))
@@ -361,13 +366,12 @@ extern "C" long long mylite_changes(mylite_db *db)
 
 extern "C" unsigned long long mylite_last_insert_id(mylite_db *db)
 {
-  return db && db->mysql ?
-    static_cast<unsigned long long>(mysql_insert_id(db->mysql)) : 0;
+  return db && db->mysql ? static_cast<unsigned long long>(db->insert_id) : 0;
 }
 
 extern "C" unsigned mylite_warning_count(mylite_db *db)
 {
-  return db && db->mysql ? mysql_warning_count(db->mysql) : 0;
+  return db && db->mysql ? db->warning_count : 0;
 }
 
 extern "C" int mylite_warning(mylite_db *db, unsigned index,
@@ -390,41 +394,32 @@ extern "C" int mylite_warning(mylite_db *db, unsigned index,
     return set_error(db, MYLITE_MISUSE, 0, "HY000",
                      "database handle is not open");
 
-  const MysqlEffectSnapshot snapshot= snapshot_mysql_effects(db->mysql);
+  const DirectEffectSnapshot snapshot= snapshot_direct_effects(db);
   const std::string query= "SHOW WARNINGS LIMIT " + std::to_string(index) +
                            ", 1";
-  if (mysql_real_query(db->mysql, query.c_str(),
-                       static_cast<unsigned long>(query.length())) != 0)
+  MYLITE_EMBEDDED_DIRECT_RESULT result;
+  if (mylite_embedded_direct_query(db->mysql, query.c_str(),
+                                   static_cast<unsigned long>(query.length()),
+                                   &result) != 0)
   {
-    const int rc= set_error_from_mysql(db);
-    restore_mysql_effects(db->mysql, snapshot);
+    const int rc= set_error_from_direct_result(db, result);
+    mylite_embedded_direct_result_free(&result);
+    restore_direct_effects(db, snapshot);
     return rc;
   }
 
-  MYSQL_RES *result= mysql_store_result(db->mysql);
-  if (!result)
-  {
-    const int rc= mysql_errno(db->mysql) != 0 ?
-      set_error_from_mysql(db) :
-      set_error(db, MYLITE_ERROR, 0, "HY000", "mysql_store_result failed");
-    restore_mysql_effects(db->mysql, snapshot);
-    return rc;
-  }
-
-  MYSQL_ROW row= mysql_fetch_row(result);
+  MYSQL_ROW row= result.data && result.data->data ? result.data->data->data :
+    nullptr;
   if (!row)
   {
-    mysql_free_result(result);
-    restore_mysql_effects(db->mysql, snapshot);
+    mylite_embedded_direct_result_free(&result);
+    restore_direct_effects(db, snapshot);
     return set_error(db, MYLITE_NOTFOUND, 0, "02000",
                      "warning index is out of range");
   }
 
-  unsigned long *lengths= mysql_fetch_lengths(result);
-  const unsigned long level_length= lengths && row[0] ?
-    lengths[0] : (row[0] ? std::strlen(row[0]) : 0);
-  const unsigned long message_length= lengths && row[2] ?
-    lengths[2] : (row[2] ? std::strlen(row[2]) : 0);
+  const unsigned long level_length= direct_value_length(row[0]);
+  const unsigned long message_length= direct_value_length(row[2]);
 
   try
   {
@@ -433,8 +428,8 @@ extern "C" int mylite_warning(mylite_db *db, unsigned index,
   }
   catch (const std::bad_alloc &)
   {
-    mysql_free_result(result);
-    restore_mysql_effects(db->mysql, snapshot);
+    mylite_embedded_direct_result_free(&result);
+    restore_direct_effects(db, snapshot);
     return set_error(db, MYLITE_NOMEM, 0, "HY001", "out of memory");
   }
 
@@ -443,8 +438,8 @@ extern "C" int mylite_warning(mylite_db *db, unsigned index,
     0;
   *message= db->warning_message.c_str();
 
-  mysql_free_result(result);
-  restore_mysql_effects(db->mysql, snapshot);
+  mylite_embedded_direct_result_free(&result);
+  restore_direct_effects(db, snapshot);
   clear_error(db);
   return MYLITE_OK;
 }
@@ -1344,33 +1339,65 @@ int connect_handle(mylite_db *db)
   return MYLITE_OK;
 }
 
-int execute_result_callback(mylite_db *db, MYSQL_RES *result,
+void set_effects_from_direct_result(
+    mylite_db *db, const MYLITE_EMBEDDED_DIRECT_RESULT &result)
+{
+  db->affected_rows= result.affected_rows;
+  db->insert_id= result.insert_id;
+  db->server_status= result.server_status;
+  db->warning_count= result.warning_count;
+}
+
+int execute_result_callback(mylite_db *db,
+                            const MYLITE_EMBEDDED_DIRECT_RESULT &result,
                             mylite_exec_callback callback, void *ctx)
 {
   if (!callback)
     return MYLITE_OK;
 
-  const unsigned column_count= mysql_num_fields(result);
+  const unsigned column_count= result.field_count;
   if (column_count > static_cast<unsigned>(INT_MAX))
     return set_error(db, MYLITE_ERROR, 0, "HY000", "too many result columns");
 
-  MYSQL_FIELD *fields= mysql_fetch_fields(result);
+  MYSQL_FIELD *fields= result.fields;
   if (!fields && column_count != 0)
     return set_error(db, MYLITE_ERROR, 0, "HY000",
                      "could not read result metadata");
 
   try
   {
+    std::vector<std::string> column_name_storage(column_count);
     std::vector<char *> column_names(column_count);
     for (unsigned i= 0; i < column_count; ++i)
-      column_names[i]= fields[i].name ? fields[i].name : const_cast<char *>("");
+    {
+      if (fields[i].name)
+        column_name_storage[i].assign(fields[i].name,
+                                      static_cast<size_t>(
+                                          fields[i].name_length));
+      column_names[i]= column_name_storage[i].empty() ?
+        const_cast<char *>("") :
+        const_cast<char *>(column_name_storage[i].c_str());
+    }
 
+    std::vector<std::string> value_storage(column_count);
     std::vector<char *> values(column_count);
-    MYSQL_ROW row;
-    while ((row= mysql_fetch_row(result)))
+    for (MYSQL_ROWS *row= result.data ? result.data->data : nullptr;
+         row; row= row->next)
     {
       for (unsigned i= 0; i < column_count; ++i)
-        values[i]= row[i];
+      {
+        if (!row->data[i])
+        {
+          value_storage[i].clear();
+          values[i]= nullptr;
+          continue;
+        }
+
+        const unsigned long value_length= direct_value_length(row->data[i]);
+        value_storage[i].assign(row->data[i],
+                                static_cast<size_t>(value_length));
+        values[i]= const_cast<char *>(value_storage[i].c_str());
+      }
       if (callback(ctx, static_cast<int>(column_count), values.data(),
                    column_names.data()) != 0)
       {
@@ -1384,8 +1411,6 @@ int execute_result_callback(mylite_db *db, MYSQL_RES *result,
     return set_error(db, MYLITE_NOMEM, 0, "HY001", "out of memory");
   }
 
-  if (mysql_errno(db->mysql) != 0)
-    return set_error_from_mysql(db);
   return MYLITE_OK;
 }
 
@@ -1742,14 +1767,15 @@ int set_error_from_mysql_stmt(mylite_db *db, MYSQL_STMT *stmt)
 }
 #endif
 
-int set_error_from_mysql(mylite_db *db)
+int set_error_from_direct_result(
+    mylite_db *db, const MYLITE_EMBEDDED_DIRECT_RESULT &result)
 {
-  const unsigned error= mysql_errno(db->mysql);
-  const char *sqlstate= mysql_sqlstate(db->mysql);
-  const char *message= mysql_error(db->mysql);
-  const int code= classify_mariadb_error(error, sqlstate, message);
-  return set_error(db, code, error, sqlstate,
-                   message && message[0] ? message : "MariaDB query failed");
+  const char *sqlstate= result.sqlstate[0] ? result.sqlstate : "HY000";
+  const char *message= result.message[0] ? result.message :
+    "MariaDB query failed";
+  const int code= classify_mariadb_error(result.last_errno, sqlstate,
+                                         message);
+  return set_error(db, code, result.last_errno, sqlstate, message);
 }
 
 int return_error_with_message(mylite_db *db, char **errmsg)
@@ -1803,24 +1829,32 @@ int classify_mariadb_error(unsigned error, const char *sqlstate,
   return MYLITE_ERROR;
 }
 
-MysqlEffectSnapshot snapshot_mysql_effects(MYSQL *mysql)
+DirectEffectSnapshot snapshot_direct_effects(const mylite_db *db)
 {
-  MysqlEffectSnapshot snapshot;
-  snapshot.affected_rows= mysql->affected_rows;
-  snapshot.insert_id= mysql->insert_id;
-  snapshot.field_count= mysql->field_count;
-  snapshot.server_status= mysql->server_status;
-  snapshot.warning_count= mysql->warning_count;
+  DirectEffectSnapshot snapshot;
+  snapshot.affected_rows= db->affected_rows;
+  snapshot.insert_id= db->insert_id;
+  snapshot.server_status= db->server_status;
+  snapshot.warning_count= db->warning_count;
   return snapshot;
 }
 
-void restore_mysql_effects(MYSQL *mysql, const MysqlEffectSnapshot &snapshot)
+void restore_direct_effects(mylite_db *db, const DirectEffectSnapshot &snapshot)
 {
-  mysql->affected_rows= snapshot.affected_rows;
-  mysql->insert_id= snapshot.insert_id;
-  mysql->field_count= snapshot.field_count;
-  mysql->server_status= snapshot.server_status;
-  mysql->warning_count= snapshot.warning_count;
+  db->affected_rows= snapshot.affected_rows;
+  db->insert_id= snapshot.insert_id;
+  db->server_status= snapshot.server_status;
+  db->warning_count= snapshot.warning_count;
+}
+
+unsigned long direct_value_length(const char *value)
+{
+  if (!value)
+    return 0;
+
+  uint length= 0;
+  std::memcpy(&length, value - sizeof(length), sizeof(length));
+  return length;
 }
 
 unsigned map_warning_level_name(const char *level, size_t length)

@@ -39,6 +39,7 @@ C_MODE_START
 #undef ER
 #include "errmsg.h"
 #include "embedded_priv.h"
+#include "mylite_direct_dispatch.h"
 
 extern unsigned int mysql_server_last_errno;
 extern char mysql_server_last_error[MYSQL_ERRMSG_SIZE];
@@ -335,6 +336,93 @@ static my_bool emb_read_query_result(MYSQL *mysql)
 
   return 0;
 }
+
+void mylite_embedded_direct_result_init(
+    MYLITE_EMBEDDED_DIRECT_RESULT *result)
+{
+  if (!result)
+    return;
+  memset(result, 0, sizeof(*result));
+  result->affected_rows= ~(my_ulonglong) 0;
+  strmake_buf(result->sqlstate, "00000");
+}
+
+
+void mylite_embedded_direct_result_free(
+    MYLITE_EMBEDDED_DIRECT_RESULT *result)
+{
+  if (!result)
+    return;
+  free_rows(result->data);
+  mylite_embedded_direct_result_init(result);
+}
+
+
+int mylite_embedded_direct_query(MYSQL *mysql, const char *query,
+                                 unsigned long length,
+                                 MYLITE_EMBEDDED_DIRECT_RESULT *result)
+{
+  if (!result)
+    return 1;
+
+  mylite_embedded_direct_result_init(result);
+  if (!mysql || !query)
+  {
+    result->last_errno= 0;
+    strmake_buf(result->sqlstate, "HY000");
+    strmake_buf(result->message, "invalid embedded query");
+    return 1;
+  }
+
+  if (emb_advanced_command(mysql, COM_QUERY, 0, 0, (const uchar*) query,
+                           length, 1, 0) ||
+      emb_read_query_result(mysql))
+  {
+    NET *net= &mysql->net;
+    result->affected_rows= mysql->affected_rows;
+    result->insert_id= mysql->insert_id;
+    result->server_status= mysql->server_status;
+    result->warning_count= mysql->warning_count;
+    result->last_errno= net->last_errno;
+    memcpy(result->sqlstate, net->sqlstate, sizeof(result->sqlstate));
+    strmake_buf(result->message,
+                net->last_error[0] ? net->last_error :
+                "MariaDB query failed");
+    return 1;
+  }
+
+  result->warning_count= mysql->warning_count;
+  result->server_status= mysql->server_status;
+  result->field_count= mysql->field_count;
+  result->insert_id= mysql->insert_id;
+
+  if (!mysql->fields)
+  {
+    result->affected_rows= mysql->affected_rows;
+    return 0;
+  }
+
+  THD *thd= (THD*) mysql->thd;
+  if (!thd->cur_data)
+  {
+    result->last_errno= 0;
+    strmake_buf(result->sqlstate, "HY000");
+    strmake_buf(result->message, "embedded result data is missing");
+    return 1;
+  }
+
+  result->data= thd->cur_data;
+  thd->cur_data= 0;
+  *result->data->embedded_info->prev_ptr= 0;
+  result->fields= mysql->fields;
+  result->affected_rows= result->data->rows;
+
+  mysql->affected_rows= result->affected_rows;
+  mysql->fields= 0;
+  mysql->status= MYSQL_STATUS_READY;
+  return 0;
+}
+
 
 #ifndef MYLITE_DISABLE_PREPARED_STATEMENT_API
 static int emb_stmt_execute(MYSQL_STMT *stmt)

@@ -54,10 +54,10 @@ Relevant local source paths:
   `mylite_db`.
 - `vendor/mariadb/server/mylite/mylite.cc:78` stores `MYSQL_STMT *`,
   `MYSQL_RES *`, and `MYSQL_BIND` arrays in `mylite_stmt`.
-- `vendor/mariadb/server/mylite/mylite.cc:283` implements `mylite_exec()` with
-  `mysql_real_query()`, `mysql_field_count()`, `mysql_store_result()`,
-  `mysql_fetch_row()`, and `mysql_free_result()`.
-- `vendor/mariadb/server/mylite/mylite.cc:389` implements
+- Before Stage 1, `vendor/mariadb/server/mylite/mylite.cc:283` implemented
+  `mylite_exec()` with `mysql_real_query()`, `mysql_field_count()`,
+  `mysql_store_result()`, `mysql_fetch_row()`, and `mysql_free_result()`.
+- Before Stage 1, `vendor/mariadb/server/mylite/mylite.cc:389` implemented
   `mylite_warning()` by running `SHOW WARNINGS` through the same `MYSQL *`
   connection, then restoring copied `MYSQL` statement-effect fields.
 - `vendor/mariadb/server/mylite/mylite.cc:448` implements `mylite_prepare()`
@@ -354,6 +354,65 @@ Stage 3:
   prepared paths no longer use them.
 - Size deltas are recorded in this spec and in
   `docs/research/production-size-analysis.md`.
+
+## Stage 1 Implementation Results
+
+Stage 1 is implemented as an intermediate direct-dispatch bridge, not as the
+final removal of inherited embedded client C API roots.
+
+Implemented changes:
+
+- added `libmysqld/mylite_direct_dispatch.h` and a small bridge in
+  `libmysqld/lib_sql.cc`;
+- routed `mylite_exec()` and `mylite_warning()` through
+  `mylite_embedded_direct_query()`;
+- preserved the existing embedded `MYSQL *` session and MariaDB `MYSQL_DATA`
+  result capture for now;
+- mirrored `emb_read_rows()` row-list termination before exposing direct
+  results to MyLite;
+- copied column names and row values into callback-local storage before calling
+  the public MyLite callback;
+- stored statement effects on `mylite_db` so `mylite_changes()`,
+  `mylite_last_insert_id()`, and `mylite_warning_count()` no longer depend on
+  public client C API accessors for one-shot statements.
+
+Measured against `build/mariadb-minsize-no-binlog-object-init`:
+
+| Artifact | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| `libmysqld/libmariadbd.a` | 25,280,988 | 25,283,578 | +2,590 |
+| `mylite/libmylite.a` | 76,138 | 76,688 | +550 |
+| unstripped `mylite-open-close-smoke` | 6,437,912 | 6,436,248 | -1,664 |
+| stripped `mylite-open-close-smoke` | 4,525,904 | 4,524,384 | -1,520 |
+| `size` decimal total | 4,739,978 | 4,735,838 | -4,140 |
+
+Verification:
+
+```sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-direct-dispatch \
+  MYLITE_BUILD_JOBS=8 tools/build-mariadb-minsize.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-direct-dispatch \
+  MYLITE_BUILD_JOBS=8 tools/run-libmylite-open-close-smoke.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-direct-dispatch \
+  MYLITE_BUILD_JOBS=8 tools/run-embedded-bootstrap-smoke.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-direct-dispatch \
+  MYLITE_BUILD_JOBS=8 tools/run-storage-engine-smoke.sh
+MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-direct-dispatch \
+  MYLITE_BUILD_JOBS=8 tools/run-compatibility-test-harness.sh
+bash -n tools/build-mariadb-minsize.sh \
+  tools/run-libmylite-open-close-smoke.sh \
+  tools/run-embedded-bootstrap-smoke.sh \
+  tools/run-storage-engine-smoke.sh \
+  tools/run-compatibility-test-harness.sh
+git diff --check
+```
+
+All commands pass after a clean rebuild of
+`build/mariadb-minsize-direct-dispatch`. A prior failed parallel verification
+run corrupted that generated CMake build directory because multiple scripts
+reconfigured and stripped the same archive at the same time; the source changes
+were unaffected, and verification was rerun sequentially after deleting the
+generated build directory.
 
 ## Risks And Unresolved Questions
 
