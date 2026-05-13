@@ -41,6 +41,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `MYLITE_DISABLE_VIO_SSL=ON`
 - `MYLITE_DISABLE_JSON_TABLE=ON`
 - `MYLITE_DISABLE_FOREIGN_SERVER_CACHE=ON`
+- `MYLITE_DISABLE_PROXY_PROTOCOL=ON`
 - `MYLITE_DISABLE_GEOMETRY_TYPE=ON`
 - `MYLITE_DISABLE_GENERAL1400_COLLATIONS=ON`
 - `MYLITE_DISABLE_SQL_SEQUENCE=ON`
@@ -92,7 +93,7 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `tc-log-mmap-size-profile`, `append-query-string-size-profile`,
 `rpl-gtid-state-size-profile`, `optimizer-trace-size-profile`,
 `backup-stage-size-profile`, `json-table-size-profile`, and
-`foreign-server-cache-size-profile`. Together
+`foreign-server-cache-size-profile`, and `proxy-protocol-size-profile`. Together
 these remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
@@ -160,7 +161,8 @@ logging with embedded stubs so the full `backup.cc` object can be omitted, and
 replace `JSON_TABLE` table-function execution with an unsupported embedded stub
 while retaining ordinary JSON scalar functions, and replace the foreign-server
 metadata cache with no-op embedded stubs so the `mysql.servers` cache
-implementation is omitted.
+implementation is omitted, and replace proxy protocol network-listener support
+with embedded disabled stubs.
 
 `no-myisam-temp-spill-size-profile` was measured separately as an opt-in
 `MYLITE_DISABLE_MYISAM_TEMP_SPILL=ON` experiment. It is not part of the current
@@ -180,39 +182,39 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-foreign-server-cache`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-proxy-protocol`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 30,072,536 | 28.68 | Main embedded MariaDB archive, 422 objects, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 30,064,524 | 28.67 | Main embedded MariaDB archive, 422 objects, stripped; section metadata grows the archive |
 | `build/mariadb-minsize/mylite/libmylite.a` | 122,800 | 0.12 | First-party public wrapper |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,440 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,960,568 | 7.59 | Unstripped linked smoke binary, lld RELR, section GC, ICF, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, or full foreign-server metadata cache implementation, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
-| stripped `mylite-open-close-smoke` copy | 5,726,568 | 5.46 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,960,400 | 7.59 | Unstripped linked smoke binary, lld RELR, section GC, ICF, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, full foreign-server metadata cache implementation, or proxy protocol network-listener support, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 5,726,488 | 5.46 | `strip --strip-unneeded` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 4,509,256 |
-| data | 1,213,992 |
+| text | 4,509,148 |
+| data | 1,213,976 |
 | bss | 240,465 |
-| total `size` decimal | 5,963,713 |
+| total `size` decimal | 5,963,589 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,784,580 | Executable code |
+| `.text` | 2,784,468 | Executable code |
 | `.data.rel.ro` | 1,001,640 | Relocated read-only data |
-| `.rodata` | 972,491 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.eh_frame` | 512,520 | Unwind metadata |
+| `.rodata` | 972,619 | Parser tables, SQL metadata, constants, retained Unicode data |
+| `.eh_frame` | 512,452 | Unwind metadata |
 | `.data` | 184,448 | Writable data |
-| `.bss` | 238,153 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 107,708 | Unwind table index |
+| `.bss` | 238,073 | Zero-initialized writable data |
+| `.eh_frame_hdr` | 107,700 | Unwind table index |
 | `.rela.dyn` | 45,936 | Remaining unpacked dynamic relocations |
-| `.gcc_except_table` | 40,404 | Exception metadata |
+| `.gcc_except_table` | 40,432 | Exception metadata |
 | `.relr.dyn` | 18,392 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
@@ -338,6 +340,7 @@ The current built-in plugins are:
 | `backup-stage-size-profile` after optimizer trace | 30,218,906 | -13,186,526 | 5,740,424 | -13,591,480 | Passes current smokes and harness; replaces external backup stage, backup lock, and backup DDL logging with embedded stubs and omits `backup.cc.o` |
 | `json-table-size-profile` after backup stage | 30,103,286 | -13,302,146 | 5,730,200 | -13,601,704 | Passes current smokes and harness; replaces `JSON_TABLE` table-function execution with an embedded unsupported stub while retaining ordinary JSON scalar functions |
 | `foreign-server-cache-size-profile` after JSON_TABLE | 30,072,536 | -13,332,896 | 5,726,568 | -13,605,336 | Passes current smokes and harness; replaces foreign-server metadata cache with no-op embedded stubs and omits `sql_servers.cc.o` |
+| `proxy-protocol-size-profile` after foreign-server cache | 30,064,524 | -13,340,908 | 5,726,488 | -13,605,416 | Passes current smokes and harness; replaces proxy protocol network-listener support with disabled embedded stubs and omits `proxy_protocol.cc.o` |
 | `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Opt-in experiment only; open/close smoke passes, but storage/catalog harness fails because schema-table queries need disk temp tables |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -361,7 +364,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-7,960,568 bytes to 5,726,568 bytes, saving 2,234,000 bytes, or 2.13 MiB. That
+7,960,400 bytes to 5,726,488 bytes, saving 2,233,912 bytes, or 2.13 MiB. That
 remains the lowest-risk packaging win for any copied executable or
 shared-library style artifact.
 
@@ -566,6 +569,15 @@ is 3,832 bytes. Startup and reload hooks are no-ops, lookup returns no server,
 the embedded bootstrap still rejects `CREATE SERVER`, `ALTER SERVER`, and
 `DROP SERVER`, `mysql_servers_startup=absent`, and the compatibility harness
 still passes.
+
+The `proxy-protocol-size-profile` attempt then removed MariaDB's proxy
+protocol network-listener implementation from the aggressive embedded profile.
+On top of the foreign-server-cache profile, it reduced the static archive by
+8,012 bytes and the stripped linked smoke by 80 bytes. The archive no longer
+contains `proxy_protocol.cc.o`; the replacement stub object is 3,144 bytes.
+The open/close smoke verifies `proxy_protocol_networks` remains empty and
+rejects non-empty values with `ER_WRONG_VALUE_FOR_VAR`. The compatibility
+harness still passes.
 
 The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
 static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings
@@ -927,6 +939,7 @@ MyISAM-compatible storage.
 | Omit external backup stage implementation | 0.01 MiB archive, 0.003 MiB stripped linked beyond optimizer trace | Low/medium embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; server backup coordination and `ddl.log` backup-tool logging do not fit the embedded file-owned runtime |
 | Omit `JSON_TABLE` table-function execution | 0.11 MiB archive, 0.01 MiB stripped linked beyond backup stage | High SQL compatibility | Applied as aggressive size attempt | Current smokes and harness pass; ordinary JSON scalar functions remain, but relational JSON table extraction is omitted from the minsize profile |
 | Omit foreign-server metadata cache | 0.03 MiB archive, 0.003 MiB stripped linked beyond JSON_TABLE | Low embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; foreign-server SQL is already unsupported and embedded startup already uses an empty no-`mysql.servers` path |
+| Omit proxy protocol network-listener support | 0.008 MiB archive, negligible stripped linked beyond foreign-server cache | Low embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; MyLite has no network listener, and `proxy_protocol_networks` remains visible but empty and disabled |
 | Omit MyISAM check/repair admin code | 0.11 MiB archive, 0.06 MiB stripped linked beyond no-binlog-core | Low/medium | Applied as size attempt | Keeps MyISAM for disk temp tables but removes unreachable admin repair/check paths from the hidden user engine |
 | Omit MyISAM full-text code | 0.08 MiB archive, 0.03 MiB stripped linked beyond MyISAM admin | Low/medium | Applied as size attempt | Keeps MyISAM for disk temp tables but removes unreachable full-text paths from the hidden user engine |
 | Omit MyISAM RTREE/spatial-key code | 0.04 MiB archive, 0.02 MiB stripped linked beyond MyISAM full-text | Low/medium | Applied as size attempt | Keeps MyISAM for disk temp tables but removes unreachable RTREE paths from the hidden user engine |
@@ -1046,7 +1059,10 @@ Take these now:
    ordinary JSON scalar functions remain available.
 34. Keep the foreign-server metadata cache omitted in the aggressive embedded
    profile while foreign-server metadata remains unsupported.
-35. Keep a stripped linked smoke binary size in the build report so regressions
+35. Keep proxy protocol support omitted in the aggressive embedded profile.
+   It is a network-listener feature, and the current MyLite runtime has no
+   network accept path.
+36. Keep a stripped linked smoke binary size in the build report so regressions
    are visible.
 
 Do not take these now:

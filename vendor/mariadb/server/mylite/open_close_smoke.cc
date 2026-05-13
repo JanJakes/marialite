@@ -72,6 +72,8 @@ struct SmokeResult
   std::string exec_binlog_replication_message;
   std::string exec_server_encryption_rows;
   std::string exec_server_encryption_set_messages;
+  std::string exec_proxy_protocol_rows;
+  std::string exec_proxy_protocol_set_message;
   std::string exec_server_utility_standard_rows;
   std::string exec_server_utility_messages;
   std::string exec_sql_crypto_function_messages;
@@ -196,6 +198,8 @@ static bool check_binlog_replication_unsupported(const SmokeOptions &options,
                                                  SmokeResult *result);
 static bool check_server_encryption_profile(const SmokeOptions &options,
                                             SmokeResult *result);
+static bool check_proxy_protocol_profile(const SmokeOptions &options,
+                                         SmokeResult *result);
 static bool check_server_utility_functions_unsupported(
   const SmokeOptions &options, SmokeResult *result);
 static bool check_sql_crypto_functions_unsupported(const SmokeOptions &options,
@@ -408,6 +412,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "server_encryption_profile";
   ok= check_server_encryption_profile(options, result) && ok;
+
+  result->phase= "proxy_protocol_profile";
+  ok= check_proxy_protocol_profile(options, result) && ok;
 
   result->phase= "server_utility_functions_unsupported";
   ok= check_server_utility_functions_unsupported(options, result) && ok;
@@ -1340,6 +1347,47 @@ static bool check_server_encryption_profile(const SmokeOptions &options,
 
     rc= mylite_close(db);
     ok= record_result(result, "server_encryption_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_proxy_protocol_profile(const SmokeOptions &options,
+                                         SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "proxy_protocol_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    ExecCapture capture;
+    ok= exec_query_capture(db,
+                           "SHOW GLOBAL VARIABLES LIKE "
+                           "'proxy_protocol_networks'",
+                           "proxy_protocol_networks_show", &capture,
+                           result) && ok;
+    result->exec_proxy_protocol_rows= join_strings(capture.rows, ",");
+    if (result->exec_proxy_protocol_rows != "proxy_protocol_networks:")
+      ok= false;
+
+    char *errmsg= nullptr;
+    rc= mylite_exec(db, "SET GLOBAL proxy_protocol_networks='*'",
+                    nullptr, nullptr, &errmsg);
+    result->exec_proxy_protocol_set_message=
+      errmsg ? errmsg : mylite_errmsg(db);
+    if (errmsg)
+      mylite_free(errmsg);
+
+    ok= record_result(result, "proxy_protocol_networks_set",
+                      MYLITE_ERROR, rc, db) && ok;
+    if (mylite_mariadb_errno(db) != ER_WRONG_VALUE_FOR_VAR ||
+        std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+        result->exec_proxy_protocol_set_message.find(
+          "proxy_protocol_networks") == std::string::npos)
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "proxy_protocol_close", MYLITE_OK, rc,
                       nullptr) && ok;
   }
   return ok;
@@ -3307,6 +3355,12 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_server_encryption_set_messages.empty())
     report << "exec_server_encryption_set_messages="
            << result.exec_server_encryption_set_messages << "\n";
+  if (!result.exec_proxy_protocol_rows.empty())
+    report << "exec_proxy_protocol_rows="
+           << result.exec_proxy_protocol_rows << "\n";
+  if (!result.exec_proxy_protocol_set_message.empty())
+    report << "exec_proxy_protocol_set_message="
+           << result.exec_proxy_protocol_set_message << "\n";
   if (!result.exec_server_utility_standard_rows.empty())
     report << "exec_server_utility_standard_rows="
            << result.exec_server_utility_standard_rows << "\n";
