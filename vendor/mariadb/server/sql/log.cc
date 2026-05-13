@@ -757,6 +757,7 @@ int check_if_log_table(const TABLE_LIST *table,
   return 0;
 }
 
+#if !(defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY))
 
 Log_to_csv_event_handler::Log_to_csv_event_handler() = default;
 
@@ -955,7 +956,6 @@ err:
   thd->used= (thd->used & ~THD::TIME_ZONE_USED) | save_time_zone_used;
   DBUG_RETURN(result);
 }
-
 
 /*
   Log a query to the slow log table
@@ -1291,6 +1291,8 @@ void Log_to_file_event_handler::flush()
   if (global_system_variables.sql_log_slow)
     mysql_slow_log.reopen_file();
 }
+
+#endif
 
 /*
   Log error with all enabled log event handlers
@@ -3369,6 +3371,8 @@ int MYSQL_BIN_LOG::generate_new_name(char *new_name, const char *log_name,
 }
 
 
+#if !(defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY))
+
 /*
   Reopen the log file
 
@@ -3768,6 +3772,8 @@ err:
   }
   goto end;
 }
+
+#endif
 
 
 /**

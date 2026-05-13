@@ -38,7 +38,7 @@ MariaDB source references are from the imported MariaDB Server tag
 - `vendor/mariadb/server/sql/mysqld.cc` initializes log tables and log handlers
   during server startup after storage engines are initialized.
 
-Current linked evidence from
+Pre-slice linked evidence from
 `build/mariadb-minsize-no-option-help-text/mylite/mylite-open-close-smoke`
 includes:
 
@@ -130,21 +130,24 @@ SQL compatibility impact is limited to daemon query-log configuration:
 Measured against `build/mariadb-minsize-no-option-help-text`, the implemented
 profile reduced:
 
-- `libmariadbd.a` from 27,357,408 bytes to 27,347,306 bytes
-  (-10,102 bytes),
-- unstripped `mylite-open-close-smoke` from 7,246,384 bytes to 7,225,776 bytes
-  (-20,608 bytes),
-- stripped `mylite-open-close-smoke` from 5,183,976 bytes to 5,168,360 bytes
-  (-15,616 bytes),
+- `libmariadbd.a` from 27,357,408 bytes to 27,309,098 bytes
+  (-48,310 bytes),
+- unstripped `mylite-open-close-smoke` from 7,246,384 bytes to 7,225,792 bytes
+  (-20,592 bytes),
+- stripped `mylite-open-close-smoke` from 5,183,976 bytes to 5,168,408 bytes
+  (-15,568 bytes),
 - unstripped `mylite-compatibility-smoke` from 7,096,544 bytes to
   7,073,080 bytes (-23,464 bytes), and
 - stripped `mylite-compatibility-smoke` from 5,058,136 bytes to 5,039,896 bytes
   (-18,240 bytes).
 
 The main implementation object deltas were `log.cc.o` 242,416 bytes to
-232,832 bytes (-9,584 bytes) and `sys_vars.cc.o` 617,112 bytes to
-616,536 bytes (-576 bytes). The open/close smoke object grew by 7,448 bytes
-because it now verifies query-log profile behavior.
+195,512 bytes (-46,904 bytes) and `sys_vars.cc.o` 617,112 bytes to
+616,536 bytes (-576 bytes). The last handler-body guard saved 38,208 bytes
+from the static archive without a meaningful linked-runtime win because the
+final executable already discarded those unreachable query-log sections. The
+open/close smoke object grew by 7,448 bytes because it now verifies query-log
+profile behavior.
 
 ## License, Trademark, and Dependency Impact
 
