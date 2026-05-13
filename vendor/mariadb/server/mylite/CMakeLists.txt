@@ -16,6 +16,11 @@ INCLUDE_DIRECTORIES(
 
 ADD_DEFINITIONS(-DEMBEDDED_LIBRARY -UMYSQL_CLIENT)
 
+SET(MYLITE_EMBEDDED_RUNTIME_LIBS mysqlserver)
+IF(NOT MYLITE_DISABLE_TPOOL_RUNTIME)
+  LIST(APPEND MYLITE_EMBEDDED_RUNTIME_LIBS tpool)
+ENDIF()
+
 ADD_LIBRARY(libmylite STATIC
   mylite.cc
 )
@@ -28,7 +33,7 @@ TARGET_COMPILE_DEFINITIONS(libmylite PRIVATE
 SET_TARGET_PROPERTIES(libmylite PROPERTIES
   OUTPUT_NAME mylite
 )
-TARGET_LINK_LIBRARIES(libmylite mysqlserver tpool)
+TARGET_LINK_LIBRARIES(libmylite ${MYLITE_EMBEDDED_RUNTIME_LIBS})
 IF(MYLITE_DISABLE_PREPARED_STATEMENT_API)
   TARGET_COMPILE_DEFINITIONS(libmylite PRIVATE
     MYLITE_DISABLE_PREPARED_STATEMENT_API)
@@ -38,7 +43,8 @@ MYSQL_ADD_EXECUTABLE(mylite-embedded-bootstrap-smoke
   bootstrap_smoke.cc
   COMPONENT Test
 )
-TARGET_LINK_LIBRARIES(mylite-embedded-bootstrap-smoke mysqlserver tpool)
+TARGET_LINK_LIBRARIES(mylite-embedded-bootstrap-smoke
+  ${MYLITE_EMBEDDED_RUNTIME_LIBS})
 IF(MYLITE_DISABLE_EMBEDDED_CLIENT_FALLBACKS)
   TARGET_COMPILE_DEFINITIONS(mylite-embedded-bootstrap-smoke PRIVATE
     MYLITE_DISABLE_EMBEDDED_CLIENT_FALLBACKS)
@@ -68,10 +74,12 @@ MYSQL_ADD_EXECUTABLE(mylite-storage-engine-smoke
   storage_engine_smoke.cc
   COMPONENT Test
 )
-TARGET_LINK_LIBRARIES(mylite-storage-engine-smoke mysqlserver tpool)
+TARGET_LINK_LIBRARIES(mylite-storage-engine-smoke
+  ${MYLITE_EMBEDDED_RUNTIME_LIBS})
 
 MYSQL_ADD_EXECUTABLE(mylite-compatibility-smoke
   compatibility_smoke.cc
   COMPONENT Test
 )
-TARGET_LINK_LIBRARIES(mylite-compatibility-smoke mysqlserver tpool)
+TARGET_LINK_LIBRARIES(mylite-compatibility-smoke
+  ${MYLITE_EMBEDDED_RUNTIME_LIBS})

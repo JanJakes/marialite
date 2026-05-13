@@ -49,6 +49,8 @@ OPTION(MYLITE_DISABLE_STATUS_METADATA
   "Disable SHOW STATUS and Information Schema status metadata in the embedded library" OFF)
 OPTION(MYLITE_DISABLE_SYSVAR_HELP_TEXT
   "Disable system-variable help text in the embedded library" OFF)
+OPTION(MYLITE_DISABLE_TPOOL_RUNTIME
+  "Disable MariaDB tpool runtime and use no-op wait notifications in the embedded library" OFF)
 OPTION(MYLITE_DISABLE_OPTION_HELP_TEXT
   "Disable command-line option help text in the embedded library" OFF)
 OPTION(MYLITE_DISABLE_QUERY_LOGS
@@ -746,6 +748,9 @@ ENDIF()
 IF(MYLITE_DISABLE_XML_FUNCTIONS)
   LIST(REMOVE_ITEM SQL_EMBEDDED_SOURCES ../sql/item_xmlfunc.cc)
 ENDIF()
+IF(MYLITE_DISABLE_TPOOL_RUNTIME)
+  LIST(APPEND SQL_EMBEDDED_SOURCES mylite_tpool_wait_stub.cc)
+ENDIF()
 
 
 ADD_CONVENIENCE_LIBRARY(sql_embedded ${SQL_EMBEDDED_SOURCES})
@@ -759,7 +764,13 @@ ENDIF()
 IF(TARGET libfmt)
   ADD_DEPENDENCIES(sql_embedded libfmt)
 ENDIF()
-TARGET_LINK_LIBRARIES(sql_embedded LINK_PRIVATE tpool ${CRC32_LIBRARY})
+IF(MYLITE_DISABLE_TPOOL_RUNTIME)
+  TARGET_INCLUDE_DIRECTORIES(sql_embedded PRIVATE
+    ${CMAKE_SOURCE_DIR}/tpool)
+  TARGET_LINK_LIBRARIES(sql_embedded LINK_PRIVATE ${CRC32_LIBRARY})
+ELSE()
+  TARGET_LINK_LIBRARIES(sql_embedded LINK_PRIVATE tpool ${CRC32_LIBRARY})
+ENDIF()
 
 # On Windows, static embedded server library is called mysqlserver.lib
 # On Unix, it is libmysqld.a
@@ -1022,7 +1033,11 @@ IF(NOT DISABLE_SHARED)
     # libmysqld
     SET_TARGET_PROPERTIES(libmysqld PROPERTIES CLEAN_DIRECT_OUTPUT 1)
     SET_TARGET_PROPERTIES(mysqlserver PROPERTIES CLEAN_DIRECT_OUTPUT 1)
-    TARGET_LINK_LIBRARIES(mysqlserver LINK_PRIVATE tpool ${CRC32_LIBRARY})
+    IF(MYLITE_DISABLE_TPOOL_RUNTIME)
+      TARGET_LINK_LIBRARIES(mysqlserver LINK_PRIVATE ${CRC32_LIBRARY})
+    ELSE()
+      TARGET_LINK_LIBRARIES(mysqlserver LINK_PRIVATE tpool ${CRC32_LIBRARY})
+    ENDIF()
     IF(LIBMYSQLD_SO_EXTRA_LIBS)
        TARGET_LINK_LIBRARIES(libmysqld LINK_PRIVATE ${LIBMYSQLD_SO_EXTRA_LIBS})
     ENDIF()
