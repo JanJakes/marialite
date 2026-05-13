@@ -79,6 +79,7 @@ struct SmokeResult
   std::string exec_proxy_protocol_set_message;
   std::string exec_server_utility_standard_rows;
   std::string exec_server_utility_messages;
+  std::string exec_load_data_messages;
   std::string exec_sql_crypto_function_messages;
   std::string exec_crypt_function_message;
   std::string exec_des_function_messages;
@@ -210,6 +211,8 @@ static bool check_proxy_protocol_profile(const SmokeOptions &options,
                                          SmokeResult *result);
 static bool check_server_utility_functions_unsupported(
   const SmokeOptions &options, SmokeResult *result);
+static bool check_load_data_unsupported(const SmokeOptions &options,
+                                        SmokeResult *result);
 static bool check_sql_crypto_functions_unsupported(const SmokeOptions &options,
                                                    SmokeResult *result);
 static bool check_crypt_function_unsupported(const SmokeOptions &options,
@@ -434,6 +437,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "server_utility_functions_unsupported";
   ok= check_server_utility_functions_unsupported(options, result) && ok;
+
+  result->phase= "load_data_unsupported";
+  ok= check_load_data_unsupported(options, result) && ok;
 
   result->phase= "sql_crypto_functions_unsupported";
   ok= check_sql_crypto_functions_unsupported(options, result) && ok;
@@ -1578,6 +1584,55 @@ static bool check_server_utility_functions_unsupported(
     rc= mylite_close(db);
     ok= record_result(result, "server_utility_function_close",
                       MYLITE_OK, rc, nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_load_data_unsupported(const SmokeOptions &options,
+                                        SmokeResult *result)
+{
+  struct UnsupportedStatement
+  {
+    const char *label;
+    const char *sql;
+  };
+
+  static const UnsupportedStatement statements[] = {
+    {"load_data_infile",
+     "LOAD DATA INFILE '/tmp/mylite-none.csv' "
+     "INTO TABLE mylite.load_data_rejected"},
+    {"load_xml_infile",
+     "LOAD XML INFILE '/tmp/mylite-none.xml' "
+     "INTO TABLE mylite.load_data_rejected"}
+  };
+
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "load_data_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    std::vector<std::string> messages;
+    for (size_t i= 0; i < sizeof(statements) / sizeof(statements[0]); ++i)
+    {
+      char *errmsg= nullptr;
+      rc= mylite_exec(db, statements[i].sql, nullptr, nullptr, &errmsg);
+      const std::string message= errmsg ? errmsg : mylite_errmsg(db);
+      if (errmsg)
+        mylite_free(errmsg);
+
+      ok= record_result(result, statements[i].label, MYLITE_ERROR, rc, db) &&
+          ok;
+      if (mylite_mariadb_errno(db) != ER_OPTION_PREVENTS_STATEMENT ||
+          std::strcmp(mylite_sqlstate(db), "HY000") != 0 ||
+          message.find("embedded option") == std::string::npos)
+        ok= false;
+      messages.push_back(message);
+    }
+    result->exec_load_data_messages= join_strings(messages, " | ");
+
+    rc= mylite_close(db);
+    ok= record_result(result, "load_data_close", MYLITE_OK, rc, nullptr) &&
+        ok;
   }
   return ok;
 }
@@ -3560,6 +3615,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_server_utility_messages.empty())
     report << "exec_server_utility_messages="
            << result.exec_server_utility_messages << "\n";
+  if (!result.exec_load_data_messages.empty())
+    report << "exec_load_data_messages="
+           << result.exec_load_data_messages << "\n";
   if (!result.exec_sql_crypto_function_messages.empty())
     report << "exec_sql_crypto_function_messages="
            << result.exec_sql_crypto_function_messages << "\n";

@@ -4899,6 +4899,11 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
 
   case SQLCOM_LOAD:
   {
+#ifdef MYLITE_DISABLE_LOAD_DATA
+    my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "embedded");
+    res= 1;
+    break;
+#else
     DBUG_ASSERT(first_table == all_tables && first_table != 0);
     privilege_t privilege= (lex->duplicates == DUP_REPLACE ?
                             INSERT_ACL | DELETE_ACL : INSERT_ACL) |
@@ -4922,6 +4927,7 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
                     lex->update_list, lex->value_list, lex->duplicates,
                     lex->ignore, (bool) lex->local_file);
     break;
+#endif
   }
 
   case SQLCOM_SET_OPTION:
