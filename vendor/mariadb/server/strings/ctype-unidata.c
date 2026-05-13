@@ -27,7 +27,9 @@
 
 #include "ctype-unidata.h"
 #include "ctype-unicode300-general_ci.h"
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 #include "ctype-unicode300-general_mysql500_ci.h"
+#endif
 #include "ctype-unicode300-casefold.h"
 #ifndef MYLITE_DISABLE_GENERAL1400_COLLATIONS
 #include "ctype-unicode300-casefold-tr.h"
@@ -64,6 +66,7 @@ MY_CASEFOLD_INFO my_casefold_turkish=
 #endif
 
 
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 /*
   general_mysql500_ci is very similar to general_ci, but maps sorting order
   for U+00DF to 0x00DF instead of 0x0053.
@@ -74,6 +77,7 @@ MY_CASEFOLD_INFO my_casefold_mysql500=
   my_u300_casefold_index,
   weight_general_mysql500_ci_index
 };
+#endif
 
 
 

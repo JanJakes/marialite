@@ -20,8 +20,10 @@
 
 extern const uint16 weight_general_ci_page00[256];
 extern const uint16 *weight_general_ci_index[256];
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 extern const uint16 weight_general_mysql500_ci_page00[256];
 extern const uint16 *weight_general_mysql500_ci_index[256];
+#endif
 
 extern const MY_CASEFOLD_CHARACTER u300_casefold_page00[256];
 
@@ -53,6 +55,7 @@ static inline my_wc_t my_general_ci_char_to_weight(my_wc_t wc)
 }
 
 
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 static inline my_wc_t my_general_mysql500_ci_bmp_char_to_weight(my_wc_t wc)
 {
   const uint16 *page;
@@ -60,6 +63,7 @@ static inline my_wc_t my_general_mysql500_ci_bmp_char_to_weight(my_wc_t wc)
   page= weight_general_mysql500_ci_index[wc >> 8];
   return page ? page[wc & 0xFF] : wc;
 }
+#endif
 
 
 static inline void my_tosort_unicode_bmp(MY_CASEFOLD_INFO *uni_plane,
@@ -168,7 +172,9 @@ my_casefold_char_eq_general_as_ci(MY_CASEFOLD_INFO *casefold,
 
 extern MY_CASEFOLD_INFO my_casefold_default;
 extern MY_CASEFOLD_INFO my_casefold_turkish;
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 extern MY_CASEFOLD_INFO my_casefold_mysql500;
+#endif
 extern MY_CASEFOLD_INFO my_casefold_unicode520;
 extern MY_CASEFOLD_INFO my_casefold_unicode1400;
 extern MY_CASEFOLD_INFO my_casefold_unicode1400tr;

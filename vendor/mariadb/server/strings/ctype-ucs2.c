@@ -2949,11 +2949,13 @@ static inline int my_weight_mb2_ucs2_general_ci(uchar b0, uchar b1)
 }
 
 
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 static inline int my_weight_mb2_ucs2_general_mysql500_ci(uchar b0, uchar b1)
 {
   my_wc_t wc= UCS2_CODE(b0, b1);
   return my_general_mysql500_ci_bmp_char_to_weight((uint16) wc);
 }
+#endif
 
 
 #define MY_FUNCTION_NAME(x)      my_ ## x ## _ucs2_general_ci
@@ -2968,6 +2970,7 @@ static inline int my_weight_mb2_ucs2_general_mysql500_ci(uchar b0, uchar b1)
 
 
 
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 #define MY_FUNCTION_NAME(x)      my_ ## x ## _ucs2_general_mysql500_ci
 #define DEFINE_STRNXFRM_UNICODE
 #define MY_MB_WC(cs, pwc, s, e)  my_mb_wc_ucs2_quick(pwc, s, e)
@@ -2976,6 +2979,7 @@ static inline int my_weight_mb2_ucs2_general_mysql500_ci(uchar b0, uchar b1)
 #define WEIGHT_ILSEQ(x)          (0xFF0000 + (uchar) (x))
 #define WEIGHT_MB2(b0,b1)        my_weight_mb2_ucs2_general_mysql500_ci(b0,b1)
 #include "strcoll.inl"
+#endif
 
 
 #define MY_FUNCTION_NAME(x)      my_ ## x ## _ucs2_bin
@@ -3224,6 +3228,7 @@ static MY_COLLATION_HANDLER my_collation_ucs2_general_ci_handler =
 };
 
 
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 static MY_COLLATION_HANDLER my_collation_ucs2_general_mysql500_ci_handler =
 {
     NULL,		/* init */
@@ -3243,6 +3248,7 @@ static MY_COLLATION_HANDLER my_collation_ucs2_general_mysql500_ci_handler =
     my_ci_get_collation_name_generic,
     my_ci_eq_collation_generic
 };
+#endif
 
 
 static MY_COLLATION_HANDLER my_collation_ucs2_bin_handler =
@@ -3373,6 +3379,7 @@ struct charset_info_st my_charset_ucs2_general_ci=
 };
 
 
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 struct charset_info_st my_charset_ucs2_general_mysql500_ci=
 {
   159, 0, 0,                                       /* number           */
@@ -3402,6 +3409,7 @@ struct charset_info_st my_charset_ucs2_general_mysql500_ci=
   &my_charset_ucs2_handler,
   &my_collation_ucs2_general_mysql500_ci_handler
 };
+#endif
 
 
 struct charset_info_st my_charset_ucs2_bin=

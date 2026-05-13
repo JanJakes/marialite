@@ -1537,10 +1537,14 @@ extern struct charset_info_st my_charset_ucs2_bin;
 extern struct charset_info_st my_charset_ucs2_general_ci;
 extern struct charset_info_st my_charset_ucs2_nopad_bin;
 extern struct charset_info_st my_charset_ucs2_general_nopad_ci;
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 extern struct charset_info_st my_charset_ucs2_general_mysql500_ci;
+#endif
 extern struct charset_info_st my_charset_ucs2_unicode_ci;
 extern struct charset_info_st my_charset_ucs2_unicode_nopad_ci;
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 extern struct charset_info_st my_charset_ucs2_general_mysql500_ci;
+#endif
 extern struct charset_info_st my_charset_ujis_bin;
 extern struct charset_info_st my_charset_ujis_japanese_ci;
 extern struct charset_info_st my_charset_ujis_nopad_bin;
@@ -1564,7 +1568,9 @@ extern struct charset_info_st my_charset_utf32_general_nopad_ci;
 extern MYSQL_PLUGIN_IMPORT struct charset_info_st my_charset_utf8mb3_bin;
 extern struct charset_info_st my_charset_utf8mb3_nopad_bin;
 extern struct charset_info_st my_charset_utf8mb3_general_nopad_ci;
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 extern struct charset_info_st my_charset_utf8mb3_general_mysql500_ci;
+#endif
 extern struct charset_info_st my_charset_utf8mb3_unicode_ci;
 extern struct charset_info_st my_charset_utf8mb3_unicode_nopad_ci;
 extern MYSQL_PLUGIN_IMPORT struct charset_info_st my_charset_utf8mb4_bin;

@@ -54,6 +54,8 @@ struct SmokeResult
   std::string exec_compact_error_fallback_message;
   std::string exec_collation_rows;
   std::string exec_charset_registry_rows;
+  std::string exec_mysql500_collation_rows;
+  std::string exec_mysql500_collation_message;
   std::string exec_uca_collation_message;
   std::string exec_general1400_collation_message;
   std::string exec_locale_profile_rows;
@@ -978,6 +980,35 @@ static bool check_collation_profile(const SmokeOptions &options,
       "registry_size=" + std::to_string(MYLITE_CHARSET_REGISTRY_SIZE) +
       ",collations_ge_size=" + join_strings(registry.rows, ",");
     if (registry.rows.size() != 1 || registry.rows[0] != "0")
+      ok= false;
+#endif
+
+#ifdef MYLITE_DISABLE_MYSQL500_COLLATIONS
+    ExecCapture mysql500;
+    ok= exec_query_capture(
+          db,
+          "SELECT COUNT(*) FROM information_schema.COLLATIONS "
+          "WHERE COLLATION_NAME='utf8mb3_general_mysql500_ci'",
+          "mysql500_collation_rows", &mysql500, result) && ok;
+    result->exec_mysql500_collation_rows= join_strings(mysql500.rows, ",");
+    if (mysql500.rows.size() != 1 || mysql500.rows[0] != "0")
+      ok= false;
+
+    char *mysql500_errmsg= nullptr;
+    rc= mylite_exec(db,
+                    "SELECT _utf8mb3'a' COLLATE "
+                    "utf8mb3_general_mysql500_ci",
+                    nullptr, nullptr, &mysql500_errmsg);
+    if (mysql500_errmsg)
+    {
+      result->exec_mysql500_collation_message= mysql500_errmsg;
+      mylite_free(mysql500_errmsg);
+    }
+    ok= record_result(result, "collation_mysql500_select", MYLITE_ERROR, rc,
+                      db) && ok;
+    if (mylite_mariadb_errno(db) != ER_UNKNOWN_COLLATION ||
+        result->exec_mysql500_collation_message.find(
+          "utf8mb3_general_mysql500_ci") == std::string::npos)
       ok= false;
 #endif
 
@@ -4597,6 +4628,12 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_charset_registry_rows.empty())
     report << "exec_charset_registry_rows="
            << result.exec_charset_registry_rows << "\n";
+  if (!result.exec_mysql500_collation_rows.empty())
+    report << "exec_mysql500_collation_rows="
+           << result.exec_mysql500_collation_rows << "\n";
+  if (!result.exec_mysql500_collation_message.empty())
+    report << "exec_mysql500_collation_message="
+           << result.exec_mysql500_collation_message << "\n";
   if (!result.exec_uca_collation_message.empty())
     report << "exec_uca_collation_message="
            << result.exec_uca_collation_message << "\n";

@@ -128,8 +128,10 @@ my_casefold_multiply_utf8mbx(CHARSET_INFO *cs)
 #endif
   if (cs->casefold == &my_casefold_default)
     return 1;
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
   if (cs->casefold == &my_casefold_mysql500)
     return 1;
+#endif
   DBUG_ASSERT(0); /*Unknown case folding data */
   return 1;
 }
@@ -741,6 +743,7 @@ static inline int my_weight_mb3_utf8mb3_general_ci(uchar b0, uchar b1, uchar b2)
 #include "strcoll.inl"
 
 
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 static inline int my_weight_mb1_utf8mb3_general_mysql500_ci(uchar b)
 {
   return (int) weight_general_mysql500_ci_page00[b & 0xFF];
@@ -787,6 +790,7 @@ my_wc_weight_utf8mb3_general_mysql500_ci(my_wc_t wc)
 #define WEIGHT_MB3(x,y,z)        my_weight_mb3_utf8mb3_general_mysql500_ci(x,y,z)
 #define STRCOLL_MB7_TOUPPER
 #include "strcoll.inl"
+#endif
 
 
 #define MY_FUNCTION_NAME(x)      my_ ## x ## _utf8mb3_bin
@@ -932,6 +936,7 @@ static MY_COLLATION_HANDLER my_collation_utf8mb3_general_ci_handler =
 };
 
 
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 static MY_COLLATION_HANDLER my_collation_utf8mb3_general_mysql500_ci_handler =
 {
     NULL,               /* init */
@@ -951,6 +956,7 @@ static MY_COLLATION_HANDLER my_collation_utf8mb3_general_mysql500_ci_handler =
     my_ci_get_collation_name_generic,
     my_ci_eq_collation_generic
 };
+#endif
 
 
 static MY_COLLATION_HANDLER my_collation_utf8mb3_bin_handler =
@@ -1083,6 +1089,7 @@ struct charset_info_st my_charset_utf8mb3_general_ci=
 };
 
 
+#ifndef MYLITE_DISABLE_MYSQL500_COLLATIONS
 struct charset_info_st my_charset_utf8mb3_general_mysql500_ci=
 {
   223,0,0,                                      /* number           */
@@ -1112,6 +1119,7 @@ struct charset_info_st my_charset_utf8mb3_general_mysql500_ci=
   &my_charset_utf8mb3_handler,
   &my_collation_utf8mb3_general_mysql500_ci_handler
 };
+#endif
 
 
 #ifndef MYLITE_DISABLE_GENERAL1400_COLLATIONS
