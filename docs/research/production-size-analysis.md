@@ -61,6 +61,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `MYLITE_DISABLE_TABLE_ADMIN=ON`
 - `MYLITE_DISABLE_PERSISTENT_STATISTICS=ON`
 - `MYLITE_DISABLE_SELECT_PROCEDURE_RUNTIME=ON`
+- `MYLITE_DISABLE_SHOW_STATIC_INFO=ON`
 - `MYLITE_DISABLE_EXTRA_LOCALES=ON`
 - `MYLITE_DISABLE_LOAD_DATA=ON`
 - `MYLITE_DISABLE_TIME_ZONE_TABLES=ON`
@@ -127,7 +128,8 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `explain-runtime-size-profile`, `vector-type-size-profile`,
 `json-function-size-profile`, `diagnostics-statement-size-profile`,
 `system-versioning-size-profile`, `rpl-utility-server-size-profile`, and
-`dynamic-column-size-profile`, and `routine-information-schema-size-profile`.
+`dynamic-column-size-profile`, `routine-information-schema-size-profile`, and
+`show-static-info-size-profile`.
 Together these remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
@@ -204,8 +206,9 @@ system-versioned table predicate item runtime while rejecting MyLite temporal
 table metadata, replace row-replication type-conversion utilities with
 fail-closed embedded stubs, omit MariaDB dynamic-column SQL item execution and
 the dynamic-column BLOB helper implementation, make stored routine Information
-Schema tables empty without scanning `mysql.proc`, and replace the foreign-server
-metadata cache with no-op embedded stubs so the `mysql.servers` cache
+Schema tables empty without scanning `mysql.proc`, omit static `SHOW AUTHORS`,
+`SHOW CONTRIBUTORS`, and `SHOW PRIVILEGES` metadata surfaces, and replace the
+foreign-server metadata cache with no-op embedded stubs so the `mysql.servers` cache
 implementation is omitted, and replace proxy protocol network-listener support
 with embedded disabled stubs, replace event parser data validation with a
 minimal parser-allocation stub while event DDL remains rejected, replace the
@@ -252,40 +255,40 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-routine-is`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-static-show-info`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 27,644,466 | 26.36 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
-| `build/mariadb-minsize/mylite/libmylite.a` | 122,792 | 0.12 | First-party public wrapper with explicit `MYLITE_API` exports |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 27,609,300 | 26.33 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/mylite/libmylite.a` | 122,800 | 0.12 | First-party public wrapper with explicit `MYLITE_API` exports |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,456 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,365,424 | 7.02 | Unstripped linked smoke binary, hidden default visibility, lld RELR, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, ordinary JSON SQL function implementation, SQL diagnostics statement runtime, system-versioned table predicate item runtime, row-replication type-conversion implementation, dynamic-column execution, stored routine Information Schema scan path, full foreign-server metadata cache implementation, proxy protocol network-listener support, full EXPLAIN/ANALYZE plan-output runtime, vector type handler, event parser data validation, XA transaction implementation, trigger sidecar runtime, view sidecar runtime, table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
-| stripped `mylite-open-close-smoke` copy | 5,288,280 | 5.04 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,349,888 | 7.01 | Unstripped linked smoke binary, hidden default visibility, lld RELR, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, ordinary JSON SQL function implementation, SQL diagnostics statement runtime, system-versioned table predicate item runtime, row-replication type-conversion implementation, dynamic-column execution, stored routine Information Schema scan path, static `SHOW AUTHORS` / `SHOW CONTRIBUTORS` / `SHOW PRIVILEGES` result tables, full foreign-server metadata cache implementation, proxy protocol network-listener support, full EXPLAIN/ANALYZE plan-output runtime, vector type handler, event parser data validation, XA transaction implementation, trigger sidecar runtime, view sidecar runtime, table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 5,272,912 | 5.03 | `strip --strip-unneeded` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 4,195,453 |
-| data | 1,089,464 |
-| bss | 226,809 |
-| total `size` decimal | 5,511,726 |
+| text | 4,184,661 |
+| data | 1,084,928 |
+| bss | 225,305 |
+| total `size` decimal | 5,494,894 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,549,900 | Executable code |
-| `.data.rel.ro` | 924,856 | Relocated read-only data |
-| `.rodata` | 946,411 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.eh_frame` | 475,916 | Unwind metadata |
-| `.data` | 151,272 | Writable data |
+| `.text` | 2,549,308 | Executable code |
+| `.data.rel.ro` | 924,904 | Relocated read-only data |
+| `.rodata` | 936,427 | Parser tables, SQL metadata, constants, retained Unicode data |
+| `.eh_frame` | 475,804 | Unwind metadata |
+| `.data` | 146,688 | Writable data |
 | `.bss` | 224,889 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 100,996 | Unwind table index |
+| `.eh_frame_hdr` | 100,980 | Unwind table index |
 | `.rela.dyn` | 42,720 | Remaining unpacked dynamic relocations |
-| `.gcc_except_table` | 36,208 | Exception metadata |
-| `.relr.dyn` | 16,416 | Packed relative relocations |
+| `.gcc_except_table` | 36,192 | Exception metadata |
+| `.relr.dyn` | 16,344 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 5,081,640 bytes, or 4.85 MiB, before compression:
@@ -431,6 +434,7 @@ The current built-in plugins are:
 | `rpl-utility-server-size-profile` after system versioning | 27,845,446 | -15,559,986 | 5,337,144 | -13,994,760 | Passes current smokes and harness; replaces row-replication conversion utilities with fail-closed embedded stubs |
 | `dynamic-column-size-profile` after RPL utility server | 27,669,358 | -15,736,074 | 5,294,680 | -14,037,224 | Passes current smokes and harness; omits dynamic-column SQL item execution and replaces `ma_dyncol.c` with fail-closed C API stubs |
 | `routine-information-schema-size-profile` after dynamic columns | 27,644,466 | -15,760,966 | 5,288,280 | -14,043,624 | Passes current smokes and harness; makes `INFORMATION_SCHEMA.ROUTINES` and `PARAMETERS` empty without scanning `mysql.proc` |
+| `show-static-info-size-profile` after routine Information Schema | 27,609,300 | -15,796,132 | 5,272,912 | -14,058,992 | Passes current smokes and harness; omits static `SHOW AUTHORS`, `SHOW CONTRIBUTORS`, and `SHOW PRIVILEGES` result tables |
 | `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Opt-in experiment only; open/close smoke passes, but storage/catalog harness fails because schema-table queries need disk temp tables |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -454,7 +458,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-7,365,424 bytes to 5,288,280 bytes, saving 2,077,144 bytes, or 1.98 MiB. That
+7,349,888 bytes to 5,272,912 bytes, saving 2,076,976 bytes, or 1.98 MiB. That
 remains the lowest-risk packaging win for any copied executable or
 shared-library style artifact.
 
@@ -888,6 +892,19 @@ to 573,992 bytes, and the linked open-close smoke no longer contains
 `check_proc_record()`. This is a safe but minor win; the larger stored-program
 parser/runtime remains coupled to core SQL code.
 
+The `show-static-info-size-profile` attempt then removed static
+`SHOW AUTHORS`, `SHOW CONTRIBUTORS`, and `SHOW PRIVILEGES` result producers
+from the aggressive embedded profile. On top of the routine Information Schema
+profile, it reduced the static archive by 35,166 bytes, the unstripped
+open-close smoke by 15,536 bytes, the stripped open-close smoke by 15,368
+bytes, the unstripped compatibility smoke by 16,992 bytes, and the stripped
+compatibility smoke by 16,648 bytes. `sql_show.cc.o` dropped from 555,136
+bytes to 520,288 bytes. The linked open-close smoke no longer contains
+`show_table_authors`, `show_table_contributors`, `mysqld_show_authors()`,
+`mysqld_show_contributors()`, or `mysqld_show_privileges()`. This is a small,
+clean embedded-only win; the commands are server-information/help surfaces, not
+application query features.
+
 The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
 static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings
 around MariaDB parser and server structures, including generated parser types.
@@ -1239,6 +1256,7 @@ MyISAM-compatible storage.
 | Omit row-replication conversion utilities | 0.02 MiB archive, 0.006 MiB stripped linked beyond system versioning | Low embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; replication conversion is unsupported, but retained field/type vtables and RTTI keep the win small |
 | Omit dynamic columns | 0.17 MiB archive, 0.04 MiB stripped linked beyond RPL utility server | Medium SQL/C API compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; dynamic-column SQL and blob helper APIs are rare and unrelated to MyLite storage, but inherited MariaDB client C helper behavior changes |
 | Empty routine Information Schema tables | 0.02 MiB archive, 0.006 MiB stripped linked beyond dynamic columns | Low while routines are unsupported | Applied as aggressive embedded-size attempt | Current smokes and harness pass; `ROUTINES`, `PARAMETERS`, and routine `SHOW ... STATUS` paths return empty results without scanning `mysql.proc`, but the larger stored-program runtime remains |
+| Omit static `SHOW` server-info commands | 0.03 MiB archive, 0.015 MiB stripped linked beyond routine Information Schema | Low embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; `SHOW AUTHORS`, `SHOW CONTRIBUTORS`, and `SHOW PRIVILEGES` are static server-information/help surfaces with low embedded value |
 | Disable statement profiling | 0.16 MiB archive, no stripped linked change beyond vector-function profile | Low/medium | Applied as size attempt | Current smokes pass; `SHOW PROFILE(S)` now report MariaDB's disabled-feature diagnostic |
 | Remove SQL `HELP` command implementation | 0.17 MiB archive, 0.06 MiB stripped linked beyond profiling profile | Low/medium | Applied as size attempt | Current smokes pass; `HELP` now reports a stable unsupported-command diagnostic |
 | Remove `PROCEDURE ANALYSE()` implementation | 0.15 MiB archive, no stripped linked change beyond HELP profile | Low/medium | Applied as size attempt | Current smokes pass; `PROCEDURE ANALYSE()` now reports a stable unsupported-feature diagnostic |
@@ -1464,6 +1482,10 @@ Take these now:
    `ROUTINES`, `PARAMETERS`, `SHOW PROCEDURE STATUS`, and
    `SHOW FUNCTION STATUS` return empty results instead of rooting a
    `mysql.proc` scan path that cannot find MyLite-owned routine metadata.
+55. Keep static `SHOW AUTHORS`, `SHOW CONTRIBUTORS`, and `SHOW PRIVILEGES`
+   omitted in the aggressive embedded profile. The win is small but clean, and
+   these commands expose static server information/help text rather than
+   application data or storage behavior.
 
 Do not take these now:
 
@@ -1503,8 +1525,9 @@ Research next if size becomes a release blocker:
    remain coupled to the core SQL layer.
 6. Investigate remaining Information Schema and `SHOW` table population paths
    for surfaces that are already unsupported in MyLite, especially
-   server/privilege/plugin/process metadata that should not read inherited
-   sidecar tables.
+   server/plugin/process metadata that should not read inherited sidecar
+   tables. Static `SHOW AUTHORS`, `SHOW CONTRIBUTORS`, and `SHOW PRIVILEGES`
+   are already omitted.
 7. Separate x86-64 size measurements for lld RELR and ICF before making
    architecture-independent claims.
 

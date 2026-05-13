@@ -4879,13 +4879,28 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
                 lex->verbose);
     break;
   case SQLCOM_SHOW_AUTHORS:
+#ifdef MYLITE_DISABLE_SHOW_STATIC_INFO
+    my_error(ER_NOT_SUPPORTED_YET, MYF(0),
+             "static SHOW metadata in MyLite minsize profile");
+#else
     res= mysqld_show_authors(thd);
+#endif
     break;
   case SQLCOM_SHOW_CONTRIBUTORS:
+#ifdef MYLITE_DISABLE_SHOW_STATIC_INFO
+    my_error(ER_NOT_SUPPORTED_YET, MYF(0),
+             "static SHOW metadata in MyLite minsize profile");
+#else
     res= mysqld_show_contributors(thd);
+#endif
     break;
   case SQLCOM_SHOW_PRIVILEGES:
+#ifdef MYLITE_DISABLE_SHOW_STATIC_INFO
+    my_error(ER_NOT_SUPPORTED_YET, MYF(0),
+             "static SHOW metadata in MyLite minsize profile");
+#else
     res= mysqld_show_privileges(thd);
+#endif
     break;
   case SQLCOM_SHOW_ENGINE_LOGS:
 #ifdef DONT_ALLOW_SHOW_COMMANDS
