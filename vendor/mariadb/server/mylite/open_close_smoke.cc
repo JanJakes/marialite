@@ -67,6 +67,7 @@ struct SmokeResult
   std::string exec_gis_function_message;
   std::string exec_vector_fromtext_message;
   std::string exec_vector_distance_message;
+  std::string exec_vector_type_message;
   std::string exec_json_valid_rows;
   std::string exec_json_schema_valid_message;
   std::string exec_json_table_message;
@@ -1196,6 +1197,22 @@ static bool check_vector_functions_unsupported(const SmokeOptions &options,
         std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
         result->exec_vector_distance_message.find("VEC_DISTANCE") ==
           std::string::npos)
+      ok= false;
+
+    errmsg= nullptr;
+    rc= mylite_exec(db,
+                    "CREATE TABLE mylite.vector_type_rejected (v VECTOR(3))",
+                    nullptr, nullptr, &errmsg);
+    if (errmsg)
+    {
+      result->exec_vector_type_message= errmsg;
+      mylite_free(errmsg);
+    }
+    ok= record_result(result, "vector_type_create", MYLITE_ERROR, rc,
+                      db) && ok;
+    if (mylite_mariadb_errno(db) != ER_UNKNOWN_DATA_TYPE ||
+        std::strcmp(mylite_sqlstate(db), "HY000") != 0 ||
+        result->exec_vector_type_message.find("VECTOR") == std::string::npos)
       ok= false;
 
     rc= mylite_close(db);
@@ -3711,6 +3728,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_vector_distance_message.empty())
     report << "exec_vector_distance_message="
            << result.exec_vector_distance_message << "\n";
+  if (!result.exec_vector_type_message.empty())
+    report << "exec_vector_type_message="
+           << result.exec_vector_type_message << "\n";
   if (!result.exec_json_valid_rows.empty())
     report << "exec_json_valid_rows=" << result.exec_json_valid_rows << "\n";
   if (!result.exec_json_schema_valid_message.empty())

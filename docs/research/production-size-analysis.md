@@ -57,6 +57,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `MYLITE_DISABLE_EXTRA_LOCALES=ON`
 - `MYLITE_DISABLE_LOAD_DATA=ON`
 - `MYLITE_DISABLE_TIME_ZONE_TABLES=ON`
+- `MYLITE_DISABLE_VECTOR_TYPE=ON`
 - `MYLITE_DISABLE_XA_TRANSACTIONS=ON`
 - `MYLITE_DISABLE_GEOMETRY_TYPE=ON`
 - `MYLITE_DISABLE_GENERAL1400_COLLATIONS=ON`
@@ -110,18 +111,19 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `rpl-gtid-state-size-profile`, `optimizer-trace-size-profile`,
 `backup-stage-size-profile`, `json-table-size-profile`, and
 `foreign-server-cache-size-profile`, `proxy-protocol-size-profile`,
-`explain-runtime-size-profile`, `event-parse-data-size-profile`,
-`xa-transaction-size-profile`,
+`event-parse-data-size-profile`, `xa-transaction-size-profile`,
 `trigger-runtime-size-profile`, `view-runtime-size-profile`,
 `table-admin-size-profile`, `persistent-statistics-size-profile`,
 `select-procedure-runtime-size-profile`, `locale-minsize-profile`, and
 `load-data-size-profile`, `oz-compiler-size-profile`,
-`time-zone-table-size-profile`, and `hidden-visibility-size-profile`. Together
+`time-zone-table-size-profile`, `hidden-visibility-size-profile`,
+`explain-runtime-size-profile`, and `vector-type-size-profile`. Together
 these remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
-`WITH_EXTRA_CHARSETS=none`, omit the Oracle SQL-mode parser, omit XML, GIS, and
-vector SQL functions, disable MariaDB statement profiling, omit the SQL `HELP`
+`WITH_EXTRA_CHARSETS=none`, omit the Oracle SQL-mode parser, omit XML, GIS,
+vector SQL functions, and the retained vector type handler, disable MariaDB
+statement profiling, omit the SQL `HELP`
 command implementation, omit the `PROCEDURE ANALYSE()` implementation, remove
 full-symbol exports from MyLite smoke executables, link runtime-style artifacts
 with lld and compact `DT_RELR` relative relocations, make the inherited MyISAM
@@ -227,40 +229,40 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-explain-runtime`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-vector-type`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 28,896,338 | 27.56 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
-| `build/mariadb-minsize/mylite/libmylite.a` | 122,800 | 0.12 | First-party public wrapper with explicit `MYLITE_API` exports |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 28,752,966 | 27.42 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/mylite/libmylite.a` | 122,792 | 0.12 | First-party public wrapper with explicit `MYLITE_API` exports |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,440 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,663,144 | 7.31 | Unstripped linked smoke binary, hidden default visibility, lld RELR, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, full foreign-server metadata cache implementation, proxy protocol network-listener support, full EXPLAIN/ANALYZE plan-output runtime, event parser data validation, XA transaction implementation, trigger sidecar runtime, view sidecar runtime, table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
-| stripped `mylite-open-close-smoke` copy | 5,496,920 | 5.24 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,647,976 | 7.29 | Unstripped linked smoke binary, hidden default visibility, lld RELR, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, full foreign-server metadata cache implementation, proxy protocol network-listener support, full EXPLAIN/ANALYZE plan-output runtime, vector type handler, event parser data validation, XA transaction implementation, trigger sidecar runtime, view sidecar runtime, table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 5,489,760 | 5.24 | `strip --strip-unneeded` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 4,329,367 |
-| data | 1,164,200 |
-| bss | 228,241 |
-| total `size` decimal | 5,721,808 |
+| text | 4,324,867 |
+| data | 1,161,456 |
+| bss | 227,177 |
+| total `size` decimal | 5,713,500 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,651,460 | Executable code |
-| `.data.rel.ro` | 998,120 | Relocated read-only data |
-| `.rodata` | 951,115 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.eh_frame` | 494,724 | Unwind metadata |
-| `.data` | 152,352 | Writable data |
-| `.bss` | 224,985 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 104,684 | Unwind table index |
-| `.rela.dyn` | 44,952 | Remaining unpacked dynamic relocations |
-| `.gcc_except_table` | 37,792 | Exception metadata |
-| `.relr.dyn` | 17,600 | Packed relative relocations |
+| `.text` | 2,648,580 | Executable code |
+| `.data.rel.ro` | 995,408 | Relocated read-only data |
+| `.rodata` | 950,987 | Parser tables, SQL metadata, constants, retained Unicode data |
+| `.eh_frame` | 493,608 | Unwind metadata |
+| `.data` | 152,344 | Writable data |
+| `.bss` | 224,961 | Zero-initialized writable data |
+| `.eh_frame_hdr` | 104,468 | Unwind table index |
+| `.rela.dyn` | 44,856 | Remaining unpacked dynamic relocations |
+| `.gcc_except_table` | 37,768 | Exception metadata |
+| `.relr.dyn` | 17,560 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 5,081,640 bytes, or 4.85 MiB, before compression:
@@ -399,6 +401,7 @@ The current built-in plugins are:
 | `time-zone-table-size-profile` after `-Oz` | 29,147,460 | -14,257,972 | 5,564,416 | -13,767,488 | Passes current smokes and harness; omits `mysql.time_zone*` table loading while retaining `SYSTEM` and numeric offsets |
 | `hidden-visibility-size-profile` after time-zone tables | 29,117,602 | -14,287,830 | 5,532,056 | -13,799,848 | Passes current smokes and harness; hides internal symbols by default while keeping explicit MyLite C API exports |
 | `explain-runtime-size-profile` after hidden visibility | 28,896,338 | -14,509,094 | 5,496,920 | -13,834,984 | Passes current smokes and harness; omits full EXPLAIN/ANALYZE plan-output runtime while retaining ordinary optimizer bookkeeping |
+| `vector-type-size-profile` after EXPLAIN runtime | 28,752,966 | -14,652,466 | 5,489,760 | -13,842,144 | Passes current smokes and harness; omits retained VECTOR type handler after vector functions and indexes are already unsupported |
 | `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Opt-in experiment only; open/close smoke passes, but storage/catalog harness fails because schema-table queries need disk temp tables |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -422,7 +425,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-7,663,144 bytes to 5,496,920 bytes, saving 2,166,224 bytes, or 2.07 MiB. That
+7,647,976 bytes to 5,489,760 bytes, saving 2,158,216 bytes, or 2.06 MiB. That
 remains the lowest-risk packaging win for any copied executable or
 shared-library style artifact.
 
@@ -773,6 +776,16 @@ MariaDB executor paths attach analyze trackers through those objects.
 `EXPLAIN SELECT 1`, `ANALYZE SELECT 1`, and `SHOW EXPLAIN FOR 1` now report
 the unsupported EXPLAIN-runtime diagnostic in the aggressive minsize profile.
 
+The `vector-type-size-profile` attempt then removed MariaDB's retained
+`VECTOR` type handler from the aggressive embedded profile after vector
+functions and MHNSW vector indexes were already omitted. On top of the EXPLAIN
+runtime profile, it reduced the static archive by 143,372 bytes, the
+unstripped open-close smoke by 15,168 bytes, the stripped open-close smoke by
+7,160 bytes, and the stripped compatibility smoke by 7,336 bytes. The archive
+no longer contains `sql_type_vector.cc.o`, and the open/close smoke verifies
+`CREATE TABLE mylite.vector_type_rejected (v VECTOR(3))` reports
+`Unknown data type: 'VECTOR'` without creating a MyLite table.
+
 The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
 static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings
 around MariaDB parser and server structures, including generated parser types.
@@ -1117,6 +1130,7 @@ MyISAM-compatible storage.
 | Hide internal symbols with CMake visibility defaults | 0.03 MiB archive, 0.03 MiB stripped linked beyond time-zone tables | Low/medium packaging | Applied as aggressive linked-size attempt | Current smokes pass; MyLite C API exports remain explicit, but final shared-library packaging still needs an export policy |
 | Omit EXPLAIN/ANALYZE plan-output runtime | 0.21 MiB archive, 0.034 MiB stripped linked beyond hidden visibility | High SQL compatibility | Applied as aggressive size attempt | Current smokes and harness pass; ordinary optimizer bookkeeping remains, but `EXPLAIN`, `ANALYZE`, and `SHOW EXPLAIN` are unsupported |
 | Remove vector SQL functions and MHNSW | 0.22 MiB archive, negligible stripped linked beyond executable-export profile | High compatibility | Applied as size attempt | Current smokes pass, but vector functions and MHNSW vector indexes are omitted from the minsize profile |
+| Remove retained `VECTOR` type handler | 0.14 MiB archive, 0.007 MiB stripped linked beyond EXPLAIN runtime | High compatibility | Applied as aggressive size attempt | Current smokes and harness pass; `VECTOR` columns now fail as an unknown data type in the minsize profile |
 | Disable statement profiling | 0.16 MiB archive, no stripped linked change beyond vector-function profile | Low/medium | Applied as size attempt | Current smokes pass; `SHOW PROFILE(S)` now report MariaDB's disabled-feature diagnostic |
 | Remove SQL `HELP` command implementation | 0.17 MiB archive, 0.06 MiB stripped linked beyond profiling profile | Low/medium | Applied as size attempt | Current smokes pass; `HELP` now reports a stable unsupported-command diagnostic |
 | Remove `PROCEDURE ANALYSE()` implementation | 0.15 MiB archive, no stripped linked change beyond HELP profile | Low/medium | Applied as size attempt | Current smokes pass; `PROCEDURE ANALYSE()` now reports a stable unsupported-feature diagnostic |
@@ -1311,6 +1325,10 @@ Take these now:
    aggressive size profile. The savings are real, but it removes an important
    diagnostics surface; ordinary optimizer plan bookkeeping must remain for
    non-EXPLAIN SQL execution.
+48. Keep the retained `VECTOR` type handler omitted in the aggressive embedded
+   profile while vector functions and vector indexes are already unsupported.
+   Re-enable the type only if MyLite gets a real vector storage and index
+   compatibility plan.
 
 Do not take these now:
 

@@ -17,7 +17,9 @@
 #include "mariadb.h"
 #include "sql_type.h"
 #include "sql_type_geom.h"
+#ifndef MYLITE_DISABLE_VECTOR_TYPE
 #include "sql_type_vector.h"
+#endif
 #include "sql_const.h"
 #include "sql_class.h"
 #include "sql_time.h"
@@ -290,8 +292,10 @@ Type_handler::handler_by_name(THD *thd, const LEX_CSTRING &name)
   }
 
   const Type_handler *ha= Type_collection_geometry_handler_by_name(name);
+#ifndef MYLITE_DISABLE_VECTOR_TYPE
   if (!ha && type_handler_vector.name().eq(name))
     return &type_handler_vector;
+#endif
   return ha;
 }
 
