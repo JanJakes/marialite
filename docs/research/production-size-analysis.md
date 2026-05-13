@@ -176,8 +176,8 @@ disabled server-option table row trim, `json-type-size-profile`, and
 `binlog-cache-dir-size-profile`, `binlog-object-init-size-profile`, and
 `direct-mylite-dispatch-size-profile`, and
 `sformat-function-size-profile`, `sql-embedded-no-exceptions-profile`, and
-`server-account-sql-profile`, and the opt-in
-`clang-pic-size-profile`. The
+`server-account-sql-profile`, the opt-in `clang-pic-size-profile`, and the
+opt-in `section-header-strip-profile`. The
 opt-in
 `charset-registry-size-profile` attempt was measured after
 `sql-digest-size-profile`, but is not included in the default baseline because
@@ -392,6 +392,13 @@ smaller than the current GCC shared-object probe. The tradeoff is that the
 Clang/PIC static archive is 4,386,070 bytes larger, so this is a candidate for
 final linked packaging, not a static archive-size win.
 
+Stripping section headers from copied release artifacts with
+`strip --strip-unneeded --strip-section-headers` reduces the current GCC
+PHP-shaped shared-object probe to 3,883,896 bytes and the Clang/PIC probe to
+3,785,216 bytes. `dlopen()`/`dlsym()` probes passed for both shared objects.
+This is an absolute-floor packaging candidate because it makes post-link
+inspection and debugging worse.
+
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
@@ -592,6 +599,7 @@ The current built-in plugins are:
 | `sql-embedded-no-exceptions-profile` after SFORMAT | 22,437,126 | -20,968,306 | 3,993,848 | -15,338,056 | Passes current smokes and harness; compiles only `sql_embedded` with `-fno-exceptions` while keeping first-party MyLite API and storage code exception-capable |
 | `server-account-sql-profile` after SQL exceptions | 22,437,702 | -20,967,730 | 3,995,560 | -15,336,344 | Passes current smokes and harness; rejects server user/grant SQL explicitly instead of inheriting silent embedded no-access-check success; grows the stripped linked smoke by 1,712 bytes and the PHP-shaped shared probe by 208 bytes |
 | opt-in `clang-pic-size-profile` after server account SQL | 26,823,772 | -16,581,660 | 3,880,384 | -15,451,520 | Passes current smokes and harness; builds with Clang/Clang++ 18, `-DWITH_PIC=ON`, and global-dynamic TLS; the stripped PHP-shaped shared probe is 3,787,616 bytes, 98,640 bytes smaller than the current GCC probe, while the static archive grows by 4,386,070 bytes |
+| opt-in `section-header-strip-profile` on Clang/PIC artifacts | n/a | n/a | 3,877,912 | -15,453,992 | Passes sectionless executable smoke and shared-object `dlopen()` probes; the sectionless PHP-shaped shared probe is 3,785,216 bytes, 2,400 bytes smaller than the normal stripped Clang/PIC probe |
 | opt-in `charset-registry-size-profile` after SQL digest | 25,523,738 | -17,881,694 | 4,658,664 | -14,673,240 | Passes current smokes and harness with `MYLITE_CHARSET_REGISTRY_SIZE=1152`; reduces `llvm-size` total by 47,180 bytes and `all_charsets` from 32,768 to 9,216 bytes, but stripped linked size grows by 960 bytes, so it is not a default bundle-size win |
 | older `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Superseded opt-in attempt; open/close smoke passed, but storage/catalog harness failed before schema-table MEMORY compatibility work |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
@@ -1759,6 +1767,15 @@ the stripped minimal executable by 98,112 bytes, and the stripped PHP-shaped
 shared probe by 98,640 bytes. Treat this as a final-linked packaging candidate,
 not as a static archive-size win.
 
+The opt-in `section-header-strip-profile` then tested
+`strip --strip-unneeded --strip-section-headers` on copied executable and
+shared-object artifacts. It reduces the current GCC stripped PHP-shaped shared
+probe by 2,360 bytes and the Clang/PIC stripped PHP-shaped shared probe by
+2,400 bytes. Sectionless open-close smoke executables still run, and
+sectionless shared objects still pass `dlopen()`, `dlsym()`, and a real
+`mylite_open()` / `mylite_close()` call. This is an absolute-floor packaging
+option only; it removes section-header metadata needed by post-link tooling.
+
 ## Decision matrix
 
 | Lever | Expected savings | Risk | Worth doing? | Reason |
@@ -1767,6 +1784,7 @@ not as a static archive-size win.
 | Strip release static archive with `strip --strip-unneeded` | 1.28 MiB beyond Oracle-parser profile | Medium | Applied as size attempt | Current smokes relink and pass; downstream static consumers may still need coverage |
 | Strip release static archive with `strip -g` | About 0.95 MiB on the current archive | Low | Fallback | Less aggressive alternative if `--strip-unneeded` breaks a consumer |
 | Build PHP-shaped artifacts with Clang/PIC | About 0.09 MiB on the current stripped shared-object probe | Medium packaging/toolchain | Candidate | Current smokes pass and the shared-object probe links, but the static archive grows and x86-64 still needs measurement |
+| Strip section headers from copied release artifacts | About 0.002 MiB on the current stripped shared-object probe | Medium packaging/debugging | Candidate for absolute floor | Runtime `dlopen()` and smoke probes pass, but post-link inspection and debugging are worse |
 | `WITH_EXTRA_CHARSETS=complex` | About 0.08 MiB | Low | No | Savings are too small to justify a compatibility profile |
 | `WITH_EXTRA_CHARSETS=none` / `charset-small-profile` | 2.46 MiB archive and 2.38 MiB stripped linked beyond type-plugin profile | High compatibility | Applied as size attempt | Current smokes pass after the UCA 1400 null-base fix, but non-default charsets are omitted |
 | Make type plugins profile-gated | 3.30 MiB archive, 0.38 MiB stripped linked | Medium/high | Applied as size attempt | Current smokes pass, but `INET`, `UUID`, and spatial plugin surfaces are compatibility tradeoffs |
