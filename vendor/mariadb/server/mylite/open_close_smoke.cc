@@ -107,6 +107,7 @@ struct SmokeResult
   std::string exec_show_profiles_message;
   std::string exec_help_message;
   std::string exec_procedure_analyse_message;
+  std::string exec_routine_information_schema_rows;
   std::string exec_table_admin_messages;
   std::string exec_sequence_messages;
   std::string exec_csv_engine_message;
@@ -251,6 +252,8 @@ static bool check_help_unsupported(const SmokeOptions &options,
                                    SmokeResult *result);
 static bool check_procedure_analyse_unsupported(const SmokeOptions &options,
                                                 SmokeResult *result);
+static bool check_routine_information_schema_profile(
+    const SmokeOptions &options, SmokeResult *result);
 static bool check_table_admin_unsupported(const SmokeOptions &options,
                                           SmokeResult *result);
 static bool check_sql_sequence_unsupported(const SmokeOptions &options,
@@ -500,6 +503,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "procedure_analyse_unsupported";
   ok= check_procedure_analyse_unsupported(options, result) && ok;
+
+  result->phase= "routine_information_schema_profile";
+  ok= check_routine_information_schema_profile(options, result) && ok;
 
   result->phase= "table_admin_unsupported";
   ok= check_table_admin_unsupported(options, result) && ok;
@@ -2439,6 +2445,55 @@ static bool check_procedure_analyse_unsupported(const SmokeOptions &options,
   return ok;
 }
 
+static bool check_routine_information_schema_profile(
+    const SmokeOptions &options, SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "routine_i_s_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    ExecCapture routines;
+    ok= exec_query_capture(db,
+                           "SELECT COUNT(*) "
+                           "FROM INFORMATION_SCHEMA.ROUTINES",
+                           "routine_i_s_routines", &routines, result) && ok;
+
+    ExecCapture parameters;
+    ok= exec_query_capture(db,
+                           "SELECT COUNT(*) "
+                           "FROM INFORMATION_SCHEMA.PARAMETERS",
+                           "routine_i_s_parameters", &parameters, result) &&
+        ok;
+
+    ExecCapture show_procedure;
+    ok= exec_query_capture(db, "SHOW PROCEDURE STATUS",
+                           "routine_i_s_show_procedure", &show_procedure,
+                           result) && ok;
+
+    ExecCapture show_function;
+    ok= exec_query_capture(db, "SHOW FUNCTION STATUS",
+                           "routine_i_s_show_function", &show_function,
+                           result) && ok;
+
+    result->exec_routine_information_schema_rows=
+      "routines=" + join_strings(routines.rows, ",") +
+      ",parameters=" + join_strings(parameters.rows, ",") +
+      ",show_procedure=" + std::to_string(show_procedure.rows.size()) +
+      ",show_function=" + std::to_string(show_function.rows.size());
+    if (join_strings(routines.rows, ",") != "0" ||
+        join_strings(parameters.rows, ",") != "0" ||
+        !show_procedure.rows.empty() ||
+        !show_function.rows.empty())
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "routine_i_s_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
 static bool check_table_admin_unsupported(const SmokeOptions &options,
                                           SmokeResult *result)
 {
@@ -4048,6 +4103,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_procedure_analyse_message.empty())
     report << "exec_procedure_analyse_message="
            << result.exec_procedure_analyse_message << "\n";
+  if (!result.exec_routine_information_schema_rows.empty())
+    report << "exec_routine_information_schema_rows="
+           << result.exec_routine_information_schema_rows << "\n";
   if (!result.exec_table_admin_messages.empty())
     report << "exec_table_admin_messages="
            << result.exec_table_admin_messages << "\n";

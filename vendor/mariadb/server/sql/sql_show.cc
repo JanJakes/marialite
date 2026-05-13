@@ -148,6 +148,7 @@ static const LEX_CSTRING trg_event_type_names[]=
   { STRING_WITH_LEN("DELETE") }
 };
 
+#ifndef MYLITE_DISABLE_ROUTINE_INFORMATION_SCHEMA
 static const LEX_CSTRING sp_data_access_name[]=
 {
   { STRING_WITH_LEN("") },
@@ -156,6 +157,7 @@ static const LEX_CSTRING sp_data_access_name[]=
   { STRING_WITH_LEN("READS SQL DATA") },
   { STRING_WITH_LEN("MODIFIES SQL DATA") }
 };
+#endif
 
 LEX_CSTRING DATA_clex_str= { STRING_WITH_LEN("DATA") };
 LEX_CSTRING INDEX_clex_str= { STRING_WITH_LEN("INDEX") };
@@ -6949,6 +6951,7 @@ int fill_schema_coll_charset_app(THD *thd, TABLE_LIST *tables, COND *cond)
 }
 
 
+#ifndef MYLITE_DISABLE_ROUTINE_INFORMATION_SCHEMA
 static inline void copy_field_as_string(Field *to_field, Field *from_field)
 {
   char buff[MAX_FIELD_WIDTH];
@@ -7415,6 +7418,12 @@ err:
   thd->variables.sql_mode = sql_mode_was;
   DBUG_RETURN(res);
 }
+#else
+static int mylite_fill_empty_schema_table(THD *, TABLE_LIST *, COND *)
+{
+  return 0;
+}
+#endif
 
 
 static int get_schema_stat_record(THD *thd, TABLE_LIST *tables, TABLE *table,
@@ -10923,7 +10932,11 @@ ST_SCHEMA_TABLE schema_tables[]=
   {"OPTIMIZER_TRACE"_Lex_ident_i_s_table, Show::optimizer_trace_info, 0,
      fill_optimizer_trace_info, NULL, NULL, -1, -1, false, 0},
   {"PARAMETERS"_Lex_ident_i_s_table, Show::parameters_fields_info, 0,
+#ifdef MYLITE_DISABLE_ROUTINE_INFORMATION_SCHEMA
+   mylite_fill_empty_schema_table, 0, 0, 1, 2, 0, 0},
+#else
    fill_schema_proc, 0, 0, 1, 2, 0, 0},
+#endif
   {"PARTITIONS"_Lex_ident_i_s_table, Show::partitions_fields_info, 0,
    get_all_tables, 0, get_schema_partitions_record, 1, 2, 0,
    OPTIMIZE_I_S_TABLE|OPEN_TABLE_ONLY},
@@ -10942,7 +10955,11 @@ ST_SCHEMA_TABLE schema_tables[]=
    0, get_all_tables, 0, get_referential_constraints_record,
    1, 9, 0, OPTIMIZE_I_S_TABLE|OPEN_TABLE_ONLY},
   {"ROUTINES"_Lex_ident_i_s_table, Show::proc_fields_info, 0,
+#ifdef MYLITE_DISABLE_ROUTINE_INFORMATION_SCHEMA
+   mylite_fill_empty_schema_table, make_proc_old_format, 0, 2, 3, 0, 0},
+#else
    fill_schema_proc, make_proc_old_format, 0, 2, 3, 0, 0},
+#endif
   {"SCHEMATA"_Lex_ident_i_s_table, Show::schema_fields_info, 0,
    fill_schema_schemata, make_schemata_old_format, 0, 1, -1, 0, 0},
   {"SCHEMA_PRIVILEGES"_Lex_ident_i_s_table,
