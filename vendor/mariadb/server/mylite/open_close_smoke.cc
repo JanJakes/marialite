@@ -68,7 +68,10 @@ struct SmokeResult
   std::string exec_vector_fromtext_message;
   std::string exec_vector_distance_message;
   std::string exec_vector_type_message;
-  std::string exec_json_valid_rows;
+  std::string exec_json_valid_message;
+  std::string exec_json_extract_message;
+  std::string exec_json_arrayagg_message;
+  std::string exec_json_objectagg_message;
   std::string exec_json_schema_valid_message;
   std::string exec_json_table_message;
   std::string exec_explain_runtime_messages;
@@ -200,8 +203,8 @@ static bool check_gis_functions_unsupported(const SmokeOptions &options,
                                             SmokeResult *result);
 static bool check_vector_functions_unsupported(const SmokeOptions &options,
                                                SmokeResult *result);
-static bool check_json_schema_valid_unsupported(const SmokeOptions &options,
-                                                SmokeResult *result);
+static bool check_json_functions_unsupported(const SmokeOptions &options,
+                                             SmokeResult *result);
 static bool check_json_table_unsupported(const SmokeOptions &options,
                                          SmokeResult *result);
 static bool check_explain_runtime_unsupported(const SmokeOptions &options,
@@ -423,8 +426,8 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
   result->phase= "vector_functions_unsupported";
   ok= check_vector_functions_unsupported(options, result) && ok;
 
-  result->phase= "json_schema_valid_unsupported";
-  ok= check_json_schema_valid_unsupported(options, result) && ok;
+  result->phase= "json_functions_unsupported";
+  ok= check_json_functions_unsupported(options, result) && ok;
 
   result->phase= "json_table_unsupported";
   ok= check_json_table_unsupported(options, result) && ok;
@@ -1222,22 +1225,79 @@ static bool check_vector_functions_unsupported(const SmokeOptions &options,
   return ok;
 }
 
-static bool check_json_schema_valid_unsupported(const SmokeOptions &options,
-                                                SmokeResult *result)
+static bool check_json_functions_unsupported(const SmokeOptions &options,
+                                             SmokeResult *result)
 {
   mylite_db *db= nullptr;
   int rc= mylite_open(options.database.c_str(), &db);
-  bool ok= record_result(result, "json_schema_valid_open", MYLITE_OK, rc, db);
+  bool ok= record_result(result, "json_functions_open", MYLITE_OK, rc, db);
   if (db)
   {
-    ExecCapture capture;
-    ok= exec_query_capture(db, "SELECT JSON_VALID('{\"ok\":1}') AS ok",
-                           "json_valid_select", &capture, result) && ok;
-    result->exec_json_valid_rows= join_strings(capture.rows, ",");
-    if (result->exec_json_valid_rows != "1")
+    char *errmsg= nullptr;
+    rc= mylite_exec(db, "SELECT JSON_VALID('{\"ok\":1}') AS ok",
+                    nullptr, nullptr, &errmsg);
+    if (errmsg)
+    {
+      result->exec_json_valid_message= errmsg;
+      mylite_free(errmsg);
+    }
+    ok= record_result(result, "json_valid_select", MYLITE_ERROR, rc, db) &&
+        ok;
+    if (mylite_mariadb_errno(db) != ER_SP_DOES_NOT_EXIST ||
+        std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+        result->exec_json_valid_message.find("JSON_VALID") ==
+          std::string::npos)
       ok= false;
 
-    char *errmsg= nullptr;
+    errmsg= nullptr;
+    rc= mylite_exec(db, "SELECT JSON_EXTRACT('{\"ok\":1}', '$.ok')",
+                    nullptr, nullptr, &errmsg);
+    if (errmsg)
+    {
+      result->exec_json_extract_message= errmsg;
+      mylite_free(errmsg);
+    }
+    ok= record_result(result, "json_extract_select", MYLITE_ERROR, rc, db) &&
+        ok;
+    if (mylite_mariadb_errno(db) != ER_SP_DOES_NOT_EXIST ||
+        std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+        result->exec_json_extract_message.find("JSON_EXTRACT") ==
+          std::string::npos)
+      ok= false;
+
+    errmsg= nullptr;
+    rc= mylite_exec(db, "SELECT JSON_ARRAYAGG(1)", nullptr, nullptr,
+                    &errmsg);
+    if (errmsg)
+    {
+      result->exec_json_arrayagg_message= errmsg;
+      mylite_free(errmsg);
+    }
+    ok= record_result(result, "json_arrayagg_select", MYLITE_ERROR, rc, db) &&
+        ok;
+    if (mylite_mariadb_errno(db) != ER_NOT_SUPPORTED_YET ||
+        std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+        result->exec_json_arrayagg_message.find("JSON_ARRAYAGG") ==
+          std::string::npos)
+      ok= false;
+
+    errmsg= nullptr;
+    rc= mylite_exec(db, "SELECT JSON_OBJECTAGG(1, 2)", nullptr, nullptr,
+                    &errmsg);
+    if (errmsg)
+    {
+      result->exec_json_objectagg_message= errmsg;
+      mylite_free(errmsg);
+    }
+    ok= record_result(result, "json_objectagg_select", MYLITE_ERROR, rc, db) &&
+        ok;
+    if (mylite_mariadb_errno(db) != ER_NOT_SUPPORTED_YET ||
+        std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+        result->exec_json_objectagg_message.find("JSON_OBJECTAGG") ==
+          std::string::npos)
+      ok= false;
+
+    errmsg= nullptr;
     rc= mylite_exec(db,
                     "SELECT JSON_SCHEMA_VALID('{\"type\":\"object\"}', '{}')",
                     nullptr, nullptr, &errmsg);
@@ -1255,7 +1315,7 @@ static bool check_json_schema_valid_unsupported(const SmokeOptions &options,
       ok= false;
 
     rc= mylite_close(db);
-    ok= record_result(result, "json_schema_valid_close", MYLITE_OK, rc,
+    ok= record_result(result, "json_functions_close", MYLITE_OK, rc,
                       nullptr) && ok;
   }
   return ok;
@@ -3731,8 +3791,18 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_vector_type_message.empty())
     report << "exec_vector_type_message="
            << result.exec_vector_type_message << "\n";
-  if (!result.exec_json_valid_rows.empty())
-    report << "exec_json_valid_rows=" << result.exec_json_valid_rows << "\n";
+  if (!result.exec_json_valid_message.empty())
+    report << "exec_json_valid_message="
+           << result.exec_json_valid_message << "\n";
+  if (!result.exec_json_extract_message.empty())
+    report << "exec_json_extract_message="
+           << result.exec_json_extract_message << "\n";
+  if (!result.exec_json_arrayagg_message.empty())
+    report << "exec_json_arrayagg_message="
+           << result.exec_json_arrayagg_message << "\n";
+  if (!result.exec_json_objectagg_message.empty())
+    report << "exec_json_objectagg_message="
+           << result.exec_json_objectagg_message << "\n";
   if (!result.exec_json_schema_valid_message.empty())
     report << "exec_json_schema_valid_message="
            << result.exec_json_schema_valid_message << "\n";

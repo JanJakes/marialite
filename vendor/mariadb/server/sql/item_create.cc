@@ -1083,6 +1083,7 @@ protected:
 };
 
 
+#ifndef MYLITE_DISABLE_JSON_FUNCTIONS
 class Create_func_json_normalize : public Create_func_arg1
 {
 public:
@@ -1551,6 +1552,7 @@ protected:
   Create_func_json_object_filter_keys() {}
   virtual ~Create_func_json_object_filter_keys() {}
 };
+#endif
 
 
 class Create_func_last_day : public Create_func_arg1
@@ -4304,6 +4306,7 @@ Create_func_isnull::create_1_arg(THD *thd, Item *arg1)
   return new (thd->mem_root) Item_func_isnull(thd, arg1);
 }
 
+#ifndef MYLITE_DISABLE_JSON_FUNCTIONS
 Create_func_json_normalize Create_func_json_normalize::s_singleton;
 
 Item*
@@ -4459,6 +4462,7 @@ Create_func_json_unquote::create_1_arg(THD *thd, Item *arg1)
   status_var_increment(thd->status_var.feature_json);
   return new (thd->mem_root) Item_func_json_unquote(thd, arg1);
 }
+#endif
 
 
 Create_func_last_day Create_func_last_day::s_singleton;
@@ -4470,6 +4474,7 @@ Create_func_last_day::create_1_arg(THD *thd, Item *arg1)
 }
 
 
+#ifndef MYLITE_DISABLE_JSON_FUNCTIONS
 Create_func_json_array Create_func_json_array::s_singleton;
 
 Item*
@@ -4917,6 +4922,7 @@ Create_func_json_overlaps::create_2_arg(THD *thd, Item *arg1, Item *arg2)
   status_var_increment(thd->status_var.feature_json);
   return new (thd->mem_root) Item_func_json_overlaps(thd, arg1, arg2);
 }
+#endif
 
 
 Create_func_last_insert_id Create_func_last_insert_id::s_singleton;
@@ -4956,6 +4962,7 @@ Create_func_last_insert_id::create_native(THD *thd, const LEX_CSTRING *name,
 }
 
 #ifndef MYLITE_DISABLE_JSON_SCHEMA_VALID
+#ifndef MYLITE_DISABLE_JSON_FUNCTIONS
 Create_func_json_schema_valid Create_func_json_schema_valid::s_singleton;
 
 Item*
@@ -4965,7 +4972,9 @@ Create_func_json_schema_valid::create_2_arg(THD *thd, Item *arg1, Item *arg2)
   return new (thd->mem_root) Item_func_json_schema_valid(thd, arg1, arg2);
 }
 #endif
+#endif
 
+#ifndef MYLITE_DISABLE_JSON_FUNCTIONS
 Create_func_json_key_value Create_func_json_key_value::s_singleton;
 
 Item*
@@ -4974,6 +4983,7 @@ Create_func_json_key_value::create_2_arg(THD *thd, Item *arg1, Item *arg2)
   status_var_increment(thd->status_var.feature_json);
   return new (thd->mem_root) Item_func_json_key_value(thd, arg1, arg2);
 }
+#endif
 
 
 Create_func_lcase Create_func_lcase::s_singleton;
@@ -6581,6 +6591,7 @@ const Native_func_registry func_array[] =
   { { STRING_WITH_LEN("IS_FREE_LOCK") }, BUILDER(Create_func_is_free_lock)},
   { { STRING_WITH_LEN("IS_USED_LOCK") }, BUILDER(Create_func_is_used_lock)},
 #endif
+#ifndef MYLITE_DISABLE_JSON_FUNCTIONS
   { { STRING_WITH_LEN("JSON_ARRAY") }, BUILDER(Create_func_json_array)},
   { { STRING_WITH_LEN("JSON_ARRAY_APPEND") }, BUILDER(Create_func_json_array_append)},
   { { STRING_WITH_LEN("JSON_ARRAY_INSERT") }, BUILDER(Create_func_json_array_insert)},
@@ -6620,6 +6631,7 @@ const Native_func_registry func_array[] =
   { { STRING_WITH_LEN("JSON_UNQUOTE") }, BUILDER(Create_func_json_unquote)},
   { { STRING_WITH_LEN("JSON_VALID") }, BUILDER(Create_func_json_valid)},
   { { STRING_WITH_LEN("JSON_VALUE") }, BUILDER(Create_func_json_value)},
+#endif
 #ifndef MYLITE_DISABLE_KDF_FUNCTION
   { { STRING_WITH_LEN("KDF") }, BUILDER(Create_func_kdf)},
 #endif

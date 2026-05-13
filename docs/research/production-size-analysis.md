@@ -44,6 +44,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `MYLITE_DISABLE_REGEX_FUNCTIONS=ON`
 - `MYLITE_DISABLE_SERVER_UTILITY_FUNCTIONS=ON`
 - `MYLITE_DISABLE_VIO_SSL=ON`
+- `MYLITE_DISABLE_JSON_FUNCTIONS=ON`
 - `MYLITE_DISABLE_JSON_TABLE=ON`
 - `MYLITE_DISABLE_FOREIGN_SERVER_CACHE=ON`
 - `MYLITE_DISABLE_PROXY_PROTOCOL=ON`
@@ -117,13 +118,13 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `select-procedure-runtime-size-profile`, `locale-minsize-profile`, and
 `load-data-size-profile`, `oz-compiler-size-profile`,
 `time-zone-table-size-profile`, `hidden-visibility-size-profile`,
-`explain-runtime-size-profile`, and `vector-type-size-profile`. Together
-these remove the built-in
+`explain-runtime-size-profile`, `vector-type-size-profile`, and
+`json-function-size-profile`. Together these remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
 `WITH_EXTRA_CHARSETS=none`, omit the Oracle SQL-mode parser, omit XML, GIS,
-vector SQL functions, and the retained vector type handler, disable MariaDB
-statement profiling, omit the SQL `HELP`
+vector SQL functions, ordinary JSON SQL functions, and the retained vector type
+handler, disable MariaDB statement profiling, omit the SQL `HELP`
 command implementation, omit the `PROCEDURE ANALYSE()` implementation, remove
 full-symbol exports from MyLite smoke executables, link runtime-style artifacts
 with lld and compact `DT_RELR` relative relocations, make the inherited MyISAM
@@ -183,8 +184,10 @@ stub so the full `rpl_gtid.cc` object can be omitted, and replace optimizer
 trace diagnostics with an inert embedded stub while preserving shared JSON
 writer helpers, and replace external backup stage, backup lock, and backup DDL
 logging with embedded stubs so the full `backup.cc` object can be omitted, and
-replace `JSON_TABLE` table-function execution with an unsupported embedded stub
-while retaining ordinary JSON scalar functions, and replace the foreign-server
+replace `JSON_TABLE` table-function execution with an unsupported embedded stub,
+replace ordinary JSON scalar function registration and JSON aggregate runtime
+with an aggressive-profile JSON-function stub while retaining internal JSON
+type validation helpers, and replace the foreign-server
 metadata cache with no-op embedded stubs so the `mysql.servers` cache
 implementation is omitted, and replace proxy protocol network-listener support
 with embedded disabled stubs, replace event parser data validation with a
@@ -209,7 +212,9 @@ GCC/G++ `-Oz`, and omit `mysql.time_zone*` table loading while retaining
 with hidden default C/C++ symbol visibility while retaining explicit
 `MYLITE_API` exports for the public MyLite C API, and replace full EXPLAIN,
 ANALYZE, and SHOW EXPLAIN plan-output runtime with an embedded unsupported
-stub while retaining no-op optimizer plan bookkeeping needed by ordinary SQL.
+stub while retaining no-op optimizer plan bookkeeping needed by ordinary SQL,
+and omit the retained `VECTOR` type handler and ordinary JSON SQL function
+runtime from the aggressive embedded profile.
 
 `no-myisam-temp-spill-size-profile` was measured separately as an opt-in
 `MYLITE_DISABLE_MYISAM_TEMP_SPILL=ON` experiment. It is not part of the current
@@ -229,40 +234,40 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-vector-type`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-json-functions`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 28,752,966 | 27.42 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
-| `build/mariadb-minsize/mylite/libmylite.a` | 122,792 | 0.12 | First-party public wrapper with explicit `MYLITE_API` exports |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 28,094,108 | 26.79 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/mylite/libmylite.a` | 122,800 | 0.12 | First-party public wrapper with explicit `MYLITE_API` exports |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,440 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,647,976 | 7.29 | Unstripped linked smoke binary, hidden default visibility, lld RELR, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, full foreign-server metadata cache implementation, proxy protocol network-listener support, full EXPLAIN/ANALYZE plan-output runtime, vector type handler, event parser data validation, XA transaction implementation, trigger sidecar runtime, view sidecar runtime, table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
-| stripped `mylite-open-close-smoke` copy | 5,489,760 | 5.24 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,448,136 | 7.10 | Unstripped linked smoke binary, hidden default visibility, lld RELR, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, ordinary JSON SQL function implementation, full foreign-server metadata cache implementation, proxy protocol network-listener support, full EXPLAIN/ANALYZE plan-output runtime, vector type handler, event parser data validation, XA transaction implementation, trigger sidecar runtime, view sidecar runtime, table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 5,352,064 | 5.10 | `strip --strip-unneeded` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 4,324,867 |
-| data | 1,161,456 |
-| bss | 227,177 |
-| total `size` decimal | 5,713,500 |
+| text | 4,246,307 |
+| data | 1,102,448 |
+| bss | 228,953 |
+| total `size` decimal | 5,577,708 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,648,580 | Executable code |
-| `.data.rel.ro` | 995,408 | Relocated read-only data |
-| `.rodata` | 950,987 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.eh_frame` | 493,608 | Unwind metadata |
-| `.data` | 152,344 | Writable data |
-| `.bss` | 224,961 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 104,468 | Unwind table index |
-| `.rela.dyn` | 44,856 | Remaining unpacked dynamic relocations |
-| `.gcc_except_table` | 37,768 | Exception metadata |
-| `.relr.dyn` | 17,560 | Packed relative relocations |
+| `.text` | 2,593,012 | Executable code |
+| `.data.rel.ro` | 937,376 | Relocated read-only data |
+| `.rodata` | 946,219 | Parser tables, SQL metadata, constants, retained Unicode data |
+| `.eh_frame` | 481,708 | Unwind metadata |
+| `.data` | 151,624 | Writable data |
+| `.bss` | 224,929 | Zero-initialized writable data |
+| `.eh_frame_hdr` | 102,020 | Unwind table index |
+| `.rela.dyn` | 43,008 | Remaining unpacked dynamic relocations |
+| `.gcc_except_table` | 36,756 | Exception metadata |
+| `.relr.dyn` | 16,624 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 5,081,640 bytes, or 4.85 MiB, before compression:
@@ -402,6 +407,7 @@ The current built-in plugins are:
 | `hidden-visibility-size-profile` after time-zone tables | 29,117,602 | -14,287,830 | 5,532,056 | -13,799,848 | Passes current smokes and harness; hides internal symbols by default while keeping explicit MyLite C API exports |
 | `explain-runtime-size-profile` after hidden visibility | 28,896,338 | -14,509,094 | 5,496,920 | -13,834,984 | Passes current smokes and harness; omits full EXPLAIN/ANALYZE plan-output runtime while retaining ordinary optimizer bookkeeping |
 | `vector-type-size-profile` after EXPLAIN runtime | 28,752,966 | -14,652,466 | 5,489,760 | -13,842,144 | Passes current smokes and harness; omits retained VECTOR type handler after vector functions and indexes are already unsupported |
+| `json-function-size-profile` after VECTOR type | 28,094,108 | -15,311,324 | 5,352,064 | -13,979,840 | Passes current smokes and harness; omits ordinary JSON SQL functions and parser-backed JSON aggregate runtime while retaining internal JSON type validation helpers |
 | `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Opt-in experiment only; open/close smoke passes, but storage/catalog harness fails because schema-table queries need disk temp tables |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -425,7 +431,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-7,647,976 bytes to 5,489,760 bytes, saving 2,158,216 bytes, or 2.06 MiB. That
+7,448,136 bytes to 5,352,064 bytes, saving 2,096,072 bytes, or 2.00 MiB. That
 remains the lowest-risk packaging win for any copied executable or
 shared-library style artifact.
 
@@ -786,6 +792,18 @@ no longer contains `sql_type_vector.cc.o`, and the open/close smoke verifies
 `CREATE TABLE mylite.vector_type_rejected (v VECTOR(3))` reports
 `Unknown data type: 'VECTOR'` without creating a MyLite table.
 
+The `json-function-size-profile` attempt then removed MariaDB's ordinary JSON
+SQL function implementation from the aggressive embedded profile while keeping
+the internal JSON type validation shell needed by retained JSON columns. On top
+of the VECTOR type profile, it reduced the static archive by 658,858 bytes, the
+unstripped open-close smoke by 199,840 bytes, the stripped open-close smoke by
+137,696 bytes, and the stripped compatibility smoke by 138,944 bytes. The
+archive no longer contains `item_jsonfunc.cc.o` or `json_schema_helper.cc.o`;
+it keeps `mylite_json_function_stub.cc.o` and `sql_type_json.cc.o`. The
+open/close smoke verifies `JSON_VALID()` and `JSON_EXTRACT()` fail as unknown
+functions, while `JSON_ARRAYAGG()` and `JSON_OBJECTAGG()` report explicit
+unsupported diagnostics.
+
 The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
 static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings
 around MariaDB parser and server structures, including generated parser types.
@@ -1131,6 +1149,7 @@ MyISAM-compatible storage.
 | Omit EXPLAIN/ANALYZE plan-output runtime | 0.21 MiB archive, 0.034 MiB stripped linked beyond hidden visibility | High SQL compatibility | Applied as aggressive size attempt | Current smokes and harness pass; ordinary optimizer bookkeeping remains, but `EXPLAIN`, `ANALYZE`, and `SHOW EXPLAIN` are unsupported |
 | Remove vector SQL functions and MHNSW | 0.22 MiB archive, negligible stripped linked beyond executable-export profile | High compatibility | Applied as size attempt | Current smokes pass, but vector functions and MHNSW vector indexes are omitted from the minsize profile |
 | Remove retained `VECTOR` type handler | 0.14 MiB archive, 0.007 MiB stripped linked beyond EXPLAIN runtime | High compatibility | Applied as aggressive size attempt | Current smokes and harness pass; `VECTOR` columns now fail as an unknown data type in the minsize profile |
+| Omit ordinary JSON SQL functions | 0.63 MiB archive, 0.13 MiB stripped linked beyond VECTOR type | High compatibility | Applied as aggressive size attempt | Current smokes and harness pass; `JSON_VALID()` and `JSON_EXTRACT()` are unknown, JSON aggregates are unsupported, and retained JSON type validation uses a tiny internal stub |
 | Disable statement profiling | 0.16 MiB archive, no stripped linked change beyond vector-function profile | Low/medium | Applied as size attempt | Current smokes pass; `SHOW PROFILE(S)` now report MariaDB's disabled-feature diagnostic |
 | Remove SQL `HELP` command implementation | 0.17 MiB archive, 0.06 MiB stripped linked beyond profiling profile | Low/medium | Applied as size attempt | Current smokes pass; `HELP` now reports a stable unsupported-command diagnostic |
 | Remove `PROCEDURE ANALYSE()` implementation | 0.15 MiB archive, no stripped linked change beyond HELP profile | Low/medium | Applied as size attempt | Current smokes pass; `PROCEDURE ANALYSE()` now reports a stable unsupported-feature diagnostic |
@@ -1147,7 +1166,7 @@ MyISAM-compatible storage.
 | No-op core binlog entry points | 0.14 MiB archive, 0.06 MiB stripped linked beyond command-level binlog removal | Medium | Applied as aggressive size attempt | Current smokes and harness pass; this removed the first transaction, row-event, and GTID-state roots |
 | Omit retained binlog event/GTID sources | 0.23 MiB archive, 0.06 MiB stripped linked beyond OpenSSL digest | Medium | Applied as aggressive size attempt | Current smokes and harness pass; `gtid_index.cc`, `log_event.cc`, and `rpl_injector.cc` are omitted, while `log_event_server.cc` remains for generic SQL string rendering |
 | Omit external backup stage implementation | 0.01 MiB archive, 0.003 MiB stripped linked beyond optimizer trace | Low/medium embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; server backup coordination and `ddl.log` backup-tool logging do not fit the embedded file-owned runtime |
-| Omit `JSON_TABLE` table-function execution | 0.11 MiB archive, 0.01 MiB stripped linked beyond backup stage | High SQL compatibility | Applied as aggressive size attempt | Current smokes and harness pass; ordinary JSON scalar functions remain, but relational JSON table extraction is omitted from the minsize profile |
+| Omit `JSON_TABLE` table-function execution | 0.11 MiB archive, 0.01 MiB stripped linked beyond backup stage | High SQL compatibility | Applied as aggressive size attempt | Current smokes and harness pass; relational JSON table extraction is omitted from the minsize profile; later JSON-function work removes ordinary JSON functions too |
 | Omit foreign-server metadata cache | 0.03 MiB archive, 0.003 MiB stripped linked beyond JSON_TABLE | Low embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; foreign-server SQL is already unsupported and embedded startup already uses an empty no-`mysql.servers` path |
 | Omit proxy protocol network-listener support | 0.008 MiB archive, negligible stripped linked beyond foreign-server cache | Low embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; MyLite has no network listener, and `proxy_protocol_networks` remains visible but empty and disabled |
 | Omit full event parser data | 0.01 MiB archive, negligible stripped linked beyond proxy protocol | Low/medium embedded compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; event DDL is already rejected and only parser allocation is needed |
@@ -1274,8 +1293,9 @@ Take these now:
    server backup coordination and backup-tool `ddl.log` side effects do not fit
    the file-owned embedded runtime; MyLite-native backup needs a separate design.
 33. Keep `JSON_TABLE` omitted only in the most aggressive size profile. The
-   savings are real, but this removes a SQL-visible JSON transformation feature;
-   ordinary JSON scalar functions remain available.
+   savings are real, but this removes a SQL-visible JSON transformation feature.
+   The later JSON-function profile removes the remaining ordinary JSON SQL
+   function runtime as an even stronger compatibility tradeoff.
 34. Keep the foreign-server metadata cache omitted in the aggressive embedded
    profile while foreign-server metadata remains unsupported.
 35. Keep proxy protocol support omitted in the aggressive embedded profile.
@@ -1329,6 +1349,10 @@ Take these now:
    profile while vector functions and vector indexes are already unsupported.
    Re-enable the type only if MyLite gets a real vector storage and index
    compatibility plan.
+49. Keep ordinary JSON SQL functions omitted only in the most aggressive size
+   profile. The linked savings are meaningful, but JSON is common application
+   SQL; the retained internal stub exists only to keep JSON column validation
+   linkable until JSON type support gets its own compatibility decision.
 
 Do not take these now:
 
