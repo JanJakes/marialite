@@ -2333,6 +2333,10 @@ dispatch_command_return dispatch_command(enum enum_server_command command, THD *
     break;
   case COM_PROCESS_INFO:
     status_var_increment(thd->status_var.com_stat[SQLCOM_SHOW_PROCESSLIST]);
+#ifdef MYLITE_DISABLE_PROCESSLIST_METADATA
+    my_error(ER_NOT_SUPPORTED_YET, MYF(0),
+             "process list metadata in MyLite minsize profile");
+#else
     if (!thd->security_ctx->priv_user[0] &&
         check_global_access(thd, PRIV_COM_PROCESS_INFO))
       break;
@@ -2340,6 +2344,7 @@ dispatch_command_return dispatch_command(enum enum_server_command command, THD *
     mysqld_list_processes(thd,
                      thd->security_ctx->master_access & PRIV_COM_PROCESS_INFO ?
                      NullS : thd->security_ctx->priv_user, 0);
+#endif
     break;
   case COM_PROCESS_KILL:
   {
@@ -4869,6 +4874,10 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
     break;
   }
   case SQLCOM_SHOW_PROCESSLIST:
+#ifdef MYLITE_DISABLE_PROCESSLIST_METADATA
+    my_error(ER_NOT_SUPPORTED_YET, MYF(0),
+             "process list metadata in MyLite minsize profile");
+#else
     if (!thd->security_ctx->priv_user[0] &&
         check_global_access(thd, PRIV_STMT_SHOW_PROCESSLIST))
       break;
@@ -4877,6 +4886,7 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
                  NullS :
                  thd->security_ctx->priv_user),
                 lex->verbose);
+#endif
     break;
   case SQLCOM_SHOW_AUTHORS:
 #ifdef MYLITE_DISABLE_SHOW_STATIC_INFO

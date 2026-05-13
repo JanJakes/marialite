@@ -107,6 +107,7 @@ struct SmokeResult
   std::string exec_show_profiles_message;
   std::string exec_help_message;
   std::string exec_static_show_info_messages;
+  std::string exec_processlist_metadata_messages;
   std::string exec_procedure_analyse_message;
   std::string exec_routine_information_schema_rows;
   std::string exec_table_admin_messages;
@@ -253,6 +254,8 @@ static bool check_help_unsupported(const SmokeOptions &options,
                                    SmokeResult *result);
 static bool check_static_show_info_unsupported(const SmokeOptions &options,
                                                SmokeResult *result);
+static bool check_processlist_metadata_unsupported(const SmokeOptions &options,
+                                                   SmokeResult *result);
 static bool check_procedure_analyse_unsupported(const SmokeOptions &options,
                                                 SmokeResult *result);
 static bool check_routine_information_schema_profile(
@@ -506,6 +509,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "static_show_info_unsupported";
   ok= check_static_show_info_unsupported(options, result) && ok;
+
+  result->phase= "processlist_metadata_unsupported";
+  ok= check_processlist_metadata_unsupported(options, result) && ok;
 
   result->phase= "procedure_analyse_unsupported";
   ok= check_procedure_analyse_unsupported(options, result) && ok;
@@ -2452,6 +2458,70 @@ static bool check_static_show_info_unsupported(const SmokeOptions &options,
   return ok;
 }
 
+static bool check_processlist_metadata_unsupported(const SmokeOptions &options,
+                                                   SmokeResult *result)
+{
+  struct ProcesslistCase
+  {
+    const char *label;
+    const char *sql;
+    unsigned expected_errno;
+    const char *expected_sqlstate;
+    const char *message_fragment;
+  };
+  static const ProcesslistCase cases[]=
+  {
+    {"show_processlist", "SHOW PROCESSLIST", ER_NOT_SUPPORTED_YET,
+     "42000", "process list metadata"},
+    {"show_full_processlist", "SHOW FULL PROCESSLIST", ER_NOT_SUPPORTED_YET,
+     "42000", "process list metadata"}
+  };
+
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "processlist_metadata_open", MYLITE_OK, rc,
+                         db);
+  if (db)
+  {
+    for (const ProcesslistCase &test_case : cases)
+    {
+      char *errmsg= nullptr;
+      rc= mylite_exec(db, test_case.sql, nullptr, nullptr, &errmsg);
+      std::string message= errmsg ? errmsg : mylite_errmsg(db);
+      if (errmsg)
+        mylite_free(errmsg);
+      if (!result->exec_processlist_metadata_messages.empty())
+        result->exec_processlist_metadata_messages+= ";";
+      result->exec_processlist_metadata_messages+=
+        std::string(test_case.label) + "=" + message;
+
+      ok= record_result(result, test_case.label, MYLITE_ERROR, rc, db) && ok;
+      if (mylite_mariadb_errno(db) != test_case.expected_errno ||
+          std::strcmp(mylite_sqlstate(db), test_case.expected_sqlstate) != 0 ||
+          message.find(test_case.message_fragment) == std::string::npos)
+        ok= false;
+    }
+
+    ExecCapture processlist_capture;
+    ok= exec_query_capture(db,
+                           "SELECT COUNT(*) FROM "
+                           "information_schema.PROCESSLIST",
+                           "is_processlist_empty", &processlist_capture,
+                           result) && ok;
+    std::string rows= join_strings(processlist_capture.rows, ",");
+    if (!result->exec_processlist_metadata_messages.empty())
+      result->exec_processlist_metadata_messages+= ";";
+    result->exec_processlist_metadata_messages+= "is_processlist_count=" + rows;
+    if (rows != "0")
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "processlist_metadata_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
 static bool check_procedure_analyse_unsupported(const SmokeOptions &options,
                                                 SmokeResult *result)
 {
@@ -4158,6 +4228,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_static_show_info_messages.empty())
     report << "exec_static_show_info_messages="
            << result.exec_static_show_info_messages << "\n";
+  if (!result.exec_processlist_metadata_messages.empty())
+    report << "exec_processlist_metadata_messages="
+           << result.exec_processlist_metadata_messages << "\n";
   if (!result.exec_procedure_analyse_message.empty())
     report << "exec_procedure_analyse_message="
            << result.exec_procedure_analyse_message << "\n";
