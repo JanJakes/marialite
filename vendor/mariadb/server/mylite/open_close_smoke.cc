@@ -94,6 +94,7 @@ struct SmokeResult
   std::string exec_show_profiles_message;
   std::string exec_help_message;
   std::string exec_procedure_analyse_message;
+  std::string exec_table_admin_messages;
   std::string exec_sequence_messages;
   std::string exec_csv_engine_message;
   std::string exec_myisam_engine_message;
@@ -225,6 +226,8 @@ static bool check_help_unsupported(const SmokeOptions &options,
                                    SmokeResult *result);
 static bool check_procedure_analyse_unsupported(const SmokeOptions &options,
                                                 SmokeResult *result);
+static bool check_table_admin_unsupported(const SmokeOptions &options,
+                                          SmokeResult *result);
 static bool check_sql_sequence_unsupported(const SmokeOptions &options,
                                            SmokeResult *result);
 static bool check_legacy_storage_engines_unsupported(
@@ -454,6 +457,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "procedure_analyse_unsupported";
   ok= check_procedure_analyse_unsupported(options, result) && ok;
+
+  result->phase= "table_admin_unsupported";
+  ok= check_table_admin_unsupported(options, result) && ok;
 
   result->phase= "sql_sequence_unsupported";
   ok= check_sql_sequence_unsupported(options, result) && ok;
@@ -1972,6 +1978,76 @@ static bool check_procedure_analyse_unsupported(const SmokeOptions &options,
   return ok;
 }
 
+static bool check_table_admin_unsupported(const SmokeOptions &options,
+                                          SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "table_admin_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    ok= exec_statement(db,
+                       "DROP TABLE IF EXISTS mylite.table_admin_rows",
+                       "table_admin_drop_existing", result) && ok;
+    ok= exec_statement(db,
+                       "CREATE TABLE mylite.table_admin_rows "
+                       "(id INT NOT NULL, note VARCHAR(20), PRIMARY KEY(id)) "
+                       "ENGINE=MYLITE",
+                       "table_admin_create_table", result) && ok;
+    ok= exec_statement(db,
+                       "INSERT INTO mylite.table_admin_rows VALUES "
+                       "(1, 'one')",
+                       "table_admin_insert_row", result) && ok;
+
+    struct AdminCase
+    {
+      const char *label;
+      const char *sql;
+      const char *message_fragment;
+    };
+
+    static const AdminCase cases[] = {
+      {"analyze_table", "ANALYZE TABLE mylite.table_admin_rows",
+       "ANALYZE TABLE"},
+      {"check_table", "CHECK TABLE mylite.table_admin_rows", "CHECK TABLE"},
+      {"optimize_table", "OPTIMIZE TABLE mylite.table_admin_rows",
+       "OPTIMIZE TABLE"},
+      {"repair_table", "REPAIR TABLE mylite.table_admin_rows",
+       "REPAIR TABLE"},
+      {"cache_index", "CACHE INDEX mylite.table_admin_rows IN DEFAULT",
+       "CACHE INDEX"},
+      {"load_index", "LOAD INDEX INTO CACHE mylite.table_admin_rows",
+       "LOAD INDEX INTO CACHE"}
+    };
+
+    std::vector<std::string> messages;
+    for (const AdminCase &admin_case : cases)
+    {
+      char *errmsg= nullptr;
+      rc= mylite_exec(db, admin_case.sql, nullptr, nullptr, &errmsg);
+      std::string message= errmsg ? errmsg : mylite_errmsg(db);
+      if (errmsg)
+        mylite_free(errmsg);
+      messages.push_back(std::string(admin_case.label) + ":" + message);
+
+      const std::string label= std::string("table_admin_") +
+        admin_case.label;
+      ok= record_result(result, label.c_str(), MYLITE_ERROR, rc, db) && ok;
+      if (mylite_mariadb_errno(db) != ER_NOT_SUPPORTED_YET ||
+          std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+          message.find(admin_case.message_fragment) == std::string::npos)
+        ok= false;
+    }
+
+    result->exec_table_admin_messages= join_strings(messages, "|");
+
+    rc= mylite_close(db);
+    ok= record_result(result, "table_admin_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
 static bool check_sql_sequence_unsupported(const SmokeOptions &options,
                                            SmokeResult *result)
 {
@@ -3472,6 +3548,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_procedure_analyse_message.empty())
     report << "exec_procedure_analyse_message="
            << result.exec_procedure_analyse_message << "\n";
+  if (!result.exec_table_admin_messages.empty())
+    report << "exec_table_admin_messages="
+           << result.exec_table_admin_messages << "\n";
   if (!result.exec_sequence_messages.empty())
     report << "exec_sequence_messages=" << result.exec_sequence_messages
            << "\n";
