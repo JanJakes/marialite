@@ -51,6 +51,7 @@ struct SmokeResult
   std::string exec_null_db_message;
   std::string exec_scalar_columns;
   std::string exec_scalar_rows;
+  std::string exec_compact_error_fallback_message;
   std::string exec_collation_rows;
   std::string exec_uca_collation_message;
   std::string exec_general1400_collation_message;
@@ -166,6 +167,8 @@ struct ExecCapture
 
 static int bind_destructor_calls= 0;
 
+extern "C" const char *my_get_err_msg(unsigned int nr);
+
 static bool parse_options(int argc, char **argv, SmokeOptions *options,
                           std::string *error);
 static int run_smoke(const SmokeOptions &options, SmokeResult *result);
@@ -198,6 +201,8 @@ static bool check_exec_misuse(const SmokeOptions &options,
                               SmokeResult *result);
 static bool check_exec_scalar(const SmokeOptions &options,
                               SmokeResult *result);
+static bool check_compact_error_message_profile(const SmokeOptions &options,
+                                                SmokeResult *result);
 static bool check_collation_profile(const SmokeOptions &options,
                                     SmokeResult *result);
 static bool check_locale_profile(const SmokeOptions &options,
@@ -432,6 +437,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "exec_scalar";
   ok= check_exec_scalar(options, result) && ok;
+
+  result->phase= "compact_error_message_profile";
+  ok= check_compact_error_message_profile(options, result) && ok;
 
   result->phase= "collation_profile";
   ok= check_collation_profile(options, result) && ok;
@@ -887,6 +895,33 @@ static bool check_exec_scalar(const SmokeOptions &options,
                       nullptr) && ok;
   }
   return ok;
+}
+
+static bool check_compact_error_message_profile(const SmokeOptions &options,
+                                                SmokeResult *result)
+{
+#ifdef MYLITE_DISABLE_FULL_ERROR_MESSAGES
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "compact_error_message_open", MYLITE_OK, rc,
+                         db);
+  if (db)
+  {
+    const char *message= my_get_err_msg(ER_TABLE_NEEDS_REBUILD);
+    result->exec_compact_error_fallback_message= message ? message : "";
+    if (result->exec_compact_error_fallback_message != "MariaDB error")
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "compact_error_message_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+#else
+  (void) options;
+  (void) result;
+  return true;
+#endif
 }
 
 static bool check_collation_profile(const SmokeOptions &options,
@@ -4343,6 +4378,9 @@ static void write_report(const SmokeOptions &options,
     report << "exec_scalar_columns=" << result.exec_scalar_columns << "\n";
   if (!result.exec_scalar_rows.empty())
     report << "exec_scalar_rows=" << result.exec_scalar_rows << "\n";
+  if (!result.exec_compact_error_fallback_message.empty())
+    report << "exec_compact_error_fallback_message="
+           << result.exec_compact_error_fallback_message << "\n";
   if (!result.exec_collation_rows.empty())
     report << "exec_collation_rows=" << result.exec_collation_rows << "\n";
   if (!result.exec_uca_collation_message.empty())

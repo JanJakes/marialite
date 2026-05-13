@@ -41,6 +41,10 @@ MYSQL_ADD_EXECUTABLE(mylite-open-close-smoke
   COMPONENT Test
 )
 TARGET_LINK_LIBRARIES(mylite-open-close-smoke libmylite)
+IF(MYLITE_DISABLE_FULL_ERROR_MESSAGES)
+  TARGET_COMPILE_DEFINITIONS(mylite-open-close-smoke PRIVATE
+    MYLITE_DISABLE_FULL_ERROR_MESSAGES)
+ENDIF()
 
 MYSQL_ADD_EXECUTABLE(mylite-digest-smoke
   digest_smoke.cc
