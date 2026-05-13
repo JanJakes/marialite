@@ -72,6 +72,7 @@ run_inside_container() {
   assert_no_option_help_text_strings "${smoke}"
   assert_no_query_log_symbols "${smoke}"
   assert_no_fulltext_match_symbols "${smoke}"
+  assert_no_sql_handler_object "${abs_build_dir}/libmysqld/libmariadbd.a"
   assert_no_full_stored_program_objects "${abs_build_dir}/libmysqld/libmariadbd.a"
 
   local smoke_log="${abs_build_dir}/libmylite-open-close-output.log"
@@ -259,6 +260,22 @@ assert_no_fulltext_match_symbols() {
     return 1
   fi
   printf "libmylite fulltext MATCH symbols: none\n"
+}
+
+assert_no_sql_handler_object() {
+  local archive="$1"
+  local objects
+  objects="$(
+    ar t "${archive}" 2>/dev/null \
+      | grep -E "^sql_handler\\.cc\\.o$" \
+      || true
+  )"
+  if [[ -n "${objects}" ]]; then
+    printf "unexpected SQL HANDLER object in %s:\n%s\n" \
+      "${archive}" "${objects}" >&2
+    return 1
+  fi
+  printf "libmylite SQL HANDLER object: none\n"
 }
 
 assert_no_full_stored_program_objects() {

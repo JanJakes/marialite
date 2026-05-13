@@ -81,6 +81,7 @@ struct SmokeResult
   std::string exec_regex_like_rows;
   std::string exec_regex_messages;
   std::string exec_fulltext_match_message;
+  std::string exec_sql_handler_message;
   std::string exec_window_aggregate_rows;
   std::string exec_window_function_messages;
   std::string exec_binlog_replication_message;
@@ -234,6 +235,8 @@ static bool check_regex_functions_unsupported(const SmokeOptions &options,
                                               SmokeResult *result);
 static bool check_fulltext_match_unsupported(const SmokeOptions &options,
                                              SmokeResult *result);
+static bool check_sql_handler_unsupported(const SmokeOptions &options,
+                                          SmokeResult *result);
 static bool check_window_functions_unsupported(const SmokeOptions &options,
                                                SmokeResult *result);
 static bool check_binlog_replication_unsupported(const SmokeOptions &options,
@@ -488,6 +491,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "fulltext_match_unsupported";
   ok= check_fulltext_match_unsupported(options, result) && ok;
+
+  result->phase= "sql_handler_unsupported";
+  ok= check_sql_handler_unsupported(options, result) && ok;
 
   result->phase= "window_functions_unsupported";
   ok= check_window_functions_unsupported(options, result) && ok;
@@ -1735,6 +1741,36 @@ static bool check_fulltext_match_unsupported(const SmokeOptions &options,
 
     rc= mylite_close(db);
     ok= record_result(result, "fulltext_match_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_sql_handler_unsupported(const SmokeOptions &options,
+                                          SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "sql_handler_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    char *errmsg= nullptr;
+    rc= mylite_exec(db, "HANDLER sample OPEN", nullptr, nullptr, &errmsg);
+    if (errmsg)
+    {
+      result->exec_sql_handler_message= errmsg;
+      mylite_free(errmsg);
+    }
+    ok= record_result(result, "sql_handler_open_statement", MYLITE_ERROR,
+                      rc, db) && ok;
+    if (mylite_mariadb_errno(db) != ER_NOT_SUPPORTED_YET ||
+        std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+        result->exec_sql_handler_message.find("SQL HANDLER") ==
+          std::string::npos)
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "sql_handler_close", MYLITE_OK, rc,
                       nullptr) && ok;
   }
   return ok;
@@ -4503,6 +4539,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_fulltext_match_message.empty())
     report << "exec_fulltext_match_message="
            << result.exec_fulltext_match_message << "\n";
+  if (!result.exec_sql_handler_message.empty())
+    report << "exec_sql_handler_message="
+           << result.exec_sql_handler_message << "\n";
   if (!result.exec_window_aggregate_rows.empty())
     report << "exec_window_aggregate_rows="
            << result.exec_window_aggregate_rows << "\n";

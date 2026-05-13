@@ -132,6 +132,12 @@ int yylex(void *yylval, void *yythd);
                     "MATCH AGAINST in the MyLite minsize profile"))
 #endif
 
+#ifdef MYLITE_DISABLE_SQL_HANDLER_COMMAND
+#define mylite_yyabort_sql_handler_command()     \
+  my_yyabort_error((ER_NOT_SUPPORTED_YET, MYF(0), \
+                    "SQL HANDLER commands in the MyLite minsize profile"))
+#endif
+
 #ifdef MYLITE_DISABLE_SQL_CRYPTO_FUNCTIONS
 #define mylite_yyabort_sql_crypto_functions()    \
   my_yyabort_error((ER_NOT_SUPPORTED_YET, MYF(0), \
@@ -17793,6 +17799,9 @@ unlock:
 handler:
           HANDLER_SYM
           {
+#ifdef MYLITE_DISABLE_SQL_HANDLER_COMMAND
+            mylite_yyabort_sql_handler_command();
+#endif
             if (Lex->main_select_push())
               MYSQL_YYABORT;
           }
