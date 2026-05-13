@@ -60,9 +60,11 @@ C_MODE_END
 #include <openssl/kdf.h>
 #endif
 
+#ifndef MYLITE_DISABLE_SFORMAT_FUNCTION
 /* fmtlib include (https://fmt.dev/). */
 #define FMT_HEADER_ONLY 1
 #include "fmt/args.h"
+#endif
 
 size_t username_char_length= USERNAME_CHAR_LENGTH;
 
@@ -1514,6 +1516,7 @@ bool Item_func_replace::fix_length_and_dec(THD *thd)
   return FALSE;
 }
 
+#ifndef MYLITE_DISABLE_SFORMAT_FUNCTION
 /*
   this is done in the constructor to be in the same memroot as
   the item itself
@@ -1663,6 +1666,7 @@ String *Item_func_sformat::val_str(String *res)
   }
   return null_value ? NULL : res;
 }
+#endif
 
 #ifndef MYLITE_DISABLE_SQL_CRYPTO_FUNCTIONS
 #include"my_global.h"
