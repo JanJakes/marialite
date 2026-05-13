@@ -54,6 +54,8 @@ struct SmokeResult
   std::string exec_collation_rows;
   std::string exec_uca_collation_message;
   std::string exec_general1400_collation_message;
+  std::string exec_locale_profile_rows;
+  std::string exec_locale_removed_message;
   std::string exec_oracle_mode_message;
   std::string exec_oracle_function_standard_rows;
   std::string exec_oracle_function_message;
@@ -178,6 +180,8 @@ static bool check_exec_scalar(const SmokeOptions &options,
                               SmokeResult *result);
 static bool check_collation_profile(const SmokeOptions &options,
                                     SmokeResult *result);
+static bool check_locale_profile(const SmokeOptions &options,
+                                 SmokeResult *result);
 static bool check_oracle_mode_unsupported(const SmokeOptions &options,
                                           SmokeResult *result);
 static bool check_oracle_functions_unsupported(const SmokeOptions &options,
@@ -385,6 +389,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "collation_profile";
   ok= check_collation_profile(options, result) && ok;
+
+  result->phase= "locale_profile";
+  ok= check_locale_profile(options, result) && ok;
 
   result->phase= "oracle_mode_unsupported";
   ok= check_oracle_mode_unsupported(options, result) && ok;
@@ -862,6 +869,55 @@ static bool check_collation_profile(const SmokeOptions &options,
 
     rc= mylite_close(db);
     ok= record_result(result, "collation_profile_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_locale_profile(const SmokeOptions &options,
+                                 SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "locale_profile_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    ok= exec_statement(db, "SET lc_time_names='en_US'",
+                       "locale_profile_set_time_en_us", result) && ok;
+    ok= exec_statement(db, "SET lc_messages='en_US'",
+                       "locale_profile_set_messages_en_us", result) && ok;
+
+    ExecCapture capture;
+    ok= exec_query_capture(
+          db,
+          "SELECT @@lc_time_names, "
+          "DATE_FORMAT('2024-01-02','%M:%W'), "
+          "FORMAT(1234.5, 2, 'en_US')",
+          "locale_profile_select", &capture, result) && ok;
+    result->exec_locale_profile_rows= join_strings(capture.rows, ",");
+    if (result->exec_locale_profile_rows !=
+        "en_US:January:Tuesday:1,234.50")
+      ok= false;
+
+#ifdef MYLITE_DISABLE_EXTRA_LOCALES
+    char *errmsg= nullptr;
+    rc= mylite_exec(db, "SET lc_time_names='de_DE'", nullptr, nullptr,
+                    &errmsg);
+    if (errmsg)
+    {
+      result->exec_locale_removed_message= errmsg;
+      mylite_free(errmsg);
+    }
+    ok= record_result(result, "locale_profile_set_time_removed",
+                      MYLITE_ERROR, rc, db) && ok;
+    if (mylite_mariadb_errno(db) != ER_UNKNOWN_LOCALE ||
+        result->exec_locale_removed_message.find("de_DE") ==
+          std::string::npos)
+      ok= false;
+#endif
+
+    rc= mylite_close(db);
+    ok= record_result(result, "locale_profile_close", MYLITE_OK, rc,
                       nullptr) && ok;
   }
   return ok;
@@ -3432,6 +3488,12 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_general1400_collation_message.empty())
     report << "exec_general1400_collation_message="
            << result.exec_general1400_collation_message << "\n";
+  if (!result.exec_locale_profile_rows.empty())
+    report << "exec_locale_profile_rows="
+           << result.exec_locale_profile_rows << "\n";
+  if (!result.exec_locale_removed_message.empty())
+    report << "exec_locale_removed_message="
+           << result.exec_locale_removed_message << "\n";
   if (!result.exec_oracle_mode_message.empty())
     report << "exec_oracle_mode_message="
            << result.exec_oracle_mode_message << "\n";

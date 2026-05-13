@@ -48,6 +48,7 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `MYLITE_DISABLE_TABLE_ADMIN=ON`
 - `MYLITE_DISABLE_PERSISTENT_STATISTICS=ON`
 - `MYLITE_DISABLE_SELECT_PROCEDURE_RUNTIME=ON`
+- `MYLITE_DISABLE_EXTRA_LOCALES=ON`
 - `MYLITE_DISABLE_XA_TRANSACTIONS=ON`
 - `MYLITE_DISABLE_GEOMETRY_TYPE=ON`
 - `MYLITE_DISABLE_GENERAL1400_COLLATIONS=ON`
@@ -103,8 +104,9 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `foreign-server-cache-size-profile`, `proxy-protocol-size-profile`,
 `event-parse-data-size-profile`, `xa-transaction-size-profile`,
 `trigger-runtime-size-profile`, `view-runtime-size-profile`,
-`table-admin-size-profile`, `persistent-statistics-size-profile`, and
-`select-procedure-runtime-size-profile`. Together these remove the built-in
+`table-admin-size-profile`, `persistent-statistics-size-profile`,
+`select-procedure-runtime-size-profile`, and
+`locale-minsize-profile`. Together these remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
 `WITH_EXTRA_CHARSETS=none`, omit the Oracle SQL-mode parser, omit XML, GIS, and
@@ -186,7 +188,8 @@ and replace inherited persistent `mysql.table_stats`, `mysql.column_stats`,
 stubs while preserving handler row estimates for ordinary planning.
 They also remove the remaining generic `SELECT ... PROCEDURE` runtime after
 `PROCEDURE ANALYSE()` is already unsupported, leaving a small unsupported
-procedure-clause setup stub.
+procedure-clause setup stub, and replace the generated full locale table with
+an `en_US`-only embedded profile stub.
 
 `no-myisam-temp-spill-size-profile` was measured separately as an opt-in
 `MYLITE_DISABLE_MYISAM_TEMP_SPILL=ON` experiment. It is not part of the current
@@ -206,40 +209,40 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-select-procedure`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-locale-en-us`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 29,500,552 | 28.13 | Main embedded MariaDB archive, 420 objects, stripped; section metadata grows the archive |
-| `build/mariadb-minsize/mylite/libmylite.a` | 122,800 | 0.12 | First-party public wrapper |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 29,210,614 | 27.86 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/mylite/libmylite.a` | 122,792 | 0.12 | First-party public wrapper |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,440 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,848,088 | 7.48 | Unstripped linked smoke binary, lld RELR, section GC, ICF, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, full foreign-server metadata cache implementation, proxy protocol network-listener support, full event parser data validation, full XA transaction implementation, full trigger sidecar runtime, full view sidecar runtime, full table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, or generic `SELECT ... PROCEDURE` runtime, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
-| stripped `mylite-open-close-smoke` copy | 5,640,696 | 5.38 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,769,040 | 7.41 | Unstripped linked smoke binary, lld RELR, section GC, ICF, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, full foreign-server metadata cache implementation, proxy protocol network-listener support, full event parser data validation, full XA transaction implementation, full trigger sidecar runtime, full view sidecar runtime, full table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, or non-`en_US` locale table, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 5,582,144 | 5.32 | `strip --strip-unneeded` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 4,427,144 |
-| data | 1,210,184 |
-| bss | 238,969 |
-| total `size` decimal | 5,876,297 |
+| text | 4,400,644 |
+| data | 1,178,192 |
+| bss | 230,209 |
+| total `size` decimal | 5,809,045 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,718,788 | Executable code |
+| `.text` | 2,708,732 | Executable code |
 | `.data.rel.ro` | 999,168 | Relocated read-only data |
-| `.rodata` | 969,931 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.eh_frame` | 502,028 | Unwind metadata |
-| `.data` | 183,480 | Writable data |
-| `.bss` | 237,769 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 105,780 | Unwind table index |
+| `.rodata` | 953,931 | Parser tables, SQL metadata, constants, retained Unicode data |
+| `.eh_frame` | 502,068 | Unwind metadata |
+| `.data` | 152,392 | Writable data |
+| `.bss` | 226,121 | Zero-initialized writable data |
+| `.eh_frame_hdr` | 105,788 | Unwind table index |
 | `.rela.dyn` | 45,456 | Remaining unpacked dynamic relocations |
-| `.gcc_except_table` | 39,668 | Exception metadata |
-| `.relr.dyn` | 18,344 | Packed relative relocations |
+| `.gcc_except_table` | 39,688 | Exception metadata |
+| `.relr.dyn` | 17,832 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 5,081,640 bytes, or 4.85 MiB, before compression:
@@ -372,6 +375,7 @@ The current built-in plugins are:
 | `table-admin-size-profile` after view runtime | 29,778,266 | -13,627,166 | 5,674,104 | -13,657,800 | Passes current smokes and harness; replaces full table maintenance, key-cache assignment, and index-preload execution with unsupported embedded stubs while retaining prepared admin metadata |
 | `persistent-statistics-size-profile` after table admin | 29,621,550 | -13,783,882 | 5,641,032 | -13,690,872 | Passes current smokes and harness; replaces persistent `mysql.*` statistics and JSON histogram storage with no-statistics embedded stubs while preserving handler row estimates |
 | `select-procedure-runtime-size-profile` after persistent statistics | 29,500,552 | -13,904,880 | 5,640,696 | -13,691,208 | Passes current smokes and harness; replaces generic `SELECT ... PROCEDURE` dispatch with an unsupported embedded stub |
+| `locale-minsize-profile` after SELECT procedure runtime | 29,210,614 | -14,194,818 | 5,582,144 | -13,749,760 | Passes current smokes and harness; replaces the generated full locale table with an `en_US`-only embedded profile stub |
 | `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Opt-in experiment only; open/close smoke passes, but storage/catalog harness fails because schema-table queries need disk temp tables |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -395,7 +399,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-7,848,088 bytes to 5,640,696 bytes, saving 2,207,392 bytes, or 2.11 MiB. That
+7,769,040 bytes to 5,582,144 bytes, saving 2,186,896 bytes, or 2.09 MiB. That
 remains the lowest-risk packaging win for any copied executable or
 shared-library style artifact.
 
@@ -680,6 +684,16 @@ replacement `mylite_select_procedure_stub.cc.o` is 1,792 bytes. The open/close
 smoke verifies `SELECT ... PROCEDURE ANALYSE()` still fails with
 `ER_NOT_SUPPORTED_YET`, now at the generic procedure-clause setup layer, and
 the compatibility harness still passes.
+
+The `locale-minsize-profile` attempt then replaced MariaDB's generated full
+locale table with an `en_US`-only embedded profile stub. On top of the
+SELECT-procedure profile, it reduced the static archive by 289,938 bytes and
+the stripped linked smoke by 58,552 bytes. The archive no longer contains
+`sql_locale.cc.o`; the replacement `mylite_locale_stub.cc.o` is 8,152 bytes.
+The linked smoke retained locale symbol count dropped from 117 to 4. The
+open/close smoke verifies `lc_time_names=en_US`, English `DATE_FORMAT()` and
+`FORMAT(..., 'en_US')` output, and MariaDB's unknown-locale diagnostic for
+`SET lc_time_names='de_DE'`. The compatibility harness still passes.
 
 The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
 static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings
@@ -1049,6 +1063,7 @@ MyISAM-compatible storage.
 | Omit table-admin maintenance commands | 0.03 MiB archive, 0.017 MiB stripped linked beyond view runtime | Medium SQL/admin compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; inherited table repair/check/statistics/key-cache maintenance is server- and engine-shaped, so MyLite should expose storage-native maintenance later |
 | Omit persistent engine-independent statistics | 0.15 MiB archive, 0.032 MiB stripped linked beyond table admin | Medium optimizer/statistics compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; MyLite has no storage-native persistent statistics catalog yet, and the stub keeps handler row estimates for ordinary planning |
 | Omit generic `SELECT ... PROCEDURE` runtime | 0.12 MiB archive, negligible stripped linked beyond persistent statistics | Low/medium SQL compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; MariaDB exposes only `PROCEDURE ANALYSE()` as a built-in procedure, and that was already unsupported |
+| Omit non-`en_US` locale table | 0.28 MiB archive, 0.056 MiB stripped linked beyond SELECT procedure runtime | High SQL compatibility | Applied as aggressive embedded-size attempt | Current smokes and harness pass; `lc_time_names`, `lc_messages`, and explicit SQL locale arguments are limited to `en_US` in the most aggressive profile |
 | Omit MyISAM check/repair admin code | 0.11 MiB archive, 0.06 MiB stripped linked beyond no-binlog-core | Low/medium | Applied as size attempt | Keeps MyISAM for disk temp tables but removes unreachable admin repair/check paths from the hidden user engine |
 | Omit MyISAM full-text code | 0.08 MiB archive, 0.03 MiB stripped linked beyond MyISAM admin | Low/medium | Applied as size attempt | Keeps MyISAM for disk temp tables but removes unreachable full-text paths from the hidden user engine |
 | Omit MyISAM RTREE/spatial-key code | 0.04 MiB archive, 0.02 MiB stripped linked beyond MyISAM full-text | Low/medium | Applied as size attempt | Keeps MyISAM for disk temp tables but removes unreachable RTREE paths from the hidden user engine |
@@ -1197,7 +1212,11 @@ Take these now:
    embedded profile while `PROCEDURE ANALYSE()` remains unsupported. The linked
    artifact win is tiny, but it removes an extension hook with no retained
    built-in procedure implementation.
-43. Keep a stripped linked smoke binary size in the build report so regressions
+43. Keep the non-`en_US` locale table omitted only in the most aggressive size
+   profile. The savings are measurable, but this removes real locale
+   compatibility for localized date/time names, localized error-message
+   selection, and explicit locale arguments.
+44. Keep a stripped linked smoke binary size in the build report so regressions
    are visible.
 
 Do not take these now:
