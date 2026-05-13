@@ -64,6 +64,7 @@ struct SmokeResult
   std::string exec_vector_distance_message;
   std::string exec_json_valid_rows;
   std::string exec_json_schema_valid_message;
+  std::string exec_json_table_message;
   std::string exec_regex_like_rows;
   std::string exec_regex_messages;
   std::string exec_window_aggregate_rows;
@@ -185,6 +186,8 @@ static bool check_vector_functions_unsupported(const SmokeOptions &options,
                                                SmokeResult *result);
 static bool check_json_schema_valid_unsupported(const SmokeOptions &options,
                                                 SmokeResult *result);
+static bool check_json_table_unsupported(const SmokeOptions &options,
+                                         SmokeResult *result);
 static bool check_regex_functions_unsupported(const SmokeOptions &options,
                                               SmokeResult *result);
 static bool check_window_functions_unsupported(const SmokeOptions &options,
@@ -390,6 +393,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "json_schema_valid_unsupported";
   ok= check_json_schema_valid_unsupported(options, result) && ok;
+
+  result->phase= "json_table_unsupported";
+  ok= check_json_table_unsupported(options, result) && ok;
 
   result->phase= "regex_functions_unsupported";
   ok= check_regex_functions_unsupported(options, result) && ok;
@@ -1080,6 +1086,40 @@ static bool check_json_schema_valid_unsupported(const SmokeOptions &options,
     rc= mylite_close(db);
     ok= record_result(result, "json_schema_valid_close", MYLITE_OK, rc,
                       nullptr) && ok;
+  }
+  return ok;
+}
+
+static bool check_json_table_unsupported(const SmokeOptions &options,
+                                         SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "json_table_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    char *errmsg= nullptr;
+    rc= mylite_exec(
+          db,
+          "SELECT jt.id FROM JSON_TABLE('[1]', '$[*]' "
+          "COLUMNS(id INT PATH '$')) AS jt",
+          nullptr, nullptr, &errmsg);
+    if (errmsg)
+    {
+      result->exec_json_table_message= errmsg;
+      mylite_free(errmsg);
+    }
+    ok= record_result(result, "json_table_select", MYLITE_ERROR, rc, db) &&
+        ok;
+    if (mylite_mariadb_errno(db) != ER_NOT_SUPPORTED_YET ||
+        std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+        result->exec_json_table_message.find("JSON_TABLE") ==
+          std::string::npos)
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "json_table_close", MYLITE_OK, rc, nullptr) &&
+        ok;
   }
   return ok;
 }
@@ -3245,6 +3285,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_json_schema_valid_message.empty())
     report << "exec_json_schema_valid_message="
            << result.exec_json_schema_valid_message << "\n";
+  if (!result.exec_json_table_message.empty())
+    report << "exec_json_table_message="
+           << result.exec_json_table_message << "\n";
   if (!result.exec_regex_like_rows.empty())
     report << "exec_regex_like_rows=" << result.exec_regex_like_rows << "\n";
   if (!result.exec_regex_messages.empty())
