@@ -1997,7 +1997,9 @@ static void clean_up(bool print_message)
 #if !defined(MYLITE_DISABLE_BINLOG_CORE) || !defined(EMBEDDED_LIBRARY)
   injector::free_instance();
 #endif
+#if !defined(MYLITE_DISABLE_BINLOG_OBJECT_INIT) || !defined(EMBEDDED_LIBRARY)
   mysql_bin_log.cleanup();
+#endif
 #if !defined(MYLITE_DISABLE_BINLOG_CORE) || !defined(EMBEDDED_LIBRARY)
   Gtid_index_writer::gtid_index_cleanup();
 #endif
@@ -4020,7 +4022,8 @@ static int init_common_variables()
   */
   global_system_variables.time_zone= my_tz_SYSTEM;
 
-#ifdef HAVE_PSI_INTERFACE
+#if defined(HAVE_PSI_INTERFACE) && \
+    (!defined(MYLITE_DISABLE_BINLOG_OBJECT_INIT) || !defined(EMBEDDED_LIBRARY))
   /*
     Complete the mysql_bin_log initialization.
     Instrumentation keys are known only after the performance schema
@@ -4044,7 +4047,9 @@ static int init_common_variables()
     global MYSQL_BIN_LOGs in their constructors, because then they would be
     inited before MY_INIT(). So we do it here.
   */
+#if !defined(MYLITE_DISABLE_BINLOG_OBJECT_INIT) || !defined(EMBEDDED_LIBRARY)
   mysql_bin_log.init_pthread_objects();
+#endif
 #if !defined(MYLITE_DISABLE_BINLOG_CORE) || !defined(EMBEDDED_LIBRARY)
   Gtid_index_writer::gtid_index_init();
 #endif
