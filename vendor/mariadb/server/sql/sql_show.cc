@@ -3603,6 +3603,7 @@ int fill_schema_processlist(THD* thd, TABLE_LIST* tables, COND* cond)
   Status functions
 *****************************************************************************/
 
+#ifndef MYLITE_DISABLE_STATUS_METADATA
 DYNAMIC_ARRAY all_status_vars;
 static bool status_vars_inited= 0;
 ulonglong status_var_array_version= 0;
@@ -3788,6 +3789,33 @@ ulonglong get_status_vars_version(void)
 {
   return status_var_array_version;
 }
+#else
+int add_status_vars(SHOW_VAR *)
+{
+  return 0;
+}
+
+void init_status_vars()
+{
+}
+
+void reset_status_vars()
+{
+}
+
+void free_status_vars()
+{
+}
+
+void remove_status_vars(SHOW_VAR *)
+{
+}
+
+ulonglong get_status_vars_version(void)
+{
+  return 0;
+}
+#endif
 
 /**
   A union holding a pointer to a type that can be referred by a status variable.
@@ -7435,7 +7463,8 @@ err:
 #endif
 
 #if defined(MYLITE_DISABLE_ROUTINE_INFORMATION_SCHEMA) || \
-    defined(MYLITE_DISABLE_PROCESSLIST_METADATA)
+    defined(MYLITE_DISABLE_PROCESSLIST_METADATA) || \
+    defined(MYLITE_DISABLE_STATUS_METADATA)
 static int mylite_fill_empty_schema_table(THD *, TABLE_LIST *, COND *)
 {
   return 0;
@@ -8801,6 +8830,9 @@ int fill_i_s_sql_functions(THD *thd, TABLE_LIST *tables, COND *cond)
 int fill_status(THD *thd, TABLE_LIST *tables, COND *cond)
 {
   DBUG_ENTER("fill_status");
+#ifdef MYLITE_DISABLE_STATUS_METADATA
+  DBUG_RETURN(mylite_fill_empty_schema_table(thd, tables, cond));
+#else
   LEX *lex= thd->lex;
   const char *wild= lex->wild ? lex->wild->ptr() : NullS;
   int res= 0;
@@ -8843,6 +8875,7 @@ int fill_status(THD *thd, TABLE_LIST *tables, COND *cond)
                          upper_case_names, partial_cond);
   mysql_rwlock_unlock(&LOCK_all_status_vars);
   DBUG_RETURN(res);
+#endif
 }
 
 

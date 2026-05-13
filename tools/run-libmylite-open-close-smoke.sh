@@ -68,6 +68,7 @@ run_inside_container() {
 
   local smoke="${abs_build_dir}/mylite/mylite-open-close-smoke"
   assert_no_plsql_cursor_attribute_symbols "${smoke}"
+  assert_no_status_metadata_symbols "${smoke}"
 
   local smoke_log="${abs_build_dir}/libmylite-open-close-output.log"
   local exclusive_log="${abs_build_dir}/libmylite-open-close-exclusive-output.log"
@@ -187,6 +188,22 @@ assert_no_plsql_cursor_attribute_symbols() {
     return 1
   fi
   printf "libmylite PL/SQL cursor attribute symbols: none\n"
+}
+
+assert_no_status_metadata_symbols() {
+  local binary="$1"
+  local symbols
+  symbols="$(
+    nm --defined-only "${binary}" 2>/dev/null \
+      | grep -E "[[:space:]](status_vars|com_status_vars)$" \
+      || true
+  )"
+  if [[ -n "${symbols}" ]]; then
+    printf "unexpected status metadata symbols in %s:\n%s\n" \
+      "${binary}" "${symbols}" >&2
+    return 1
+  fi
+  printf "libmylite status metadata symbols: none\n"
 }
 
 main "$@"

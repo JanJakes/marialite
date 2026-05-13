@@ -3469,6 +3469,7 @@ static void init_libstrings()
 #define COM_STATUS(X)  (void*) offsetof(STATUS_VAR, X), SHOW_LONG_STATUS
 #define STMT_STATUS(X) COM_STATUS(com_stat[(uint) X])
 
+#ifndef MYLITE_DISABLE_STATUS_METADATA
 SHOW_VAR com_status_vars[]= {
   {"admin_commands",       COM_STATUS(com_other)},
   {"alter_db",             STMT_STATUS(SQLCOM_ALTER_DB)},
@@ -3650,6 +3651,7 @@ SHOW_VAR com_status_vars[]= {
   {"xa_start",             STMT_STATUS(SQLCOM_XA_START)},
   {NullS, NullS, SHOW_LONG}
 };
+#endif
 
 
 #ifdef HAVE_PSI_STATEMENT_INTERFACE
@@ -3664,6 +3666,15 @@ PSI_statement_info com_statement_info[(uint) COM_END + 1];
 */
 void init_sql_statement_info()
 {
+#ifdef MYLITE_DISABLE_STATUS_METADATA
+  static const char* dummy= "";
+  for (uint i= 0; i < ((uint) SQLCOM_END + 1); i++)
+  {
+    sql_statement_info[i].m_name= dummy;
+    sql_statement_info[i].m_flags= 0;
+  }
+  sql_statement_info[(uint) SQLCOM_END].m_name= "error";
+#else
   size_t first_com= offsetof(STATUS_VAR, com_stat[0]);
   size_t last_com=  offsetof(STATUS_VAR, com_stat[(uint) SQLCOM_END]);
   int record_size= offsetof(STATUS_VAR, com_stat[1])
@@ -3696,6 +3707,7 @@ void init_sql_statement_info()
   DBUG_ASSERT(strcmp(sql_statement_info[(uint) SQLCOM_SIGNAL].m_name, "signal") == 0);
 
   sql_statement_info[(uint) SQLCOM_END].m_name= "error";
+#endif
 }
 
 void init_com_statement_info()
@@ -4094,8 +4106,10 @@ static int init_common_variables()
     Later, in plugin_init, and mysql_install_plugin
     new entries could be added to that list.
   */
+#ifndef MYLITE_DISABLE_STATUS_METADATA
   if (add_status_vars(status_vars))
     exit(1); // an error was already reported
+#endif
 
 #ifndef DBUG_OFF
   /*
@@ -4121,8 +4135,10 @@ static int init_common_variables()
     the array, excluding the last element - terminator) must match the number
     of SQLCOM_ constants.
   */
+#ifndef MYLITE_DISABLE_STATUS_METADATA
   compile_time_assert(sizeof(com_status_vars)/sizeof(com_status_vars[0]) - 1 ==
                      SQLCOM_END + 10);
+#endif
 #endif
 
   int opt_err;
@@ -7619,6 +7635,7 @@ static int show_cached_thread_count(THD *thd, SHOW_VAR *var, void *buff,
   Variables shown by SHOW STATUS in alphabetical order
 */
 
+#ifndef MYLITE_DISABLE_STATUS_METADATA
 SHOW_VAR status_vars[]= {
   {"Aborted_clients",          (char*) &aborted_threads,        SHOW_LONG},
   {"Aborted_connects",         (char*) &aborted_connects,       SHOW_LONG},
@@ -7880,6 +7897,7 @@ SHOW_VAR status_vars[]= {
 #endif
   {NullS, NullS, SHOW_LONG}
 };
+#endif
 
 static bool add_terminator(DYNAMIC_ARRAY *options)
 {

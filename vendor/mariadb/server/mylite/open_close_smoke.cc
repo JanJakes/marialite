@@ -107,6 +107,7 @@ struct SmokeResult
   std::string exec_show_profiles_message;
   std::string exec_help_message;
   std::string exec_static_show_info_messages;
+  std::string exec_status_metadata_rows;
   std::string exec_processlist_metadata_messages;
   std::string exec_stored_function_lookup_messages;
   std::string exec_plsql_cursor_attribute_message;
@@ -256,6 +257,8 @@ static bool check_help_unsupported(const SmokeOptions &options,
                                    SmokeResult *result);
 static bool check_static_show_info_unsupported(const SmokeOptions &options,
                                                SmokeResult *result);
+static bool check_status_metadata_profile(const SmokeOptions &options,
+                                          SmokeResult *result);
 static bool check_processlist_metadata_unsupported(const SmokeOptions &options,
                                                    SmokeResult *result);
 static bool check_stored_function_lookup_unsupported(
@@ -515,6 +518,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "static_show_info_unsupported";
   ok= check_static_show_info_unsupported(options, result) && ok;
+
+  result->phase= "status_metadata_profile";
+  ok= check_status_metadata_profile(options, result) && ok;
 
   result->phase= "processlist_metadata_unsupported";
   ok= check_processlist_metadata_unsupported(options, result) && ok;
@@ -2470,6 +2476,61 @@ static bool check_static_show_info_unsupported(const SmokeOptions &options,
   return ok;
 }
 
+static bool check_status_metadata_profile(const SmokeOptions &options,
+                                          SmokeResult *result)
+{
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "status_metadata_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    ExecCapture show_status;
+    ok= exec_query_capture(db, "SHOW STATUS", "status_metadata_show_status",
+                           &show_status, result) && ok;
+
+    ExecCapture show_global_status;
+    ok= exec_query_capture(db, "SHOW GLOBAL STATUS",
+                           "status_metadata_show_global_status",
+                           &show_global_status, result) && ok;
+
+    ExecCapture global_status;
+    ok= exec_query_capture(
+          db, "SELECT COUNT(*) FROM information_schema.GLOBAL_STATUS",
+          "status_metadata_global_status", &global_status, result) && ok;
+
+    ExecCapture session_status;
+    ok= exec_query_capture(
+          db, "SELECT COUNT(*) FROM information_schema.SESSION_STATUS",
+          "status_metadata_session_status", &session_status, result) && ok;
+
+    ExecCapture variables;
+    ok= exec_query_capture(db, "SHOW VARIABLES LIKE 'version'",
+                           "status_metadata_show_variables", &variables,
+                           result) && ok;
+
+    result->exec_status_metadata_rows=
+      "show_status=" + std::to_string(show_status.rows.size()) +
+      ",show_global_status=" +
+      std::to_string(show_global_status.rows.size()) +
+      ",global_status=" + join_strings(global_status.rows, ",") +
+      ",session_status=" + join_strings(session_status.rows, ",") +
+      ",variables=" + join_strings(variables.rows, ",");
+
+    if (!show_status.rows.empty() ||
+        !show_global_status.rows.empty() ||
+        join_strings(global_status.rows, ",") != "0" ||
+        join_strings(session_status.rows, ",") != "0" ||
+        variables.rows.empty() ||
+        variables.rows[0].find("version:") != 0)
+      ok= false;
+
+    rc= mylite_close(db);
+    ok= record_result(result, "status_metadata_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
 static bool check_processlist_metadata_unsupported(const SmokeOptions &options,
                                                    SmokeResult *result)
 {
@@ -4326,6 +4387,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_static_show_info_messages.empty())
     report << "exec_static_show_info_messages="
            << result.exec_static_show_info_messages << "\n";
+  if (!result.exec_status_metadata_rows.empty())
+    report << "exec_status_metadata_rows="
+           << result.exec_status_metadata_rows << "\n";
   if (!result.exec_processlist_metadata_messages.empty())
     report << "exec_processlist_metadata_messages="
            << result.exec_processlist_metadata_messages << "\n";
