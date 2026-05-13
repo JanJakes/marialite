@@ -5618,6 +5618,27 @@ static Sys_var_mybool Sys_log_slow_query(
 
 static bool fix_log_state(sys_var *self, THD *thd, enum_var_type type)
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  my_bool *newvalptr;
+
+  if (type != OPT_GLOBAL)
+    return 0;
+
+  if (self == &Sys_general_log)
+    newvalptr= &opt_log;
+  else
+  {
+    DBUG_ASSERT(self == &Sys_slow_query_log || self == &Sys_log_slow_query);
+    newvalptr= &global_system_variables.sql_log_slow;
+  }
+
+  if (!*newvalptr)
+    return false;
+
+  *newvalptr= FALSE;
+  my_error(ER_NOT_SUPPORTED_YET, MYF(0), "query logging in embedded MyLite");
+  return true;
+#else
   bool res;
   my_bool *UNINIT_VAR(newvalptr), newval, UNINIT_VAR(oldval);
   uint UNINIT_VAR(log_type);
@@ -5655,6 +5676,7 @@ static bool fix_log_state(sys_var *self, THD *thd, enum_var_type type)
     res= logger.activate_log_handler(thd, log_type);
   mysql_mutex_lock(&LOCK_global_system_variables);
   return res;
+#endif
 }
 
 
@@ -5664,11 +5686,20 @@ static bool check_not_empty_set(sys_var *self, THD *thd, set_var *var)
 }
 static bool fix_log_output(sys_var *self, THD *thd, enum_var_type type)
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  if (log_output_options == LOG_NONE)
+    return false;
+
+  log_output_options= LOG_NONE;
+  my_error(ER_NOT_SUPPORTED_YET, MYF(0), "query logging in embedded MyLite");
+  return true;
+#else
   logger.lock_exclusive();
   logger.init_slow_log(log_output_options);
   logger.init_general_log(log_output_options);
   logger.unlock();
   return false;
+#endif
 }
 
 static const char *log_output_names[] = { "NONE", "FILE", "TABLE", NULL};
@@ -5676,7 +5707,13 @@ static const char *log_output_names[] = { "NONE", "FILE", "TABLE", NULL};
 static Sys_var_set Sys_log_output(
        "log_output", MYLITE_SYSVAR_HELP_TEXT("How logs should be written"),
        GLOBAL_VAR(log_output_options), CMD_LINE(REQUIRED_ARG),
-       log_output_names, DEFAULT(LOG_FILE), NO_MUTEX_GUARD, NOT_IN_BINLOG,
+       log_output_names,
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+       DEFAULT(LOG_NONE),
+#else
+       DEFAULT(LOG_FILE),
+#endif
+       NO_MUTEX_GUARD, NOT_IN_BINLOG,
        ON_CHECK(check_not_empty_set), ON_UPDATE(fix_log_output));
 
 #ifdef HAVE_REPLICATION

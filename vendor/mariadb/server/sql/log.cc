@@ -1311,6 +1311,14 @@ void Log_to_file_event_handler::flush()
 bool LOGGER::error_log_print(enum loglevel level, const char *format,
                              va_list args)
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  THD *thd= current_thd;
+
+  if (likely(thd))
+    thd->error_printed_to_log= 1;
+
+  return vprint_msg_to_log(level, format, args);
+#else
   bool error= FALSE;
   Log_event_handler **current_handler;
   THD *thd= current_thd;
@@ -1323,6 +1331,7 @@ bool LOGGER::error_log_print(enum loglevel level, const char *format,
     error= (*current_handler++)->log_error(level, format, args) || error;
 
   return error;
+#endif
 }
 
 
@@ -1362,6 +1371,9 @@ void LOGGER::init_base()
   DBUG_ASSERT(inited == 0);
   inited= 1;
 
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  mysql_rwlock_init(key_rwlock_LOCK_logger, &LOCK_logger);
+#else
   /*
     Here we create file log handler. We don't do it for the table log handler
     here as it cannot be created so early. The reason is THD initialization,
@@ -1375,17 +1387,22 @@ void LOGGER::init_base()
 
   file_log_handler->init_pthread_objects();
   mysql_rwlock_init(key_rwlock_LOCK_logger, &LOCK_logger);
+#endif
 }
 
 
 void LOGGER::init_log_tables()
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  is_log_tables_initialized= TRUE;
+#else
   if (!table_log_handler)
     table_log_handler= new Log_to_csv_event_handler;
 
   if (!is_log_tables_initialized &&
       !table_log_handler->init() && !file_log_handler->init())
     is_log_tables_initialized= TRUE;
+#endif
 }
 
 
@@ -1396,6 +1413,9 @@ void LOGGER::init_log_tables()
 */
 bool LOGGER::flush_slow_log()
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  return 0;
+#else
   /*
     Now we lock logger, as nobody should be able to use logging routines while
     log tables are closed
@@ -1410,6 +1430,7 @@ bool LOGGER::flush_slow_log()
   logger.unlock();
 
   return 0;
+#endif
 }
 
 
@@ -1420,6 +1441,9 @@ bool LOGGER::flush_slow_log()
 */
 bool LOGGER::flush_general_log()
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  return 0;
+#else
   /*
     Now we lock logger, as nobody should be able to use logging routines while
     log tables are closed
@@ -1434,6 +1458,7 @@ bool LOGGER::flush_general_log()
   logger.unlock();
 
   return 0;
+#endif
 }
 
 
@@ -1457,6 +1482,9 @@ bool LOGGER::slow_log_print(THD *thd, const char *query, size_t query_length,
                             ulonglong current_utime)
 
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  return FALSE;
+#else
   bool error= FALSE;
   Log_event_handler **current_handler;
   bool is_command= FALSE;
@@ -1514,11 +1542,15 @@ bool LOGGER::slow_log_print(THD *thd, const char *query, size_t query_length,
     unlock();
   }
   return error;
+#endif
 }
 
 bool LOGGER::general_log_write(THD *thd, enum enum_server_command command,
                                const char *query, size_t query_length)
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  return FALSE;
+#else
   bool error= FALSE;
   Log_event_handler **current_handler= general_log_handler_list;
   char user_host_buff[MAX_USER_HOST_SIZE + 1];
@@ -1550,11 +1582,15 @@ bool LOGGER::general_log_write(THD *thd, enum enum_server_command command,
   }
 
   return error;
+#endif
 }
 
 bool LOGGER::general_log_print(THD *thd, enum enum_server_command command,
                                const char *format, va_list args)
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  return FALSE;
+#else
   size_t message_buff_len= 0;
   char message_buff[MAX_LOG_BUFFER_SIZE];
 
@@ -1566,10 +1602,14 @@ bool LOGGER::general_log_print(THD *thd, enum enum_server_command command,
     message_buff[0]= '\0';
 
   return general_log_write(thd, command, message_buff, message_buff_len);
+#endif
 }
 
 void LOGGER::init_error_log(ulonglong error_log_printer)
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  error_log_handler_list[0]= 0;
+#else
   if (error_log_printer & LOG_NONE)
   {
     error_log_handler_list[0]= 0;
@@ -1589,10 +1629,14 @@ void LOGGER::init_error_log(ulonglong error_log_printer)
     DBUG_ASSERT(0);
     break;
   }
+#endif
 }
 
 void LOGGER::init_slow_log(ulonglong slow_log_printer)
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  slow_log_handler_list[0]= 0;
+#else
   if (slow_log_printer & LOG_NONE)
   {
     slow_log_handler_list[0]= 0;
@@ -1614,10 +1658,14 @@ void LOGGER::init_slow_log(ulonglong slow_log_printer)
     slow_log_handler_list[2]= 0;
     break;
   }
+#endif
 }
 
 void LOGGER::init_general_log(ulonglong general_log_printer)
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  general_log_handler_list[0]= 0;
+#else
   if (general_log_printer & LOG_NONE)
   {
     general_log_handler_list[0]= 0;
@@ -1639,11 +1687,16 @@ void LOGGER::init_general_log(ulonglong general_log_printer)
     general_log_handler_list[2]= 0;
     break;
   }
+#endif
 }
 
 
 bool LOGGER::activate_log_handler(THD* thd, uint log_type)
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  my_error(ER_NOT_SUPPORTED_YET, MYF(0), "query logging in embedded MyLite");
+  return TRUE;
+#else
   MYSQL_QUERY_LOG *file_log;
   bool res= FALSE;
   lock_exclusive();
@@ -1691,11 +1744,20 @@ bool LOGGER::activate_log_handler(THD* thd, uint log_type)
   }
   unlock();
   return res;
+#endif
 }
 
 
 void LOGGER::deactivate_log_handler(THD *thd, uint log_type)
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  if (log_type == QUERY_LOG_SLOW)
+    global_system_variables.sql_log_slow= FALSE;
+  else if (log_type == QUERY_LOG_GENERAL)
+    opt_log= FALSE;
+  else
+    MY_ASSERT_UNREACHABLE();
+#else
   my_bool *tmp_opt= 0;
   MYSQL_LOG *UNINIT_VAR(file_log);
 
@@ -1719,6 +1781,7 @@ void LOGGER::deactivate_log_handler(THD *thd, uint log_type)
   file_log->close(0);
   *tmp_opt= FALSE;
   unlock();
+#endif
 }
 
 
@@ -1731,6 +1794,11 @@ bool Log_to_csv_event_handler::init()
 int LOGGER::set_handlers(ulonglong slow_log_printer,
                          ulonglong general_log_printer)
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  slow_log_handler_list[0]= 0;
+  general_log_handler_list[0]= 0;
+  return 0;
+#else
   lock_exclusive();
 
   if ((slow_log_printer & LOG_TABLE || general_log_printer & LOG_TABLE) &&
@@ -1749,6 +1817,7 @@ int LOGGER::set_handlers(ulonglong slow_log_printer,
   unlock();
 
   return 0;
+#endif
 }
 
  /*
@@ -7952,6 +8021,9 @@ bool slow_log_print(THD *thd, const char *query, uint query_length,
 
 bool LOGGER::log_command(THD *thd, enum enum_server_command command)
 {
+#if defined(MYLITE_DISABLE_QUERY_LOGS) && defined(EMBEDDED_LIBRARY)
+  return FALSE;
+#else
   /*
     Log command if we have at least one log event handler enabled and want
     to log this kind of commands
@@ -7965,6 +8037,7 @@ bool LOGGER::log_command(THD *thd, enum enum_server_command command)
     Only the super user can set this bit.
   */
   return !(thd->variables.option_bits & OPTION_LOG_OFF);
+#endif
 }
 
 

@@ -109,6 +109,8 @@ struct SmokeResult
   std::string exec_static_show_info_messages;
   std::string exec_status_metadata_rows;
   std::string exec_sysvar_help_text_rows;
+  std::string exec_query_log_profile_rows;
+  std::string exec_query_log_profile_messages;
   std::string exec_processlist_metadata_messages;
   std::string exec_stored_function_lookup_messages;
   std::string exec_plsql_cursor_attribute_message;
@@ -262,6 +264,8 @@ static bool check_status_metadata_profile(const SmokeOptions &options,
                                           SmokeResult *result);
 static bool check_sysvar_help_text_profile(const SmokeOptions &options,
                                            SmokeResult *result);
+static bool check_query_log_profile(const SmokeOptions &options,
+                                    SmokeResult *result);
 static bool check_processlist_metadata_unsupported(const SmokeOptions &options,
                                                    SmokeResult *result);
 static bool check_stored_function_lookup_unsupported(
@@ -527,6 +531,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "sysvar_help_text_profile";
   ok= check_sysvar_help_text_profile(options, result) && ok;
+
+  result->phase= "query_log_profile";
+  ok= check_query_log_profile(options, result) && ok;
 
   result->phase= "processlist_metadata_unsupported";
   ok= check_processlist_metadata_unsupported(options, result) && ok;
@@ -2576,6 +2583,73 @@ static bool check_sysvar_help_text_profile(const SmokeOptions &options,
   return ok;
 }
 
+static bool check_query_log_profile(const SmokeOptions &options,
+                                    SmokeResult *result)
+{
+  struct QueryLogSetCase
+  {
+    const char *label;
+    const char *sql;
+  };
+  static const QueryLogSetCase set_cases[]=
+  {
+    {"query_log_general_log_on", "SET GLOBAL general_log=ON"},
+    {"query_log_slow_query_log_on", "SET GLOBAL slow_query_log=ON"},
+    {"query_log_log_slow_query_on", "SET GLOBAL log_slow_query=ON"},
+    {"query_log_output_file", "SET GLOBAL log_output='FILE'"}
+  };
+
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "query_log_profile_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    ExecCapture general_log;
+    ok= exec_query_capture(db, "SHOW VARIABLES LIKE 'general_log'",
+                           "query_log_general_log", &general_log, result) &&
+        ok;
+
+    ExecCapture slow_query_log;
+    ok= exec_query_capture(db, "SHOW VARIABLES LIKE 'slow_query_log'",
+                           "query_log_slow_query_log", &slow_query_log,
+                           result) && ok;
+
+    ExecCapture log_output;
+    ok= exec_query_capture(db, "SHOW VARIABLES LIKE 'log_output'",
+                           "query_log_output", &log_output, result) && ok;
+
+    result->exec_query_log_profile_rows=
+      "general_log=" + join_strings(general_log.rows, ",") +
+      ",slow_query_log=" + join_strings(slow_query_log.rows, ",") +
+      ",log_output=" + join_strings(log_output.rows, ",");
+
+    if (join_strings(general_log.rows, ",") != "general_log:OFF" ||
+        join_strings(slow_query_log.rows, ",") != "slow_query_log:OFF" ||
+        join_strings(log_output.rows, ",") != "log_output:NONE")
+      ok= false;
+
+    std::vector<std::string> messages;
+    for (const QueryLogSetCase &test_case : set_cases)
+    {
+      rc= mylite_exec(db, test_case.sql, nullptr, nullptr, nullptr);
+      const std::string message= mylite_errmsg(db);
+      messages.push_back(std::string(test_case.label) + ":" + message);
+      ok= record_result(result, test_case.label, MYLITE_ERROR, rc, db) && ok;
+      if (mylite_mariadb_errno(db) != ER_NOT_SUPPORTED_YET ||
+          std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+          message.find("query logging in embedded MyLite") ==
+            std::string::npos)
+        ok= false;
+    }
+    result->exec_query_log_profile_messages= join_strings(messages, " | ");
+
+    rc= mylite_close(db);
+    ok= record_result(result, "query_log_profile_close", MYLITE_OK, rc,
+                      nullptr) && ok;
+  }
+  return ok;
+}
+
 static bool check_processlist_metadata_unsupported(const SmokeOptions &options,
                                                    SmokeResult *result)
 {
@@ -4438,6 +4512,12 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_sysvar_help_text_rows.empty())
     report << "exec_sysvar_help_text_rows="
            << result.exec_sysvar_help_text_rows << "\n";
+  if (!result.exec_query_log_profile_rows.empty())
+    report << "exec_query_log_profile_rows="
+           << result.exec_query_log_profile_rows << "\n";
+  if (!result.exec_query_log_profile_messages.empty())
+    report << "exec_query_log_profile_messages="
+           << result.exec_query_log_profile_messages << "\n";
   if (!result.exec_processlist_metadata_messages.empty())
     report << "exec_processlist_metadata_messages="
            << result.exec_processlist_metadata_messages << "\n";
