@@ -74,6 +74,7 @@ struct SmokeResult
   std::string exec_json_objectagg_message;
   std::string exec_json_schema_valid_message;
   std::string exec_json_table_message;
+  std::string exec_sql_diagnostics_messages;
   std::string exec_explain_runtime_messages;
   std::string exec_regex_like_rows;
   std::string exec_regex_messages;
@@ -207,6 +208,8 @@ static bool check_json_functions_unsupported(const SmokeOptions &options,
                                              SmokeResult *result);
 static bool check_json_table_unsupported(const SmokeOptions &options,
                                          SmokeResult *result);
+static bool check_sql_diagnostics_unsupported(const SmokeOptions &options,
+                                              SmokeResult *result);
 static bool check_explain_runtime_unsupported(const SmokeOptions &options,
                                               SmokeResult *result);
 static bool check_regex_functions_unsupported(const SmokeOptions &options,
@@ -431,6 +434,9 @@ static int run_default_smoke(const SmokeOptions &options, SmokeResult *result)
 
   result->phase= "json_table_unsupported";
   ok= check_json_table_unsupported(options, result) && ok;
+
+  result->phase= "sql_diagnostics_unsupported";
+  ok= check_sql_diagnostics_unsupported(options, result) && ok;
 
   result->phase= "explain_runtime_unsupported";
   ok= check_explain_runtime_unsupported(options, result) && ok;
@@ -1351,6 +1357,61 @@ static bool check_json_table_unsupported(const SmokeOptions &options,
     rc= mylite_close(db);
     ok= record_result(result, "json_table_close", MYLITE_OK, rc, nullptr) &&
         ok;
+  }
+  return ok;
+}
+
+static bool check_sql_diagnostics_unsupported(const SmokeOptions &options,
+                                              SmokeResult *result)
+{
+  struct DiagnosticsCase
+  {
+    const char *label;
+    const char *sql;
+    const char *message_fragment;
+  };
+
+  static const DiagnosticsCase cases[] = {
+    {"get_diagnostics",
+     "GET DIAGNOSTICS @mylite_diag = NUMBER",
+     "GET DIAGNOSTICS"},
+    {"signal",
+     "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'mylite signal'",
+     "SIGNAL"},
+    {"resignal",
+     "RESIGNAL",
+     "RESIGNAL"}
+  };
+
+  mylite_db *db= nullptr;
+  int rc= mylite_open(options.database.c_str(), &db);
+  bool ok= record_result(result, "sql_diagnostics_open", MYLITE_OK, rc, db);
+  if (db)
+  {
+    std::vector<std::string> messages;
+    for (const DiagnosticsCase &diagnostics_case : cases)
+    {
+      char *errmsg= nullptr;
+      rc= mylite_exec(db, diagnostics_case.sql, nullptr, nullptr, &errmsg);
+      std::string message;
+      if (errmsg)
+      {
+        message= errmsg;
+        mylite_free(errmsg);
+      }
+      messages.push_back(std::string(diagnostics_case.label) + ":" + message);
+      ok= record_result(result, diagnostics_case.label, MYLITE_ERROR, rc,
+                        db) && ok;
+      if (mylite_mariadb_errno(db) != ER_NOT_SUPPORTED_YET ||
+          std::strcmp(mylite_sqlstate(db), "42000") != 0 ||
+          message.find(diagnostics_case.message_fragment) == std::string::npos)
+        ok= false;
+    }
+    result->exec_sql_diagnostics_messages= join_strings(messages, ";");
+
+    rc= mylite_close(db);
+    ok= record_result(result, "sql_diagnostics_close", MYLITE_OK, rc,
+                      nullptr) && ok;
   }
   return ok;
 }
@@ -3809,6 +3870,9 @@ static void write_report(const SmokeOptions &options,
   if (!result.exec_json_table_message.empty())
     report << "exec_json_table_message="
            << result.exec_json_table_message << "\n";
+  if (!result.exec_sql_diagnostics_messages.empty())
+    report << "exec_sql_diagnostics_messages="
+           << result.exec_sql_diagnostics_messages << "\n";
   if (!result.exec_explain_runtime_messages.empty())
     report << "exec_explain_runtime_messages="
            << result.exec_explain_runtime_messages << "\n";
