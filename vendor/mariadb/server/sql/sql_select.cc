@@ -1150,6 +1150,105 @@ Item* period_get_condition(THD *thd, TABLE_LIST *table, SELECT_LEX *select,
   return cond1;
 }
 
+#ifdef MYLITE_DISABLE_SYSTEM_VERSIONING
+static bool mylite_system_versioning_unsupported();
+
+bool Item_func_history::val_bool()
+{
+  null_value= true;
+  mylite_system_versioning_unsupported();
+  return false;
+}
+
+void Item_func_history::print(String *str, enum_query_type query_type)
+{
+  str->append(func_name_cstring());
+  str->append('(');
+  args[0]->print(str, query_type);
+  str->append(')');
+}
+
+Item_func_trt_ts::Item_func_trt_ts(THD *thd, Item *a,
+                                   TR_table::field_id_t trt_field_arg) :
+  Item_datetimefunc(thd, a),
+  trt_field(trt_field_arg)
+{
+  decimals= 6;
+  null_value= true;
+}
+
+bool Item_func_trt_ts::get_date(THD *, MYSQL_TIME *, date_mode_t)
+{
+  null_value= true;
+  return mylite_system_versioning_unsupported();
+}
+
+Item_func_trt_id::Item_func_trt_id(THD *thd, Item *a,
+                                   TR_table::field_id_t trt_field_arg,
+                                   bool backwards_arg) :
+  Item_longlong_func(thd, a),
+  trt_field(trt_field_arg),
+  backwards(backwards_arg)
+{
+  decimals= 0;
+  unsigned_flag= 1;
+  null_value= true;
+}
+
+Item_func_trt_id::Item_func_trt_id(THD *thd, Item *a, Item *b,
+                                   TR_table::field_id_t trt_field_arg) :
+  Item_longlong_func(thd, a, b),
+  trt_field(trt_field_arg),
+  backwards(false)
+{
+  decimals= 0;
+  unsigned_flag= 1;
+  null_value= true;
+}
+
+longlong Item_func_trt_id::get_by_trx_id(ulonglong)
+{
+  null_value= true;
+  mylite_system_versioning_unsupported();
+  return 0;
+}
+
+longlong Item_func_trt_id::get_by_commit_ts(MYSQL_TIME &, bool)
+{
+  null_value= true;
+  mylite_system_versioning_unsupported();
+  return 0;
+}
+
+longlong Item_func_trt_id::val_int()
+{
+  null_value= true;
+  mylite_system_versioning_unsupported();
+  return 0;
+}
+
+Item_func_trt_trx_sees::Item_func_trt_trx_sees(THD *thd, Item *a, Item *b) :
+  Item_bool_func(thd, a, b),
+  accept_eq(false)
+{
+  null_value= true;
+}
+
+bool Item_func_trt_trx_sees::val_bool()
+{
+  null_value= true;
+  mylite_system_versioning_unsupported();
+  return false;
+}
+
+static bool mylite_system_versioning_unsupported()
+{
+  my_error(ER_NOT_SUPPORTED_YET, MYF(0),
+           "system versioning in the MyLite minsize profile");
+  return true;
+}
+#endif
+
 static
 bool skip_setup_conds(THD *thd)
 {

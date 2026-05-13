@@ -77,6 +77,11 @@ struct SmokeResult
   std::string unsupported_generated_stored;
   std::string unsupported_generated_alter;
   std::string generated_base_count;
+  std::string unsupported_system_versioned_create;
+  std::string unsupported_period_create;
+  std::string unsupported_system_versioned_alter;
+  std::string unsupported_period_alter;
+  std::string temporal_base_count;
   std::string check_constraint_insert;
   std::string check_constraint_update;
   std::string check_constraint_rows;
@@ -1577,6 +1582,74 @@ static bool exercise_dml(MYSQL *mysql, SmokeResult *result)
   }
   if (!execute_statement(mysql, "DROP TABLE mylite.generated_base",
                          "DROP generated column base table", result))
+    return false;
+  if (!execute_statement_expect_error(
+        mysql,
+        "CREATE TABLE mylite.unsupported_system_versioned "
+        "(id INT NOT NULL, PRIMARY KEY(id)) WITH SYSTEM VERSIONING "
+        "ENGINE=MYLITE",
+        "unsupported system versioned table",
+        &result->unsupported_system_versioned_create,
+        result))
+    return false;
+  if (!verify_table_absent(mysql,
+                           "SHOW TABLES FROM mylite "
+                           "LIKE 'unsupported_system_versioned'",
+                           "unsupported system versioned table", result))
+    return false;
+  if (!execute_statement_expect_error(
+        mysql,
+        "CREATE TABLE mylite.unsupported_period_table "
+        "(id INT NOT NULL, starts DATE NOT NULL, ends DATE NOT NULL, "
+        "PRIMARY KEY(id), PERIOD FOR valid_time(starts, ends)) ENGINE=MYLITE",
+        "unsupported application period table",
+        &result->unsupported_period_create,
+        result))
+    return false;
+  if (!verify_table_absent(mysql,
+                           "SHOW TABLES FROM mylite "
+                           "LIKE 'unsupported_period_table'",
+                           "unsupported application period table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "CREATE TABLE mylite.temporal_base "
+                         "(id INT NOT NULL, starts DATE NOT NULL, "
+                         "ends DATE NOT NULL, PRIMARY KEY(id)) ENGINE=MYLITE",
+                         "CREATE temporal metadata base table", result))
+    return false;
+  if (!execute_statement(mysql,
+                         "INSERT INTO mylite.temporal_base VALUES "
+                         "(1, DATE'2026-01-01', DATE'2026-01-02')",
+                         "INSERT temporal metadata base row", result))
+    return false;
+  if (!execute_statement_expect_error(
+        mysql,
+        "ALTER TABLE mylite.temporal_base ADD SYSTEM VERSIONING, "
+        "ALGORITHM=COPY",
+        "unsupported system versioned alter",
+        &result->unsupported_system_versioned_alter,
+        result))
+    return false;
+  if (!execute_statement_expect_error(
+        mysql,
+        "ALTER TABLE mylite.temporal_base "
+        "ADD PERIOD FOR valid_time(starts, ends), ALGORITHM=COPY",
+        "unsupported application period alter",
+        &result->unsupported_period_alter,
+        result))
+    return false;
+  if (!fetch_single_value(mysql,
+                          "SELECT COUNT(*) FROM mylite.temporal_base",
+                          "temporal metadata base count",
+                          &result->temporal_base_count, result))
+    return false;
+  if (result->temporal_base_count != "1")
+  {
+    result->message= "temporal metadata base count returned an unexpected value";
+    return false;
+  }
+  if (!execute_statement(mysql, "DROP TABLE mylite.temporal_base",
+                         "DROP temporal metadata base table", result))
     return false;
   if (!execute_statement(mysql,
                          "CREATE TABLE mylite.check_rows "
@@ -4125,6 +4198,21 @@ static void write_report(const SmokeOptions &options,
   if (!result.generated_base_count.empty())
     report << "generated_base_count="
            << result.generated_base_count << "\n";
+  if (!result.unsupported_system_versioned_create.empty())
+    report << "unsupported_system_versioned_create="
+           << result.unsupported_system_versioned_create << "\n";
+  if (!result.unsupported_period_create.empty())
+    report << "unsupported_period_create="
+           << result.unsupported_period_create << "\n";
+  if (!result.unsupported_system_versioned_alter.empty())
+    report << "unsupported_system_versioned_alter="
+           << result.unsupported_system_versioned_alter << "\n";
+  if (!result.unsupported_period_alter.empty())
+    report << "unsupported_period_alter="
+           << result.unsupported_period_alter << "\n";
+  if (!result.temporal_base_count.empty())
+    report << "temporal_base_count="
+           << result.temporal_base_count << "\n";
   if (!result.check_constraint_insert.empty())
     report << "check_constraint_insert="
            << result.check_constraint_insert << "\n";

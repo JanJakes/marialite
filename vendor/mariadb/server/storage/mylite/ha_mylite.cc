@@ -215,6 +215,7 @@ static bool mylite_create_info_has_foreign_key(
     const HA_CREATE_INFO *create_info);
 static bool mylite_table_supports_row_storage(const TABLE *table);
 static bool mylite_table_has_generated_columns(const TABLE *table);
+static bool mylite_table_has_temporal_metadata(const TABLE *table);
 static bool mylite_table_supports_blob_storage(const TABLE *table);
 static bool mylite_table_supports_key_storage(const TABLE *table);
 static bool mylite_key_supports_storage(const KEY &key);
@@ -2230,6 +2231,7 @@ static bool mylite_create_info_has_foreign_key(
 static bool mylite_table_supports_row_storage(const TABLE *table)
 {
   return !mylite_table_has_generated_columns(table) &&
+         !mylite_table_has_temporal_metadata(table) &&
          mylite_table_supports_blob_storage(table);
 }
 
@@ -2248,6 +2250,14 @@ static bool mylite_table_has_generated_columns(const TABLE *table)
       return true;
   }
   return false;
+}
+
+static bool mylite_table_has_temporal_metadata(const TABLE *table)
+{
+  if (!table || !table->s)
+    return false;
+
+  return table->versioned() || table->s->period.name;
 }
 
 static bool mylite_table_supports_blob_storage(const TABLE *table)
