@@ -10,6 +10,9 @@ The baseline is the current `tools/build-mariadb-minsize.sh` profile:
 - `CMAKE_BUILD_TYPE=MinSizeRel`
 - `CMAKE_C_FLAGS_MINSIZEREL=-Oz -DNDEBUG`
 - `CMAKE_CXX_FLAGS_MINSIZEREL=-Oz -DNDEBUG`
+- `CMAKE_C_VISIBILITY_PRESET=hidden`
+- `CMAKE_CXX_VISIBILITY_PRESET=hidden`
+- `CMAKE_VISIBILITY_INLINES_HIDDEN=ON`
 - `CMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -Wl,-z,pack-relative-relocs -Wl,--pack-dyn-relocs=relr -Wl,--gc-sections -Wl,--icf=all`
 - `CMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld -Wl,-z,pack-relative-relocs -Wl,--pack-dyn-relocs=relr -Wl,--gc-sections -Wl,--icf=all`
 - `CMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -Wl,-z,pack-relative-relocs -Wl,--pack-dyn-relocs=relr -Wl,--gc-sections -Wl,--icf=all`
@@ -110,8 +113,9 @@ include the `type-plugin-size-profile`, `charset-small-profile`, and
 `trigger-runtime-size-profile`, `view-runtime-size-profile`,
 `table-admin-size-profile`, `persistent-statistics-size-profile`,
 `select-procedure-runtime-size-profile`, `locale-minsize-profile`, and
-`load-data-size-profile`, `oz-compiler-size-profile`, and
-`time-zone-table-size-profile`. Together these remove the built-in
+`load-data-size-profile`, `oz-compiler-size-profile`,
+`time-zone-table-size-profile`, and `hidden-visibility-size-profile`. Together
+these remove the built-in
 `type_geom`, `type_inet`, `type_uuid`, `sequence`, `thread_pool_info`,
 `user_variables`, `userstat`, `mhnsw`, `csv`, and `myisammrg` plugins, set
 `WITH_EXTRA_CHARSETS=none`, omit the Oracle SQL-mode parser, omit XML, GIS, and
@@ -197,7 +201,9 @@ procedure-clause setup stub, replace the generated full locale table with an
 `en_US`-only embedded profile stub, and omit `LOAD DATA` / `LOAD XML`
 server-file import execution, build the aggressive minsize profile with
 GCC/G++ `-Oz`, and omit `mysql.time_zone*` table loading while retaining
-`SYSTEM` and numeric-offset time zones.
+`SYSTEM` and numeric-offset time zones, and build aggressive minsize artifacts
+with hidden default C/C++ symbol visibility while retaining explicit
+`MYLITE_API` exports for the public MyLite C API.
 
 `no-myisam-temp-spill-size-profile` was measured separately as an opt-in
 `MYLITE_DISABLE_MYISAM_TEMP_SPILL=ON` experiment. It is not part of the current
@@ -217,40 +223,40 @@ shared `libmylite.so` bundle. For now, the most useful size signals are:
 ## Current baseline
 
 The current values were measured from
-`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-no-tz-tables`.
+`MYLITE_MARIADB_BUILD_DIR=build/mariadb-minsize-hidden-visibility-official`.
 Paths below use the default build directory names for readability.
 
 | Artifact | Bytes | MiB | Notes |
 | --- | ---: | ---: | --- |
-| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 29,147,460 | 27.80 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
-| `build/mariadb-minsize/mylite/libmylite.a` | 122,792 | 0.12 | First-party public wrapper |
+| `build/mariadb-minsize/libmysqld/libmariadbd.a` | 29,117,602 | 27.77 | Main embedded MariaDB archive, stripped; section metadata grows the archive |
+| `build/mariadb-minsize/mylite/libmylite.a` | 122,808 | 0.12 | First-party public wrapper with explicit `MYLITE_API` exports |
 | `build/mariadb-minsize/storage/mylite/libmylite_embedded.a` | 388,440 | 0.37 | MyLite storage-engine component archive |
-| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,748,552 | 7.39 | Unstripped linked smoke binary, lld RELR, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, full foreign-server metadata cache implementation, proxy protocol network-listener support, full event parser data validation, full XA transaction implementation, full trigger sidecar runtime, full view sidecar runtime, full table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
-| stripped `mylite-open-close-smoke` copy | 5,564,416 | 5.31 | `strip --strip-unneeded` on copied binary |
+| `build/mariadb-minsize/mylite/mylite-open-close-smoke` | 7,705,056 | 7.35 | Unstripped linked smoke binary, hidden default visibility, lld RELR, section GC, ICF, GCC/G++ `-Oz`, reduced unwind tables, no OpenSSL runtime dependency, no retained binlog event reader, GTID-index writer, full GTID binlog-state code, full optimizer trace implementation, external backup stage implementation, full `JSON_TABLE` table-function implementation, full foreign-server metadata cache implementation, proxy protocol network-listener support, full event parser data validation, full XA transaction implementation, full trigger sidecar runtime, full view sidecar runtime, full table-admin maintenance implementation, key-cache assignment, index preload, inherited persistent statistics tables, JSON histograms, generic `SELECT ... PROCEDURE` runtime, non-`en_US` locale table, `LOAD DATA` / `LOAD XML` execution, or `mysql.time_zone*` table loading, no `log_event_server.cc.o`, no real mmap `tc.log` transaction coordinator, no server encryption hooks, no window functions, no UDF runtime, no SQL crypto/password functions, no VIO TLS transport, no `ENCRYPT()`, no legacy DES, no `KDF()`, no zlib compression, and no dynamic plugin loading |
+| stripped `mylite-open-close-smoke` copy | 5,532,056 | 5.28 | `strip --strip-unneeded` on copied binary |
 
 The linked smoke binary has this section profile:
 
 | Section group | Bytes |
 | --- | ---: |
-| text | 4,383,008 |
-| data | 1,178,080 |
-| bss | 227,369 |
-| total `size` decimal | 5,788,457 |
+| text | 4,363,891 |
+| data | 1,164,728 |
+| bss | 225,937 |
+| total `size` decimal | 5,754,556 |
 
 Largest linked sections in the open-close smoke binary:
 
 | Section | Bytes | Interpretation |
 | --- | ---: | --- |
-| `.text` | 2,693,492 | Executable code |
-| `.data.rel.ro` | 999,048 | Relocated read-only data |
-| `.rodata` | 953,163 | Parser tables, SQL metadata, constants, retained Unicode data |
-| `.eh_frame` | 500,916 | Unwind metadata |
+| `.text` | 2,678,636 | Executable code |
+| `.data.rel.ro` | 998,568 | Relocated read-only data |
+| `.rodata` | 953,035 | Parser tables, SQL metadata, constants, retained Unicode data |
+| `.eh_frame` | 498,788 | Unwind metadata |
 | `.data` | 152,400 | Writable data |
-| `.bss` | 226,025 | Zero-initialized writable data |
-| `.eh_frame_hdr` | 105,564 | Unwind table index |
-| `.rela.dyn` | 45,432 | Remaining unpacked dynamic relocations |
-| `.gcc_except_table` | 39,468 | Exception metadata |
-| `.relr.dyn` | 17,824 | Packed relative relocations |
+| `.bss` | 225,001 | Zero-initialized writable data |
+| `.eh_frame_hdr` | 105,316 | Unwind table index |
+| `.rela.dyn` | 44,976 | Remaining unpacked dynamic relocations |
+| `.gcc_except_table` | 38,484 | Exception metadata |
+| `.relr.dyn` | 17,616 | Packed relative relocations |
 
 If a Linux distribution bundle vendors the current dynamic dependencies, it
 adds about 5,081,640 bytes, or 4.85 MiB, before compression:
@@ -387,6 +393,7 @@ The current built-in plugins are:
 | `load-data-size-profile` after locale minsize | 29,169,370 | -14,236,062 | 5,570,344 | -13,761,560 | Passes current smokes and harness; omits `LOAD DATA` / `LOAD XML` execution while retaining ordinary inserts |
 | `oz-compiler-size-profile` after LOAD DATA | 29,169,370 | -14,236,062 | 5,570,216 | -13,761,688 | Passes current smokes and harness; switches aggressive minsize compile flags to `-Oz`, a marginal linked-runtime win |
 | `time-zone-table-size-profile` after `-Oz` | 29,147,460 | -14,257,972 | 5,564,416 | -13,767,488 | Passes current smokes and harness; omits `mysql.time_zone*` table loading while retaining `SYSTEM` and numeric offsets |
+| `hidden-visibility-size-profile` after time-zone tables | 29,117,602 | -14,287,830 | 5,532,056 | -13,799,848 | Passes current smokes and harness; hides internal symbols by default while keeping explicit MyLite C API exports |
 | `no-myisam-temp-spill-size-profile` after no-binlog-core | 32,836,602 | -10,568,830 | 6,437,408 | -12,894,496 | Opt-in experiment only; open/close smoke passes, but storage/catalog harness fails because schema-table queries need disk temp tables |
 | Strip archive with `strip -g` | 42,261,216 | -1,144,216 | n/a | n/a | Low-risk packaging step |
 | Strip archive with `strip --strip-unneeded` | 41,873,048 | -1,532,384 | n/a | n/a | Higher risk than `strip -g` for static archives |
@@ -410,7 +417,7 @@ profile now passes current smokes while retaining the compiled default
 `utf8mb4_uca1400_ai_ci`.
 
 Stripping the current linked open-close smoke binary reduces it from
-7,748,552 bytes to 5,564,416 bytes, saving 2,184,136 bytes, or 2.08 MiB. That
+7,705,056 bytes to 5,532,056 bytes, saving 2,173,000 bytes, or 2.07 MiB. That
 remains the lowest-risk packaging win for any copied executable or
 shared-library style artifact.
 
@@ -738,6 +745,16 @@ bytes. `SET time_zone='SYSTEM'` and numeric offsets such as `+00:00` remain
 supported; named zones such as `Europe/Prague` fail with
 `ER_UNKNOWN_TIME_ZONE`, and `CONVERT_TZ()` with omitted named zones returns
 `NULL`.
+
+The `hidden-visibility-size-profile` attempt then set CMake's C and C++
+visibility presets to hidden and enabled hidden inline visibility for the
+aggressive minsize profile. On top of the time-zone table profile, it reduced
+the static archive by 29,858 bytes, the unstripped open-close smoke by 43,496
+bytes, the stripped open-close smoke by 32,360 bytes, and the stripped
+compatibility smoke by 32,416 bytes. The public MyLite C API remains annotated
+with `MYLITE_API`; this is a packaging and symbol-hygiene lever, not an SQL
+feature-pruning lever. Future shared-library packaging that wants to expose
+MariaDB C API or plugin service symbols needs a deliberate export policy.
 
 The LTO build reduced the stripped linked smoke binary by 1.25 MiB, but the
 static archive became 326.61 MiB and GCC emitted type/ODR mismatch warnings
@@ -1080,6 +1097,7 @@ MyISAM-compatible storage.
 | Remove XML SQL functions | 0.49 MiB archive and 0.25 MiB stripped linked beyond small-builtin profile | Medium compatibility | Applied as size attempt | Current smokes pass, but `EXTRACTVALUE()` and `UPDATEXML()` now fail as unknown functions |
 | Remove GIS SQL functions | 0.82 MiB archive and 0.44 MiB stripped linked beyond XML profile | High compatibility | Applied as size attempt | Current smokes pass, but native GIS functions now fail as unknown functions in the minsize profile |
 | Remove unnecessary executable symbol exports | 0 archive, 2.06 MiB stripped linked beyond GIS profile | Low/medium | Applied as size attempt | Current smokes pass; this only applies to linked executables that are not dynamic-plugin hosts |
+| Hide internal symbols with CMake visibility defaults | 0.03 MiB archive, 0.03 MiB stripped linked beyond time-zone tables | Low/medium packaging | Applied as aggressive linked-size attempt | Current smokes pass; MyLite C API exports remain explicit, but final shared-library packaging still needs an export policy |
 | Remove vector SQL functions and MHNSW | 0.22 MiB archive, negligible stripped linked beyond executable-export profile | High compatibility | Applied as size attempt | Current smokes pass, but vector functions and MHNSW vector indexes are omitted from the minsize profile |
 | Disable statement profiling | 0.16 MiB archive, no stripped linked change beyond vector-function profile | Low/medium | Applied as size attempt | Current smokes pass; `SHOW PROFILE(S)` now report MariaDB's disabled-feature diagnostic |
 | Remove SQL `HELP` command implementation | 0.17 MiB archive, 0.06 MiB stripped linked beyond profiling profile | Low/medium | Applied as size attempt | Current smokes pass; `HELP` now reports a stable unsupported-command diagnostic |
@@ -1267,6 +1285,10 @@ Take these now:
    and prepared binding remain available.
 45. Keep a stripped linked smoke binary size in the build report so regressions
    are visible.
+46. Keep hidden default C/C++ visibility in the aggressive minsize profile.
+   It is a small but low-risk size win for the current static embedded
+   artifacts, and it matches the existing `MYLITE_API` public export boundary.
+   Final shared-library packaging still needs an explicit export map decision.
 
 Do not take these now:
 
