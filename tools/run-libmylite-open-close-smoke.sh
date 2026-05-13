@@ -79,6 +79,7 @@ run_inside_container() {
   assert_no_show_create_runtime_symbols "${smoke}"
   assert_no_tpool_runtime_symbols "${smoke}"
   assert_no_default_file_symbols "${smoke}"
+  assert_no_auth_protocol_symbols "${smoke}"
 
   local smoke_log="${abs_build_dir}/libmylite-open-close-output.log"
   local exclusive_log="${abs_build_dir}/libmylite-open-close-exclusive-output.log"
@@ -361,6 +362,22 @@ assert_no_default_file_symbols() {
     return 1
   fi
   printf "libmylite default-file symbols: none\n"
+}
+
+assert_no_auth_protocol_symbols() {
+  local binary="$1"
+  local symbols
+  symbols="$(
+    nm --defined-only -C "${binary}" 2>/dev/null \
+      | grep -E "builtin_maria_mysql_password_plugin|native_password_authenticate|old_password_authenticate|do_auth_once|send_server_handshake_packet|server_mpvio_" \
+      || true
+  )"
+  if [[ -n "${symbols}" ]]; then
+    printf "unexpected auth protocol symbols in %s:\n%s\n" \
+      "${binary}" "${symbols}" >&2
+    return 1
+  fi
+  printf "libmylite auth protocol symbols: none\n"
 }
 
 main "$@"

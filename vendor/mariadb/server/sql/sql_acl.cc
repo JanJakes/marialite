@@ -61,6 +61,11 @@
 
 #define MAX_SCRAMBLE_LENGTH 1024
 
+#if defined(MYLITE_DISABLE_AUTH_PROTOCOL) && defined(EMBEDDED_LIBRARY) && \
+    defined(NO_EMBEDDED_ACCESS_CHECKS)
+#define MYLITE_AUTH_PROTOCOL_OMITTED 1
+#endif
+
 bool mysql_user_table_is_in_short_password_format= false;
 bool using_global_priv_table= true;
 
@@ -13471,6 +13476,16 @@ get_cached_table_access(GRANT_INTERNAL_INFO *grant_internal_info,
 #define sslaccept(A,B,C,D) 1
 #endif
 
+#ifdef MYLITE_AUTH_PROTOCOL_OMITTED
+
+bool acl_authenticate(THD *thd, uint)
+{
+  my_message(ER_UNKNOWN_COM_ERROR, ER_THD(thd, ER_UNKNOWN_COM_ERROR), MYF(0));
+  return true;
+}
+
+#else
+
 /**
   The internal version of what plugins know as MYSQL_PLUGIN_VIO,
   basically the context of the authentication session
@@ -15451,6 +15466,8 @@ maria_declare_plugin(mysql_password)
   MariaDB_PLUGIN_MATURITY_STABLE                /* Maturity         */
 }
 maria_declare_plugin_end;
+
+#endif
 
 
 /*

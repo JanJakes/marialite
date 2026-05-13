@@ -1749,6 +1749,13 @@ dispatch_command_return dispatch_command(enum enum_server_command command, THD *
     my_ok(thd, 0, 0, 0);
     break;
   }
+#ifdef MYLITE_DISABLE_AUTH_PROTOCOL
+  case COM_CHANGE_USER:
+    status_var_increment(thd->status_var.com_other);
+    my_message(ER_UNKNOWN_COM_ERROR, ER_THD(thd, ER_UNKNOWN_COM_ERROR),
+               MYF(0));
+    break;
+#else
   case COM_CHANGE_USER:
   {
     int auth_rc;
@@ -1828,6 +1835,7 @@ dispatch_command_return dispatch_command(enum enum_server_command command, THD *
     }
     break;
   }
+#endif
 #ifdef MYLITE_DISABLE_PREPARED_STATEMENT_API
   case COM_STMT_BULK_EXECUTE:
   case COM_STMT_EXECUTE:
